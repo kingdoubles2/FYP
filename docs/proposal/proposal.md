@@ -1,9 +1,5 @@
 # School of Computing &mdash; Year 4 Project Proposal Form
 
-> Edit (then commit and push) this document to complete your proposal form.
-> Make use of figures / diagrams where appropriate.
->
-> Do not rename this file.
 
 ## SECTION A
 
@@ -102,13 +98,11 @@ The system will incorporate a modern and modular tech stack:
 
 ### Hardware
 
-> Describe any non-standard hardware components which will be required.
 
 Currently no expectation for any non-standard hardware to be required.
 
 ### Learning Challenges
 
-> List the main new things (technologies, languages, tools, etc) that you will have to learn.
 
 - Parsing and interpreting API specifications, especially complex schemas.
 - Integrating with CI/CD workflow.
@@ -118,13 +112,8 @@ Currently no expectation for any non-standard hardware to be required.
 
 ### Breakdown of work
 
-> Clearly identify who will undertake which parts of the project.
->
-> It must be clear from the explanation of this breakdown of work both that each student is responsible for
-> separate, clearly-defined tasks, and that those responsibilities substantially cover all of the work required
-> for the project.
 
-|Component|Chungyang|Justin|
+|Component|Chunyang|Justin|
 |---------|---------|------|
 |Requirements & Design|System Architecture Design; Research: Test Generation Techniques and API spec standards|System Architecture Design; Research: UI needs, reporting, and CI/CD workflows|
 |API Spec Parsing & Handling|Implement spec upload endpoints in FastAPI; Build the parser to extract endpoints, schemas, constraints; Handle validation and error reporting.|Create frontend UI to upload API specs and view parsing results; Design user flows for how specs are submitted and processed.|
@@ -139,12 +128,6 @@ Currently no expectation for any non-standard hardware to be required.
 
 ### Risk Register
 
-> You are to complete a risk register to demonstrate how you will account for the potential risks (i.e. something going wrong) when youa re working on your proiject. 
-> The purpose of a risk register is to identify potential issues beforehand and plan mitigation strategies to ensure the success of the project. 
-> The reisks are different for each project by some examples include 
-
-> if you are using physical components (e..g sensors), what happens if they never arrive, or if they break, or if they are not suitable?
-> if you are creating an AI/ML method , what happens if there is no suitable training data, or if the model performs poorly after training? 
 
 | Description | Likelyhood | Severity | Mitigation |
 |-------------|------------|----------|------------|
@@ -161,14 +144,4 @@ Currently no expectation for any non-standard hardware to be required.
 #### Student 2
 
 > *Student 2 should complete this section.*
-
-## Example
-
-> Example: Here's how you can include images in markdown documents...
-
-<!-- Basically, just use HTML! -->
-
-<p align="center">
-  <img src="./res/cat.png" width="300px">
-</p>
 
