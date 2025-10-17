@@ -139,9 +139,9 @@ Currently no expectation for any non-standard hardware to be required.
 
 #### Student 1
 
-> *Student 1 should complete this section.*
+I will be responsible for the backend development, including API specification parsing, test case generation engine, test runner and execution, data layer and storage, LLM integration, and containerization and deployment. I will also assist with frontend data APIs and testing & validation.
 
 #### Student 2
 
-> *Student 2 should complete this section.*
+I will be responsible for the frontend development, including creating the user interface for uploading API specifications, dashboard LLM integration, visualizing test results, and integrating with the backend APIs. I will also work on the CI/CD pipeline integration and ensure smooth communication between the frontend and backend components.
 
