@@ -9,11 +9,11 @@
 
 |                     |                   |
 |---------------------|-------------------|
-|Project Title:       | VerAPI Contract Grard            |
+|Project Title:       | ContractGuard     |
 |Student 1 Name:      | Chunyang Wang     |
 |Student 1 ID:        | 21115214          |
-|Student 2 Name:      | xxxxxx            |
-|Student 2 ID:        | xxxxxx            |
+|Student 2 Name:      | Justin Siak       |
+|Student 2 ID:        | 22449184          |
 |Project Supervisor:  | Graham Healy      |
 
 
@@ -104,9 +104,17 @@ The system will incorporate a modern and modular tech stack:
 
 > Describe any non-standard hardware components which will be required.
 
+Currently no expectation for any non-standard hardware to be required.
+
 ### Learning Challenges
 
 > List the main new things (technologies, languages, tools, etc) that you will have to learn.
+
+- Parsing and interpreting API specifications, especially complex schemas.
+- Integrating with CI/CD workflow.
+- Using LLMs for natural-language explanations.
+- Database design and result persistence.
+- Security and sandboxing considerations.
 
 ### Breakdown of work
 
@@ -116,6 +124,18 @@ The system will incorporate a modern and modular tech stack:
 > separate, clearly-defined tasks, and that those responsibilities substantially cover all of the work required
 > for the project.
 
+|Component|Chungyang|Justin|
+|---------|---------|------|
+|Requirements & Design|System Architecture Design; Research: Test Generation Techniques and API spec standards|System Architecture Design; Research: UI needs, reporting, and CI/CD workflows|
+|API Spec Parsing & Handling|Implement spec upload endpoints in FastAPI; Build the parser to extract endpoints, schemas, constraints; Handle validation and error reporting.|Create frontend UI to upload API specs and view parsing results; Design user flows for how specs are submitted and processed.|
+|Test Case Generation Engine| Develop rule-based engine for generating test cases from schema consrtraints; Implement fallback LLM integration for complex schemas and enhancements.|Work on visualisation of generated tests in the dashboard; Help design mapping logic for test generation from schema.|
+|Test Runner & Execution|Build the test execution layer; Implement orchestration logic to trigger tests and collect results; Design structured result formats.|Integrate test execution trigger into frontend; Handle real-time or asynchronous result updates in UI.|
+|Data Layer & Storage| Design PostgreSQL schema; Implement database queries and result persistence| Integrate frontend with backend data endpoints|
+|CI/CD Integration| Provide backend endpoints and CLI entry points for CI/CD triggers|Implement pipeline to run verification on push; Handle automation scripts, container builds, and reporting integration.|
+|Frontend & Dashboard Development| Assist with result APIs, provide backend data for charts| Develop full React dashboard with tailwind styling; Implement result views and feedback.|
+|LLM Integration| Build backend integration with OpenAI (or local model); Process raw text test data into input format for LLM| Build LLM sandbox operability; Design presentation for LLM querying and feedback.|
+|Containerisation and Deployment| Write Dockerfiles for backend and test runner; Test orchestration inside Docker.| Compose frontend, backend, and DB with Docker Compose; Ensure CI/CD uses the containerised setup.|
+|Testing & Validation|Develop internal test APIs for validation; Write backend unit/integration tests| Perform UI testing, pipeline dry runs, and demo preparation.| 
 
 ### Risk Register
 
@@ -128,9 +148,11 @@ The system will incorporate a modern and modular tech stack:
 
 | Description | Likelyhood | Severity | Mitigation |
 |-------------|------------|----------|------------|
-|             |            |          |            |
-|             |            |          |            |
-|             |            |          |            |
+|Complexity of API specifications is higher than expected, making parsing and test generation difficult.             |Medium            |High          |Start with OpenAPI v3 support only and test early with real-world specs. Build a fallback LLM-based generator for complex schemas.            |
+|LLM integration underperforms (e.g., produces inaccurate or irrelevant explanations).             |Medium            |Medium          |Treat LLM as an enhancement, not a core dependency. Ensure the system remains functional without it. Use prompt engineering and limit output scope.            |
+|CI/CD automation fails to trigger correctly (e.g, GitHub Actions not running or misconfigured).             |Low            |Medium          |Manually test CI/CD pipeline in early sprints. Document setup clearly and keep a manual trigger option in the UI.            |
+|Third-party API libraries or LLM API become unavailable (e.g rate-limited, pricing changes, or outages).|Medium|Medium|Cache responses where possible, abstract LLM usage behind an interface, and ensure the system works without external APIs.|
+|Generated tests do not reflect real-world scenarios accurately (false positives/negatives).|Medium|High|Validate generated tests against known APIs with expected results. Manually review generated test logic during development.|
 
 #### Student 1
 
