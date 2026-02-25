@@ -19,3 +19,4 @@ if __name__ == "__main__":
     print("Operation ID:", first.operation_id)
     print("Request Schema:", first.request_schema)
     print("Response Schemas:", first.response_schemas.keys())
+    
