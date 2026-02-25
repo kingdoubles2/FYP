@@ -1,0 +1,7 @@
+stages:
+  - test
+
+ci-smoke-test:
+  stage: test
+  script:
+    - echo "CI working"

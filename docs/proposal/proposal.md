@@ -126,7 +126,6 @@ Currently no expectation for any non-standard hardware to be required.
 |Containerisation and Deployment| Write Dockerfiles for backend and test runner; Test orchestration inside Docker.| Compose frontend, backend, and DB with Docker Compose; Ensure CI/CD uses the containerised setup.|
 |Testing & Validation|Develop internal test APIs for validation; Write backend unit/integration tests| Perform UI testing, pipeline dry runs, and demo preparation.| 
 
-### Risk Register
 
 
 | Description | Likelyhood | Severity | Mitigation |
