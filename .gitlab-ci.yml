@@ -1,7 +1,28 @@
+image: python:3.12-slim
+
 stages:
+  - lint
   - test
 
-ci-smoke-test:
+before_script:
+  - python --version
+  - pip install --upgrade pip
+  - pip install pyyaml flake8
+
+lint:
+  stage: lint
+  script:
+    - flake8 src/ --max-line-length 120 --count --show-source --statistics --exclude __pycache__
+
+parser-test:
   stage: test
   script:
-    - echo "CI working"
+    - cd src
+    - python test_parser.py
+
+extract-ir:
+  stage: test
+  script:
+    - cd src
+    - python extract_ir.py specs/ --pretty -o specs/
+    - ls -l specs/*_ir.json
