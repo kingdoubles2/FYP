@@ -15,7 +15,9 @@ def collect_spec_files(paths: list[str]) -> list[Path]:
         p = Path(raw)
         if p.is_dir():
             files.extend(
-                f for f in sorted(p.iterdir()) if f.suffix.lower() in SPEC_EXTENSIONS
+                f for f in sorted(p.iterdir())
+                if f.suffix.lower() in SPEC_EXTENSIONS
+                and not f.stem.endswith("_ir")
             )
         elif p.is_file():
             files.append(p)
