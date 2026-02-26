@@ -24,9 +24,9 @@ extract-ir:
   stage: test
   script:
     - cd src
-    - python extract_ir.py specs/ --pretty -o build/
-    - ls -l build/*_ir.json
+    - python extract_ir.py test_uploads/ --pretty -o test_output/
+    - ls -lR test_output/
   artifacts:
     paths:
-      - src/build/
+      - src/test_output/
     expire_in: 1 week
