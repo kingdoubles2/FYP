@@ -2,7 +2,7 @@ from spec_parser.parser import parse_openapi
 
 
 if __name__ == "__main__":
-    with open("specs/petstore.json", "r", encoding="utf-8") as f:
+    with open("test_uploads/user1/petstore.json", "r", encoding="utf-8") as f:
         spec_text = f.read()
 
     parsed = parse_openapi(spec_text)
