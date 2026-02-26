@@ -9,14 +9,15 @@ SPEC_EXTENSIONS = {".json", ".yaml", ".yml"}
 
 
 def collect_spec_files(paths: list[str]) -> list[Path]:
-    """Gather spec files from a mix of file paths and directories."""
+    """Gather spec files from a mix of file paths and directories (recursive)."""
     files: list[Path] = []
     for raw in paths:
         p = Path(raw)
         if p.is_dir():
             files.extend(
-                f for f in sorted(p.iterdir())
-                if f.suffix.lower() in SPEC_EXTENSIONS
+                f for f in sorted(p.rglob("*"))
+                if f.is_file()
+                and f.suffix.lower() in SPEC_EXTENSIONS
                 and not f.stem.endswith("_ir")
             )
         elif p.is_file():
@@ -26,7 +27,9 @@ def collect_spec_files(paths: list[str]) -> list[Path]:
     return files
 
 
-def process_spec(spec_path: Path, output_dir: Path | None, pretty: bool) -> bool:
+def process_spec(
+    spec_path: Path, output_dir: Path | None, base_dir: Path | None, pretty: bool
+) -> bool:
     """Parse one spec file and write its IR JSON. Returns True on success."""
     try:
         spec_text = spec_path.read_text(encoding="utf-8")
@@ -38,7 +41,16 @@ def process_spec(spec_path: Path, output_dir: Path | None, pretty: bool) -> bool
     data = parsed.to_dict()
     indent = 2 if pretty else None
 
-    dest_dir = output_dir if output_dir else spec_path.parent
+    if output_dir and base_dir:
+        # Mirror the subfolder structure: uploads/user1/spec.json -> build/user1/spec_ir.json
+        rel = spec_path.parent.relative_to(base_dir)
+        dest_dir = output_dir / rel
+    elif output_dir:
+        dest_dir = output_dir
+    else:
+        dest_dir = spec_path.parent
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
     out_path = dest_dir / f"{spec_path.stem}_ir.json"
 
     out_path.write_text(json.dumps(data, indent=indent, ensure_ascii=False), encoding="utf-8")
@@ -63,9 +75,13 @@ def main() -> None:
     args = parser.parse_args()
 
     output_dir: Path | None = None
+    base_dir: Path | None = None
     if args.output_dir:
         output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+        # If a single directory was given as input, use it as base for mirroring structure
+        if len(args.paths) == 1 and Path(args.paths[0]).is_dir():
+            base_dir = Path(args.paths[0])
 
     files = collect_spec_files(args.paths)
     if not files:
@@ -73,7 +89,7 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Found {len(files)} spec file(s):")
-    ok = sum(process_spec(f, output_dir, args.pretty) for f in files)
+    ok = sum(process_spec(f, output_dir, base_dir, args.pretty) for f in files)
     failed = len(files) - ok
     print(f"\nDone: {ok} succeeded, {failed} failed.")
     if failed:
