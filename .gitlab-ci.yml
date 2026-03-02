@@ -30,3 +30,16 @@ extract-ir:
     paths:
       - src/test_output/
     expire_in: 1 week
+
+generate-tests:
+  stage: test
+  script:
+    - cd src
+    - python generate_tests.py test_output/ --pretty -o test_cases/
+    - ls -lR test_cases/
+  needs:
+    - extract-ir
+  artifacts:
+    paths:
+      - src/test_cases/
+    expire_in: 1 week
