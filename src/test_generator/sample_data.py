@@ -52,6 +52,15 @@ FIELD_NAME_HINTS: Dict[str, str] = {
     "language":     "en",
     "locale":       "en_US",
     "currency":     "USD",
+    "id":           "abc123",
+    "userid":       "user_001",
+    "user_id":      "user_001",
+    "accountid":    "acct_001",
+    "account_id":   "acct_001",
+    "transactionid": "txn_001",
+    "transaction_id": "txn_001",
+    "orderid":      "order_001",
+    "order_id":     "order_001",
 }
 
 
@@ -155,13 +164,21 @@ def _merge_allof(schemas: List[Dict[str, Any]]) -> Dict[str, Any]:
 # Value generators
 # ---------------------------------------------------------------------------
 
-def generate_valid_value(schema: Dict[str, Any], *, name: Optional[str] = None) -> Any:
+def generate_valid_value(
+    schema: Dict[str, Any],
+    *,
+    name: Optional[str] = None,
+    skip_example: bool = False,
+) -> Any:
     """Return a single deterministic valid value for *schema*.
 
     Priority: example > default > enum[0] > composition > recursive build >
               name hint > type/format table.
+
+    When *skip_example* is True the ``example`` key in the schema is ignored,
+    producing a safe fallback value suitable for the minimal happy-path test.
     """
-    if "example" in schema:
+    if not skip_example and "example" in schema:
         return schema["example"]
     if "default" in schema:
         return schema["default"]
@@ -170,11 +187,11 @@ def generate_valid_value(schema: Dict[str, Any], *, name: Optional[str] = None) 
 
     # Schema composition: oneOf / anyOf / allOf
     if "allOf" in schema:
-        return generate_valid_value(_merge_allof(schema["allOf"]))
+        return generate_valid_value(_merge_allof(schema["allOf"]), skip_example=skip_example)
     if "oneOf" in schema:
-        return generate_valid_value(schema["oneOf"][0])
+        return generate_valid_value(schema["oneOf"][0], skip_example=skip_example)
     if "anyOf" in schema:
-        return generate_valid_value(schema["anyOf"][0])
+        return generate_valid_value(schema["anyOf"][0], skip_example=skip_example)
 
     schema_type = schema.get("type")
     schema_format = schema.get("format")
@@ -184,11 +201,11 @@ def generate_valid_value(schema: Dict[str, Any], *, name: Optional[str] = None) 
         schema_type = "object"
 
     if schema_type == "object":
-        return generate_valid_object(schema)
+        return generate_valid_object(schema, skip_example=skip_example)
 
     if schema_type == "array":
         items_schema = schema.get("items", {})
-        return [generate_valid_value(items_schema)]
+        return [generate_valid_value(items_schema, skip_example=skip_example)]
 
     # Respect numeric constraints
     if schema_type in ("integer", "number"):
@@ -261,7 +278,11 @@ def _constrained_string(schema: Dict[str, Any], schema_format: Optional[str]) ->
     return result
 
 
-def generate_valid_object(schema: Dict[str, Any]) -> Dict[str, Any]:
+def generate_valid_object(
+    schema: Dict[str, Any],
+    *,
+    skip_example: bool = False,
+) -> Dict[str, Any]:
     """Build a complete valid object from an object schema.
 
     Excludes ``readOnly`` fields (they are server-generated, not sent in requests).
@@ -272,12 +293,14 @@ def generate_valid_object(schema: Dict[str, Any]) -> Dict[str, Any]:
     for prop_name, prop_schema in properties.items():
         if prop_schema.get("readOnly"):
             continue
-        result[prop_name] = generate_valid_value(prop_schema, name=prop_name)
+        result[prop_name] = generate_valid_value(
+            prop_schema, name=prop_name, skip_example=skip_example,
+        )
 
     if not properties and "additionalProperties" in schema:
         ap = schema["additionalProperties"]
         if isinstance(ap, dict):
-            result["sample_key"] = generate_valid_value(ap)
+            result["sample_key"] = generate_valid_value(ap, skip_example=skip_example)
 
     return result
 
