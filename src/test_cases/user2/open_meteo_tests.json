@@ -1,11 +1,11 @@
 {
   "api_title": "Open-Meteo APIs",
   "api_version": "1.0",
-  "generated_at": "2026-03-02T22:08:43Z",
+  "generated_at": "2026-03-03T23:46:41Z",
   "test_cases": [
     {
       "test_id": "TC-GET-v1-forecast-001",
-      "title": "GET /v1/forecast - Happy path: valid request returns 200",
+      "title": "GET /v1/forecast - Happy path: minimal valid request returns 200",
       "category": "happy_path",
       "requirement_ref": "GET /v1/forecast",
       "method": "GET",
@@ -15,24 +15,12 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /v1/forecast with query params {'hourly': ['temperature_2m'], 'daily': ['temperature_2m_max'], 'latitude': 52.52, 'longitude': 52.52, 'current_weather': True, 'temperature_unit': 'celsius', 'wind_speed_unit': 'kmh', 'timeformat': 'iso8601', 'timezone': 'UTC', 'past_days': 1}",
+          "action": "Send GET request to /v1/forecast with query params {'latitude': 52.52, 'longitude': 52.52}",
           "input_data": {
             "path_params": {},
             "query_params": {
-              "hourly": [
-                "temperature_2m"
-              ],
-              "daily": [
-                "temperature_2m_max"
-              ],
               "latitude": 52.52,
-              "longitude": 52.52,
-              "current_weather": true,
-              "temperature_unit": "celsius",
-              "wind_speed_unit": "kmh",
-              "timeformat": "iso8601",
-              "timezone": "UTC",
-              "past_days": 1
+              "longitude": 52.52
             },
             "headers": {},
             "body": null
