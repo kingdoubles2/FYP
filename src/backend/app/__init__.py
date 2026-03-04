@@ -1,0 +1,2 @@
+"""ContractGuard backend application package."""
+

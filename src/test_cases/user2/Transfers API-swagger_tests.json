@@ -1,6 +1,6 @@
 {
   "api_title": "Transfers API",
-  "api_version": "3",
+  "api_version": "3.0.0",
   "generated_at": "2026-03-03T23:46:41Z",
   "test_cases": [
     {
