@@ -191,6 +191,13 @@ code {
   margin-bottom: 1rem;
 }
 
+.panel-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .tab-row {
   display: inline-flex;
   padding: 0.25rem;
@@ -247,6 +254,25 @@ code {
   border-radius: 999px;
   padding: 0.8rem 1.25rem;
   transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.danger-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.58rem 0.9rem;
+  font-size: 0.86rem;
+  background: #fce9e8;
+  color: #8b2323;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.danger-button:hover {
+  transform: translateY(-1px);
+}
+
+.danger-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .primary-button {

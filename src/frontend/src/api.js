@@ -61,6 +61,15 @@ export async function listSpecs(token) {
   });
 }
 
+export async function clearSpecs(token) {
+  return request("/api/specs", {
+    method: "DELETE",
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
 export async function uploadSpecFile(token, file) {
   const formData = new FormData();
   formData.append("file", file);

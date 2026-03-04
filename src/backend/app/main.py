@@ -174,3 +174,14 @@ def list_specs(current_user: User = Depends(get_current_user), limit: Optional[i
         ]
     finally:
         db.close()
+
+
+@app.delete("/api/specs")
+def clear_specs_history(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        deleted_count = db.query(Spec).filter(Spec.user_id == current_user.id).delete(synchronize_session=False)
+        db.commit()
+        return {"deleted": deleted_count}
+    finally:
+        db.close()

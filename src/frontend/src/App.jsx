@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { API_BASE_URL, healthCheck, listSpecs, loginUser, registerUser, uploadSpecFile } from "./api.js";
+import { API_BASE_URL, clearSpecs, healthCheck, listSpecs, loginUser, registerUser, uploadSpecFile } from "./api.js";
 import { buildSpecPreview } from "./testPreview.js";
 
 const SESSION_KEY = "contractguard.session.v1";
@@ -210,12 +210,24 @@ function UploadPanel({ loading, onUpload, message, error }) {
   );
 }
 
-function HistoryList({ entries, selectedSpecId, onSelect }) {
+function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
   return (
     <section className="panel history-panel">
       <div className="panel-header">
-        <p className="eyebrow">History</p>
-        <h2>Your upload history</h2>
+        <div className="panel-header-row">
+          <div>
+            <p className="eyebrow">History</p>
+            <h2>Your upload history</h2>
+          </div>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={onClear}
+            disabled={clearing || entries.length === 0}
+          >
+            {clearing ? "Clearing..." : "Clear History"}
+          </button>
+        </div>
         <p className="muted">Only your account uploads are shown here.</p>
       </div>
 
@@ -432,6 +444,7 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState("Checking backend...");
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [clearHistoryLoading, setClearHistoryLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [uploadMessage, setUploadMessage] = useState("");
@@ -553,8 +566,38 @@ export default function App() {
     setSession(null);
     setSpecHistory([]);
     setSelectedSpecId(null);
+    setClearHistoryLoading(false);
     setUploadError("");
     setUploadMessage("");
+  }
+
+  async function handleClearHistory() {
+    if (!session?.token || clearHistoryLoading || specHistory.length === 0) {
+      return;
+    }
+
+    const confirmClear = window.confirm("Clear your upload history permanently?");
+    if (!confirmClear) {
+      return;
+    }
+
+    setClearHistoryLoading(true);
+    setHistoryError("");
+
+    try {
+      await clearSpecs(session.token);
+      setSpecHistory([]);
+      setSelectedSpecId(null);
+      setSpecCache((current) => {
+        const next = { ...current };
+        delete next[session.userId];
+        return next;
+      });
+    } catch (error) {
+      setHistoryError(error.message);
+    } finally {
+      setClearHistoryLoading(false);
+    }
   }
 
   async function handleUpload(event) {
@@ -671,7 +714,13 @@ export default function App() {
 
           <div className="left-column">
             <UploadPanel loading={uploadLoading} onUpload={handleUpload} message={uploadMessage} error={uploadError} />
-            <HistoryList entries={specHistory} selectedSpecId={selectedSpecId} onSelect={setSelectedSpecId} />
+            <HistoryList
+              entries={specHistory}
+              selectedSpecId={selectedSpecId}
+              onSelect={setSelectedSpecId}
+              onClear={handleClearHistory}
+              clearing={clearHistoryLoading}
+            />
           </div>
 
           <SpecDetails entry={selectedEntry} />
