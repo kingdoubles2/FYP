@@ -103,27 +103,16 @@ function keepScrollOnToggle() {
   });
 }
 
-function formatExpectedResult(expectedResult) {
-  if (!expectedResult || typeof expectedResult !== "object") {
-    return "Expected result defined in test case";
+function toPrettyJson(value) {
+  if (value === undefined) {
+    return "null";
   }
 
-  if (typeof expectedResult.status_code === "number") {
-    return expectedResult.description
-      ? `Status ${expectedResult.status_code} - ${expectedResult.description}`
-      : `Status ${expectedResult.status_code}`;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
   }
-
-  if (Array.isArray(expectedResult.status_code_any_of) && expectedResult.status_code_any_of.length > 0) {
-    const joined = expectedResult.status_code_any_of.join(" or ");
-    return expectedResult.description ? `Status ${joined} - ${expectedResult.description}` : `Status ${joined}`;
-  }
-
-  if (typeof expectedResult.description === "string" && expectedResult.description.trim()) {
-    return expectedResult.description;
-  }
-
-  return "Expected result defined in test case";
 }
 
 function prettifyCategory(categoryKey) {
@@ -328,27 +317,40 @@ function SpecDetails({ entry }) {
                             <div className="category-body">
                               {categoryCases.length > 0 ? (
                                 <div className="testcase-list">
-                                  {categoryCases.map((testCase) => (
-                                    <details
-                                      key={testCase.test_id || testCase.title}
-                                      className="testcase-detail"
-                                      onToggle={keepScrollOnToggle}
-                                    >
-                                      <summary>
-                                        <span>{testCase.test_id || "Test case"}</span>
-                                        <span>{testCase.method} {testCase.path}</span>
-                                      </summary>
-                                      <div className="testcase-body">
-                                        <p className="testcase-title">{testCase.title}</p>
-                                        <p className="testcase-line">
-                                          <strong>Action:</strong> {testCase.steps?.[0]?.action || "Step details unavailable"}
-                                        </p>
-                                        <p className="testcase-line">
-                                          <strong>Expected:</strong> {formatExpectedResult(testCase.expected_result)}
-                                        </p>
-                                      </div>
-                                    </details>
-                                  ))}
+                                  {categoryCases.map((testCase) => {
+                                    const firstStep = testCase.steps?.[0] || null;
+                                    const inputData = firstStep?.input_data ?? null;
+                                    const expectedResult = testCase.expected_result ?? null;
+
+                                    return (
+                                      <details
+                                        key={testCase.test_id || testCase.title}
+                                        className="testcase-detail"
+                                        onToggle={keepScrollOnToggle}
+                                      >
+                                        <summary>
+                                          <span>{testCase.test_id || "Test case"}</span>
+                                          <span>{testCase.method} {testCase.path}</span>
+                                        </summary>
+                                        <div className="testcase-body">
+                                          <p className="testcase-title">{testCase.title}</p>
+                                          <p className="testcase-line">
+                                            <strong>Action:</strong> {firstStep?.action || "Step details unavailable"}
+                                          </p>
+
+                                          <div className="json-section">
+                                            <span className="json-label">Input Data (JSON)</span>
+                                            <pre className="json-block">{toPrettyJson(inputData)}</pre>
+                                          </div>
+
+                                          <div className="json-section">
+                                            <span className="json-label">Expected Result (JSON)</span>
+                                            <pre className="json-block">{toPrettyJson(expectedResult)}</pre>
+                                          </div>
+                                        </div>
+                                      </details>
+                                    );
+                                  })}
                                 </div>
                               ) : (
                                 <p className="muted">Detailed generated cases are not available for this category yet.</p>
