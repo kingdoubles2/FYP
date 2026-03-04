@@ -103,6 +103,33 @@ function keepScrollOnToggle() {
   });
 }
 
+function formatExpectedResult(expectedResult) {
+  if (!expectedResult || typeof expectedResult !== "object") {
+    return "Expected result defined in test case";
+  }
+
+  if (typeof expectedResult.status_code === "number") {
+    return expectedResult.description
+      ? `Status ${expectedResult.status_code} - ${expectedResult.description}`
+      : `Status ${expectedResult.status_code}`;
+  }
+
+  if (Array.isArray(expectedResult.status_code_any_of) && expectedResult.status_code_any_of.length > 0) {
+    const joined = expectedResult.status_code_any_of.join(" or ");
+    return expectedResult.description ? `Status ${joined} - ${expectedResult.description}` : `Status ${joined}`;
+  }
+
+  if (typeof expectedResult.description === "string" && expectedResult.description.trim()) {
+    return expectedResult.description;
+  }
+
+  return "Expected result defined in test case";
+}
+
+function prettifyCategory(categoryKey) {
+  return String(categoryKey || "").replaceAll("_", " ");
+}
+
 function StatCard({ label, value, accent }) {
   return (
     <div className="stat-card">
@@ -249,6 +276,16 @@ function SpecDetails({ entry }) {
     );
   }
 
+  const generatedCases = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
+  const casesByCategory = generatedCases.reduce((acc, testCase) => {
+    const key = testCase?.category || "other";
+    if (!acc[key]) {
+      acc[key] = [];
+    }
+    acc[key].push(testCase);
+    return acc;
+  }, {});
+
   return (
     <section className="panel details-panel">
       <div className="panel-header">
@@ -274,16 +311,52 @@ function SpecDetails({ entry }) {
                   <div className="subpanel">
                     <h3>Generated Test Preview</h3>
                     <div className="metrics-list">
-                      <span>Total estimated tests</span>
-                      <strong>{entry.preview.totalCases}</strong>
+                      <div className="metric-row">
+                        <span>Total estimated tests</span>
+                        <strong>{entry.preview.totalCases}</strong>
+                      </div>
                     </div>
-                    <div className="category-list">
-                      {Object.entries(entry.preview.totals).map(([category, count]) => (
-                        <div key={category} className="category-row">
-                          <span>{category.replaceAll("_", " ")}</span>
-                          <strong>{count}</strong>
-                        </div>
-                      ))}
+                    <div className="coverage-categories">
+                      {Object.entries(entry.preview.totals).map(([category, count]) => {
+                        const categoryCases = casesByCategory[category] || [];
+                        return (
+                          <details key={category} className="category-detail" onToggle={keepScrollOnToggle}>
+                            <summary>
+                              <span>{prettifyCategory(category)}</span>
+                              <strong>{count}</strong>
+                            </summary>
+                            <div className="category-body">
+                              {categoryCases.length > 0 ? (
+                                <div className="testcase-list">
+                                  {categoryCases.map((testCase) => (
+                                    <details
+                                      key={testCase.test_id || testCase.title}
+                                      className="testcase-detail"
+                                      onToggle={keepScrollOnToggle}
+                                    >
+                                      <summary>
+                                        <span>{testCase.test_id || "Test case"}</span>
+                                        <span>{testCase.method} {testCase.path}</span>
+                                      </summary>
+                                      <div className="testcase-body">
+                                        <p className="testcase-title">{testCase.title}</p>
+                                        <p className="testcase-line">
+                                          <strong>Action:</strong> {testCase.steps?.[0]?.action || "Step details unavailable"}
+                                        </p>
+                                        <p className="testcase-line">
+                                          <strong>Expected:</strong> {formatExpectedResult(testCase.expected_result)}
+                                        </p>
+                                      </div>
+                                    </details>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="muted">Detailed generated cases are not available for this category yet.</p>
+                              )}
+                            </div>
+                          </details>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -414,11 +487,13 @@ export default function App() {
         const merged = Array.isArray(rows)
           ? rows.map((row) => {
               const cached = userCache[row.id];
+              const generatedTests = Array.isArray(cached?.generatedTests) ? cached.generatedTests : [];
               return {
                 ...row,
                 preview: cached?.preview || null,
                 parsed: cached?.parsed || null,
-                totalCases: cached?.preview?.totalCases || 0,
+                generatedTests,
+                totalCases: cached?.preview?.totalCases || generatedTests.length || 0,
               };
             })
           : [];
@@ -500,6 +575,7 @@ export default function App() {
         const payload = await uploadSpecFile(session.token, file);
         const parsed = payload?.parsed || null;
         const preview = parsed ? buildSpecPreview(parsed) : null;
+        const generatedTests = Array.isArray(payload?.generated_tests?.test_cases) ? payload.generated_tests.test_cases : [];
         lastUploadedId = payload?.id ?? lastUploadedId;
 
         nextUserCache[payload.id] = {
@@ -507,6 +583,7 @@ export default function App() {
           uploadedAt: new Date().toISOString(),
           parsed,
           preview,
+          generatedTests,
         };
       }
 
