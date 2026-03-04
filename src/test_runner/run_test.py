@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 import requests
 
-#DEFAULT_BASE_URL = "https://petstore3.swagger.io/api/v3"
+#DEFAULT_BASE_URL = "https://petstore3.swagger.io/api/v3" 
 DEFAULT_BASE_URL = "https://api.open-meteo.com"  # for testing with a different API
 
 

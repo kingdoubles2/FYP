@@ -29,7 +29,7 @@ def _deduplicate(cases: List[TestCase]) -> List[TestCase]:
     return unique
 
 
-def generate_test_cases_for_endpoint(endpoint: Dict[str, Any], ir_data: Dict[str, Any] = None) -> List[TestCase]:
+def generate_test_cases_for_endpoint(endpoint: Dict[str, Any]) -> List[TestCase]:
     """Run all rule generators for one endpoint, assign sequential test_ids."""
     slug = _make_path_slug(endpoint["endpoint_id"])
 
@@ -37,7 +37,7 @@ def generate_test_cases_for_endpoint(endpoint: Dict[str, Any], ir_data: Dict[str
     cases.extend(generate_happy_path_cases(endpoint))
     cases.extend(generate_negative_cases(endpoint))
     cases.extend(generate_boundary_cases(endpoint))
-    cases.extend(generate_auth_cases(endpoint, ir_data=ir_data))
+    cases.extend(generate_auth_cases(endpoint))
     cases.extend(generate_error_status_cases(endpoint))
 
     cases = _deduplicate(cases)
@@ -53,7 +53,7 @@ def generate_test_cases(ir_data: Dict[str, Any]) -> TestSuite:
     all_cases: List[TestCase] = []
 
     for endpoint in ir_data.get("endpoints", []):
-        all_cases.extend(generate_test_cases_for_endpoint(endpoint, ir_data=ir_data))
+        all_cases.extend(generate_test_cases_for_endpoint(endpoint))
 
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

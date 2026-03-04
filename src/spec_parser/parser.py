@@ -55,6 +55,25 @@ def resolve_schema(schema: Any, spec: Dict[str, Any]) -> Any:
     return resolved_schema
 
 
+def _first_example_value(examples: Dict[str, Any], spec: Dict[str, Any]) -> Any:
+    """Return the ``value`` from the first entry of an OpenAPI examples map.
+
+    Handles ``$ref`` inside individual example objects.  Returns a sentinel
+    ``_MISSING`` when nothing usable is found.
+    """
+    for _key, example_obj in examples.items():
+        if not isinstance(example_obj, dict):
+            continue
+        if "$ref" in example_obj:
+            example_obj = resolve_ref(example_obj["$ref"], spec)
+        if "value" in example_obj:
+            return example_obj["value"]
+    return _MISSING
+
+
+_MISSING = object()  # sentinel – never appears in user data
+
+
 def extract_parameters(
     parameters: List[Dict[str, Any]],
     spec: Dict[str, Any],
@@ -76,12 +95,27 @@ def extract_parameters(
             continue
 
         schema = resolve_schema(param.get("schema", {}), spec)
+        param_schema = schema if isinstance(schema, dict) else {}
+
+        # Embed parameter-level example into schema so the generator picks
+        # it up via the existing example > default > enum priority chain.
+        # Priority: parameter.examples[*].value > parameter.example
+        if "example" not in param_schema:
+            examples = param.get("examples")
+            if isinstance(examples, dict) and examples:
+                val = _first_example_value(examples, spec)
+                if val is not _MISSING:
+                    param_schema = dict(param_schema)
+                    param_schema["example"] = val
+            elif "example" in param:
+                param_schema = dict(param_schema)
+                param_schema["example"] = param["example"]
 
         param_ir = ParamIR(
             name=param["name"],
             location=location,
             required=param.get("required", False),
-            schema=schema if isinstance(schema, dict) else {},
+            schema=param_schema,
         )
 
         if location == "path":
@@ -115,7 +149,24 @@ def extract_request_schema(operation: Dict[str, Any], spec: Dict[str, Any]) -> O
         return None
 
     resolved = resolve_schema(schema, spec)
-    return resolved if isinstance(resolved, dict) else None
+    if not isinstance(resolved, dict):
+        return None
+
+    # Embed request-body-level example into the schema so the generator
+    # uses the realistic payload for happy path tests.
+    # Priority: content.examples[*].value > content.example
+    if "example" not in resolved:
+        examples = json_content.get("examples")
+        if isinstance(examples, dict) and examples:
+            val = _first_example_value(examples, spec)
+            if val is not _MISSING:
+                resolved = dict(resolved)
+                resolved["example"] = val
+        elif "example" in json_content:
+            resolved = dict(resolved)
+            resolved["example"] = json_content["example"]
+
+    return resolved
 
 
 def extract_response_schemas(operation: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, Optional[Dict[str, Any]]]:
@@ -149,6 +200,85 @@ def extract_response_schemas(operation: Dict[str, Any], spec: Dict[str, Any]) ->
         response_schemas[str(status_code)] = resolved if isinstance(resolved, dict) else None
 
     return response_schemas
+
+
+def _response_example_value(operation: Dict[str, Any], spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Try to extract a concrete example object from the 200/201 response.
+
+    Returns the example value dict if found, else None.
+    """
+    responses = operation.get("responses", {})
+    for code in ("200", "201"):
+        resp = responses.get(code)
+        if not isinstance(resp, dict):
+            continue
+        if "$ref" in resp:
+            resp = resolve_ref(resp["$ref"], spec)
+        content = resp.get("content", {})
+        json_ct = content.get("application/json") or content.get("application\\json")
+        if not isinstance(json_ct, dict):
+            continue
+        # Try examples map first, then singular example
+        examples = json_ct.get("examples")
+        if isinstance(examples, dict) and examples:
+            val = _first_example_value(examples, spec)
+            if val is not _MISSING and isinstance(val, dict):
+                return val
+        example = json_ct.get("example")
+        if isinstance(example, dict):
+            return example
+    return None
+
+
+def _flatten_response_example(resp_example: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a flat lookup of scalar fields from a response example.
+
+    Checks the top level first, then looks inside the first element of any
+    top-level array (common in paginated list responses like ``{"data": [...]}``)
+    """
+    flat: Dict[str, Any] = {}
+    # Top-level scalar fields
+    for k, v in resp_example.items():
+        if not isinstance(v, (dict, list)):
+            flat[k] = v
+    # First element of any top-level array
+    for _k, v in resp_example.items():
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            for ik, iv in v[0].items():
+                if ik not in flat and not isinstance(iv, (dict, list)):
+                    flat[ik] = iv
+            break  # only use the first array field
+    return flat
+
+
+def _backfill_param_examples(
+    path_params: List[ParamIR],
+    query_params: List[ParamIR],
+    operation: Dict[str, Any],
+    spec: Dict[str, Any],
+) -> None:
+    """Fill missing param examples from the success response example.
+
+    If the 200/201 response example contains a field whose name matches
+    a parameter that has no example yet, use that value.
+    Works for both path params (top-level match) and query params
+    (top-level or inside first array element for list endpoints).
+    """
+    needs_example = [p for p in path_params + query_params if "example" not in p.schema]
+    if not needs_example:
+        return
+
+    resp_example = _response_example_value(operation, spec)
+    if not resp_example:
+        return
+
+    flat = _flatten_response_example(resp_example)
+
+    for param_ir in needs_example:
+        val = flat.get(param_ir.name)
+        if val is not None:
+            param_ir.schema = dict(param_ir.schema)
+            param_ir.schema["example"] = val
 
 
 def parse_openapi(spec_text: str) -> ParsedSpecIR:
@@ -195,6 +325,7 @@ def parse_openapi(spec_text: str) -> ParsedSpecIR:
             all_params = path_level_params + op_params
 
             path_params, query_params, header_params = extract_parameters(all_params, spec)
+            _backfill_param_examples(path_params, query_params, operation, spec)
             request_schema = extract_request_schema(operation, spec)
             response_schemas = extract_response_schemas(operation, spec)
 

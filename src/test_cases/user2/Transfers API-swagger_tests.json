@@ -1,11 +1,11 @@
 {
   "api_title": "Transfers API",
   "api_version": "3",
-  "generated_at": "2026-03-02T22:08:43Z",
+  "generated_at": "2026-03-03T23:46:41Z",
   "test_cases": [
     {
       "test_id": "TC-GET-transactions-001",
-      "title": "GET /transactions - Happy path: valid request returns 200",
+      "title": "GET /transactions - Happy path: minimal valid request returns 200",
       "category": "happy_path",
       "requirement_ref": "GET /transactions",
       "method": "GET",
@@ -15,14 +15,43 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /transactions with query params {'balancePlatform': 'test_string', 'paymentInstrumentId': 'test_string', 'accountHolderId': 'test_string', 'balanceAccountId': 'test_string', 'cursor': 'test_string', 'createdSince': '2026-01-15T10:30:00Z', 'createdUntil': '2026-01-15T10:30:00Z', 'limit': 42}",
+          "action": "Send GET request to /transactions with query params {'createdSince': '2026-01-15T10:30:00Z', 'createdUntil': '2026-01-15T10:30:00Z'}",
           "input_data": {
             "path_params": {},
             "query_params": {
-              "balancePlatform": "test_string",
+              "createdSince": "2026-01-15T10:30:00Z",
+              "createdUntil": "2026-01-15T10:30:00Z"
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: _links, data"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-002",
+      "title": "GET /transactions - Happy path: example-based request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions with query params {'balancePlatform': 'YOUR_BALANCE_PLATFORM', 'paymentInstrumentId': 'test_string', 'accountHolderId': 'AHA1B2C3D4E5F6G7H8I9J0', 'balanceAccountId': 'BAB8B2C3D4E5F6G7H8D9J6GD4', 'cursor': 'test_string', 'createdSince': '2026-01-15T10:30:00Z', 'createdUntil': '2026-01-15T10:30:00Z', 'limit': 42}",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
               "paymentInstrumentId": "test_string",
-              "accountHolderId": "test_string",
-              "balanceAccountId": "test_string",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "cursor": "test_string",
               "createdSince": "2026-01-15T10:30:00Z",
               "createdUntil": "2026-01-15T10:30:00Z",
@@ -39,7 +68,7 @@
       }
     },
     {
-      "test_id": "TC-GET-transactions-002",
+      "test_id": "TC-GET-transactions-003",
       "title": "GET /transactions - Negative type: query createdSince=12345",
       "category": "negative_type",
       "requirement_ref": "GET /transactions",
@@ -54,10 +83,10 @@
           "input_data": {
             "path_params": {},
             "query_params": {
-              "balancePlatform": "test_string",
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
               "paymentInstrumentId": "test_string",
-              "accountHolderId": "test_string",
-              "balanceAccountId": "test_string",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "cursor": "test_string",
               "createdSince": 12345,
               "createdUntil": "2026-01-15T10:30:00Z",
@@ -74,7 +103,7 @@
       }
     },
     {
-      "test_id": "TC-GET-transactions-003",
+      "test_id": "TC-GET-transactions-004",
       "title": "GET /transactions - Negative type: query createdUntil=12345",
       "category": "negative_type",
       "requirement_ref": "GET /transactions",
@@ -89,10 +118,10 @@
           "input_data": {
             "path_params": {},
             "query_params": {
-              "balancePlatform": "test_string",
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
               "paymentInstrumentId": "test_string",
-              "accountHolderId": "test_string",
-              "balanceAccountId": "test_string",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "cursor": "test_string",
               "createdSince": "2026-01-15T10:30:00Z",
               "createdUntil": 12345,
@@ -109,7 +138,7 @@
       }
     },
     {
-      "test_id": "TC-GET-transactions-004",
+      "test_id": "TC-GET-transactions-005",
       "title": "GET /transactions - Negative missing: required query param 'createdSince' omitted",
       "category": "negative_missing",
       "requirement_ref": "GET /transactions",
@@ -124,10 +153,10 @@
           "input_data": {
             "path_params": {},
             "query_params": {
-              "balancePlatform": "test_string",
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
               "paymentInstrumentId": "test_string",
-              "accountHolderId": "test_string",
-              "balanceAccountId": "test_string",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "cursor": "test_string",
               "createdUntil": "2026-01-15T10:30:00Z",
               "limit": 42
@@ -143,7 +172,7 @@
       }
     },
     {
-      "test_id": "TC-GET-transactions-005",
+      "test_id": "TC-GET-transactions-006",
       "title": "GET /transactions - Negative missing: required query param 'createdUntil' omitted",
       "category": "negative_missing",
       "requirement_ref": "GET /transactions",
@@ -158,10 +187,10 @@
           "input_data": {
             "path_params": {},
             "query_params": {
-              "balancePlatform": "test_string",
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
               "paymentInstrumentId": "test_string",
-              "accountHolderId": "test_string",
-              "balanceAccountId": "test_string",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "cursor": "test_string",
               "createdSince": "2026-01-15T10:30:00Z",
               "limit": 42
@@ -177,7 +206,7 @@
       }
     },
     {
-      "test_id": "TC-GET-transactions-006",
+      "test_id": "TC-GET-transactions-007",
       "title": "GET /transactions - Negative invalid: query createdSince='not-a-date' (bad format)",
       "category": "negative_invalid",
       "requirement_ref": "GET /transactions",
@@ -192,10 +221,10 @@
           "input_data": {
             "path_params": {},
             "query_params": {
-              "balancePlatform": "test_string",
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
               "paymentInstrumentId": "test_string",
-              "accountHolderId": "test_string",
-              "balanceAccountId": "test_string",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "cursor": "test_string",
               "createdSince": "not-a-date",
               "createdUntil": "2026-01-15T10:30:00Z",
@@ -212,7 +241,7 @@
       }
     },
     {
-      "test_id": "TC-GET-transactions-007",
+      "test_id": "TC-GET-transactions-008",
       "title": "GET /transactions - Negative invalid: query createdUntil='not-a-date' (bad format)",
       "category": "negative_invalid",
       "requirement_ref": "GET /transactions",
@@ -227,10 +256,10 @@
           "input_data": {
             "path_params": {},
             "query_params": {
-              "balancePlatform": "test_string",
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
               "paymentInstrumentId": "test_string",
-              "accountHolderId": "test_string",
-              "balanceAccountId": "test_string",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "cursor": "test_string",
               "createdSince": "2026-01-15T10:30:00Z",
               "createdUntil": "not-a-date",
@@ -247,7 +276,7 @@
       }
     },
     {
-      "test_id": "TC-GET-transactions-008",
+      "test_id": "TC-GET-transactions-009",
       "title": "GET /transactions - Boundary: query limit max_int32(2147483647)",
       "category": "boundary",
       "requirement_ref": "GET /transactions",
@@ -262,10 +291,10 @@
           "input_data": {
             "path_params": {},
             "query_params": {
-              "balancePlatform": "test_string",
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
               "paymentInstrumentId": "test_string",
-              "accountHolderId": "test_string",
-              "balanceAccountId": "test_string",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "cursor": "test_string",
               "createdSince": "2026-01-15T10:30:00Z",
               "createdUntil": "2026-01-15T10:30:00Z",
@@ -283,22 +312,22 @@
     },
     {
       "test_id": "TC-GET-transactions-id-001",
-      "title": "GET /transactions/{id} - Happy path: valid request returns 200",
+      "title": "GET /transactions/{id} - Happy path: minimal valid request returns 200",
       "category": "happy_path",
       "requirement_ref": "GET /transactions/{id}",
       "method": "GET",
       "path": "/transactions/{id}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=test_string"
+        "Resource exists for id=abc123"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /transactions/test_string",
+          "action": "Send GET request to /transactions/abc123",
           "input_data": {
             "path_params": {
-              "id": "test_string"
+              "id": "abc123"
             },
             "query_params": {},
             "headers": {},
@@ -313,6 +342,36 @@
     },
     {
       "test_id": "TC-GET-transactions-id-002",
+      "title": "GET /transactions/{id} - Happy path: example-based request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "GET /transactions/{id}",
+      "method": "GET",
+      "path": "/transactions/{id}",
+      "priority": "medium",
+      "preconditions": [
+        "Resource exists for id=IZK7C25U7DYVX03Y"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions/IZK7C25U7DYVX03Y",
+          "input_data": {
+            "path_params": {
+              "id": "IZK7C25U7DYVX03Y"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: accountHolderId, amount, balanceAccountId, balancePlatform, bookingDate, category"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-id-003",
       "title": "GET /transactions/{id} - Negative type: id=12345",
       "category": "negative_type",
       "requirement_ref": "GET /transactions/{id}",
@@ -340,7 +399,7 @@
       }
     },
     {
-      "test_id": "TC-GET-transactions-id-003",
+      "test_id": "TC-GET-transactions-id-004",
       "title": "GET /transactions/{id} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "GET /transactions/{id}",
@@ -353,10 +412,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /transactions/test_string for a non-existent resource",
+          "action": "Send GET request to /transactions/IZK7C25U7DYVX03Y for a non-existent resource",
           "input_data": {
             "path_params": {
-              "id": "test_string"
+              "id": "IZK7C25U7DYVX03Y"
             },
             "query_params": {},
             "headers": {},
@@ -371,7 +430,7 @@
     },
     {
       "test_id": "TC-POST-transfers-001",
-      "title": "POST /transfers - Happy path: valid request returns 200",
+      "title": "POST /transfers - Happy path: minimal valid request returns 200",
       "category": "happy_path",
       "requirement_ref": "POST /transfers",
       "method": "POST",
@@ -421,7 +480,7 @@
                 "transferInstrumentId": "test_string"
               },
               "description": "test_string",
-              "id": "test_string",
+              "id": "abc123",
               "paymentInstrumentId": "test_string",
               "priority": "crossBorder",
               "reference": "test_string",
@@ -453,6 +512,63 @@
     },
     {
       "test_id": "TC-POST-transfers-002",
+      "title": "POST /transfers - Happy path: example-based request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request to /transfers with example request body",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: accountHolder, amount, balanceAccount, balanceAccountId, category, counterparty"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-003",
       "title": "POST /transfers - Negative missing: required body field 'category' omitted",
       "category": "negative_missing",
       "requirement_ref": "POST /transfers",
@@ -470,59 +586,34 @@
             "headers": {},
             "body": {
               "amount": {
-                "currency": "USD",
-                "value": 100000
+                "currency": "EUR",
+                "value": 110000
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "counterparty": {
-                "balanceAccountId": "test_string",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
                     },
-                    "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "fullName": "A. Klaassen"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
-                    "type": "auLocal"
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
                   }
-                },
-                "transferInstrumentId": "test_string"
+                }
               },
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "crossBorder",
-              "reference": "test_string",
-              "referenceForBeneficiary": "test_string",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
             }
           }
         }
@@ -533,7 +624,7 @@
       }
     },
     {
-      "test_id": "TC-POST-transfers-003",
+      "test_id": "TC-POST-transfers-004",
       "title": "POST /transfers - Negative missing: required body field 'amount' omitted",
       "category": "negative_missing",
       "requirement_ref": "POST /transfers",
@@ -550,57 +641,32 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "category": "bank",
               "counterparty": {
-                "balanceAccountId": "test_string",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
                     },
-                    "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "fullName": "A. Klaassen"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
-                    "type": "auLocal"
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
                   }
-                },
-                "transferInstrumentId": "test_string"
+                }
               },
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "crossBorder",
-              "reference": "test_string",
-              "referenceForBeneficiary": "test_string",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
             }
           }
         }
@@ -611,7 +677,7 @@
       }
     },
     {
-      "test_id": "TC-POST-transfers-004",
+      "test_id": "TC-POST-transfers-005",
       "title": "POST /transfers - Negative missing: required body field 'counterparty' omitted",
       "category": "negative_missing",
       "requirement_ref": "POST /transfers",
@@ -629,33 +695,15 @@
             "headers": {},
             "body": {
               "amount": {
-                "currency": "USD",
-                "value": 100000
+                "currency": "EUR",
+                "value": 110000
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "category": "bank",
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "crossBorder",
-              "reference": "test_string",
-              "referenceForBeneficiary": "test_string",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
             }
           }
         }
@@ -666,7 +714,7 @@
       }
     },
     {
-      "test_id": "TC-POST-transfers-005",
+      "test_id": "TC-POST-transfers-006",
       "title": "POST /transfers - Negative invalid: body field 'category'='invalid_enum_value_xyz'",
       "category": "negative_invalid",
       "requirement_ref": "POST /transfers",
@@ -684,60 +732,35 @@
             "headers": {},
             "body": {
               "amount": {
-                "currency": "USD",
-                "value": 100000
+                "currency": "EUR",
+                "value": 110000
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "category": "invalid_enum_value_xyz",
               "counterparty": {
-                "balanceAccountId": "test_string",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
                     },
-                    "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "fullName": "A. Klaassen"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
-                    "type": "auLocal"
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
                   }
-                },
-                "transferInstrumentId": "test_string"
+                }
               },
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "crossBorder",
-              "reference": "test_string",
-              "referenceForBeneficiary": "test_string",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
             }
           }
         }
@@ -748,7 +771,7 @@
       }
     },
     {
-      "test_id": "TC-POST-transfers-006",
+      "test_id": "TC-POST-transfers-007",
       "title": "POST /transfers - Negative invalid: body field 'priority'='invalid_enum_value_xyz'",
       "category": "negative_invalid",
       "requirement_ref": "POST /transfers",
@@ -766,60 +789,35 @@
             "headers": {},
             "body": {
               "amount": {
-                "currency": "USD",
-                "value": 100000
+                "currency": "EUR",
+                "value": 110000
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "category": "bank",
               "counterparty": {
-                "balanceAccountId": "test_string",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
                     },
-                    "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "fullName": "A. Klaassen"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
-                    "type": "auLocal"
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
                   }
-                },
-                "transferInstrumentId": "test_string"
+                }
               },
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "invalid_enum_value_xyz",
-              "reference": "test_string",
-              "referenceForBeneficiary": "test_string",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
             }
           }
         }
@@ -830,7 +828,7 @@
       }
     },
     {
-      "test_id": "TC-POST-transfers-007",
+      "test_id": "TC-POST-transfers-008",
       "title": "POST /transfers - Boundary: body reference above_maxLength(81)",
       "category": "boundary",
       "requirement_ref": "POST /transfers",
@@ -848,60 +846,35 @@
             "headers": {},
             "body": {
               "amount": {
-                "currency": "USD",
-                "value": 100000
+                "currency": "EUR",
+                "value": 110000
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "category": "bank",
               "counterparty": {
-                "balanceAccountId": "test_string",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
                     },
-                    "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "fullName": "A. Klaassen"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
-                    "type": "auLocal"
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
                   }
-                },
-                "transferInstrumentId": "test_string"
+                }
               },
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "crossBorder",
               "reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "referenceForBeneficiary": "test_string",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
             }
           }
         }
@@ -912,7 +885,7 @@
       }
     },
     {
-      "test_id": "TC-POST-transfers-008",
+      "test_id": "TC-POST-transfers-009",
       "title": "POST /transfers - Boundary: body reference at_maxLength(80)",
       "category": "boundary",
       "requirement_ref": "POST /transfers",
@@ -930,60 +903,35 @@
             "headers": {},
             "body": {
               "amount": {
-                "currency": "USD",
-                "value": 100000
+                "currency": "EUR",
+                "value": 110000
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "category": "bank",
               "counterparty": {
-                "balanceAccountId": "test_string",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
                     },
-                    "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "fullName": "A. Klaassen"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
-                    "type": "auLocal"
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
                   }
-                },
-                "transferInstrumentId": "test_string"
+                }
               },
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "crossBorder",
               "reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "referenceForBeneficiary": "test_string",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
             }
           }
         }
@@ -994,7 +942,7 @@
       }
     },
     {
-      "test_id": "TC-POST-transfers-009",
+      "test_id": "TC-POST-transfers-010",
       "title": "POST /transfers - Boundary: body referenceForBeneficiary above_maxLength(81)",
       "category": "boundary",
       "requirement_ref": "POST /transfers",
@@ -1012,60 +960,35 @@
             "headers": {},
             "body": {
               "amount": {
-                "currency": "USD",
-                "value": 100000
+                "currency": "EUR",
+                "value": 110000
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "category": "bank",
               "counterparty": {
-                "balanceAccountId": "test_string",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
                     },
-                    "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "fullName": "A. Klaassen"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
-                    "type": "auLocal"
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
                   }
-                },
-                "transferInstrumentId": "test_string"
+                }
               },
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "crossBorder",
-              "reference": "test_string",
-              "referenceForBeneficiary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
           }
         }
@@ -1076,7 +999,7 @@
       }
     },
     {
-      "test_id": "TC-POST-transfers-010",
+      "test_id": "TC-POST-transfers-011",
       "title": "POST /transfers - Boundary: body referenceForBeneficiary at_maxLength(80)",
       "category": "boundary",
       "requirement_ref": "POST /transfers",
@@ -1094,60 +1017,35 @@
             "headers": {},
             "body": {
               "amount": {
-                "currency": "USD",
-                "value": 100000
+                "currency": "EUR",
+                "value": 110000
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
               "category": "bank",
               "counterparty": {
-                "balanceAccountId": "test_string",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
                     },
-                    "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "fullName": "A. Klaassen"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
-                    "type": "auLocal"
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
                   }
-                },
-                "transferInstrumentId": "test_string"
+                }
               },
-              "description": "test_string",
-              "id": "test_string",
-              "paymentInstrumentId": "test_string",
+              "description": "Your description for the transfer",
               "priority": "crossBorder",
-              "reference": "test_string",
-              "referenceForBeneficiary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "ultimateParty": {
-                "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
-                },
-                "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
-              }
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
           }
         }
