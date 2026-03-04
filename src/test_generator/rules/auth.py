@@ -1,74 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from test_generator.models import TestCase, TestStep, InputData, ExpectedResult
 from test_generator.sample_data import generate_valid_value
 
 
-# Legacy heuristic: header names that look like authentication
 AUTH_HEADER_NAMES = {"api_key", "authorization", "x-api-key", "token", "bearer"}
 
 
-def _get_auth_headers_legacy(endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return header params that look like authentication (legacy heuristic)."""
+def _get_auth_headers(endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return header params that look like authentication."""
     return [
         p for p in endpoint.get("header_params", [])
         if p["name"].lower() in AUTH_HEADER_NAMES
     ]
-
-
-def _resolve_effective_security(
-    endpoint: Dict[str, Any],
-    ir_data: Dict[str, Any],
-) -> List[Dict[str, str]]:
-    """Resolve which auth headers/params to test from structured security info.
-
-    Returns a list of dicts, each with:
-      - "name": the header name to test (e.g. "X-API-Key", "Authorization")
-      - "type": "apiKey" or "http"
-    """
-    schemes_list = ir_data.get("security_schemes", [])
-    if not schemes_list:
-        return []
-
-    # Build lookup: scheme_id -> scheme dict
-    scheme_map: Dict[str, Dict[str, Any]] = {}
-    for s in schemes_list:
-        scheme_map[s["scheme_id"]] = s
-
-    # Per-operation security overrides top-level
-    security_reqs = endpoint.get("security")
-    if security_reqs is None:
-        security_reqs = ir_data.get("security")
-    if not security_reqs:
-        return []
-
-    auth_targets: List[Dict[str, str]] = []
-    seen_names: set = set()
-
-    for req in security_reqs:
-        if not isinstance(req, dict):
-            continue
-        for scheme_id in req:
-            scheme = scheme_map.get(scheme_id)
-            if not scheme:
-                continue
-            stype = scheme.get("type", "")
-
-            if stype == "apiKey" and scheme.get("location") == "header":
-                hname = scheme.get("name", "")
-                if hname and hname not in seen_names:
-                    auth_targets.append({"name": hname, "type": "apiKey"})
-                    seen_names.add(hname)
-
-            elif stype == "http":
-                hname = "Authorization"
-                if hname not in seen_names:
-                    auth_targets.append({"name": hname, "type": "http"})
-                    seen_names.add(hname)
-
-    return auth_targets
 
 
 def _build_valid_params(params: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -82,23 +28,9 @@ def _render_path(path: str, path_params: Dict[str, Any]) -> str:
     return result
 
 
-def generate_auth_cases(
-    endpoint: Dict[str, Any],
-    *,
-    ir_data: Optional[Dict[str, Any]] = None,
-) -> List[TestCase]:
-    # Resolve which auth headers to test
-    auth_targets: List[Dict[str, str]] = []
-
-    if ir_data and ir_data.get("security_schemes"):
-        auth_targets = _resolve_effective_security(endpoint, ir_data)
-
-    # Fallback to legacy heuristic if no structured security
-    if not auth_targets:
-        for p in _get_auth_headers_legacy(endpoint):
-            auth_targets.append({"name": p["name"], "type": "apiKey"})
-
-    if not auth_targets:
+def generate_auth_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
+    auth_params = _get_auth_headers(endpoint)
+    if not auth_params:
         return []
 
     ref = endpoint["endpoint_id"]
@@ -115,8 +47,8 @@ def generate_auth_cases(
     rendered = _render_path(path, valid_path)
     cases: List[TestCase] = []
 
-    for target in auth_targets:
-        hname = target["name"]
+    for auth_param in auth_params:
+        hname = auth_param["name"]
 
         # 1. Missing auth header
         headers_no_auth = {k: v for k, v in valid_headers.items() if k != hname}
