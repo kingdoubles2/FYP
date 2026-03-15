@@ -36,11 +36,15 @@ class EndpointIR:
 class ParsedSpecIR:
     title: str
     version: str
+    base_url: Optional[str]
     endpoints: List[EndpointIR]
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "title": self.title,
             "version": self.version,
-            "endpoints": [ep.to_dict() for ep in self.endpoints],
         }
+        if self.base_url:
+            d["base_url"] = self.base_url
+        d["endpoints"] = [ep.to_dict() for ep in self.endpoints]
+        return d
