@@ -1,6 +1,7 @@
 {
   "title": "Swagger Petstore - OpenAPI 3.0",
   "version": "1.0.27",
+  "base_url": "/api/v3",
   "endpoints": [
     {
       "endpoint_id": "PUT /pet",
