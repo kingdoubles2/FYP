@@ -1,7 +1,8 @@
 {
   "api_title": "Swagger Petstore - OpenAPI 3.0",
   "api_version": "1.0.27",
-  "generated_at": "2026-03-03T23:46:41Z",
+  "generated_at": "2026-03-15T22:27:32Z",
+  "base_url": "/api/v3",
   "test_cases": [
     {
       "test_id": "TC-PUT-pet-001",

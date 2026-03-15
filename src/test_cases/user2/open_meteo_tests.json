@@ -1,7 +1,8 @@
 {
   "api_title": "Open-Meteo APIs",
   "api_version": "1.0",
-  "generated_at": "2026-03-03T23:46:41Z",
+  "generated_at": "2026-03-15T22:27:32Z",
+  "base_url": "https://api.open-meteo.com",
   "test_cases": [
     {
       "test_id": "TC-GET-v1-forecast-001",
