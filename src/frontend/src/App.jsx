@@ -4,6 +4,7 @@ import { buildSpecPreview } from "./testPreview.js";
 
 const SESSION_KEY = "contractguard.session.v1";
 const SPEC_CACHE_KEY = "contractguard.spec-cache.v1";
+const SPEC_FILE_EXTENSIONS = [".json", ".yaml", ".yml"];
 
 function decodeJwtPayload(token) {
   if (!token) {
@@ -96,11 +97,33 @@ function formatDate(value) {
   return date.toLocaleString();
 }
 
-function keepScrollOnToggle() {
-  const currentY = window.scrollY;
-  requestAnimationFrame(() => {
-    window.scrollTo({ top: currentY });
-  });
+function cloneJsonValue(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function isSupportedSpecFile(file) {
+  const name = String(file?.name || "").toLowerCase();
+  return SPEC_FILE_EXTENSIONS.some((extension) => name.endsWith(extension));
+}
+
+function isLikelyInvalidSpecError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    message.includes("openapi") ||
+    message.includes("missing 'paths'") ||
+    message.includes("missing paths") ||
+    message.includes("invalid json") ||
+    message.includes("invalid yaml") ||
+    message.includes("yaml")
+  );
 }
 
 function toPrettyJson(value) {
@@ -113,6 +136,87 @@ function toPrettyJson(value) {
   } catch {
     return String(value);
   }
+}
+
+function deepEqual(left, right) {
+  if (left === right) {
+    return true;
+  }
+
+  if (Number.isNaN(left) && Number.isNaN(right)) {
+    return true;
+  }
+
+  if (typeof left !== typeof right) {
+    return false;
+  }
+
+  if (left === null || right === null) {
+    return left === right;
+  }
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+
+    return left.every((value, index) => deepEqual(value, right[index]));
+  }
+
+  if (typeof left === "object") {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right || {});
+
+    if (leftKeys.length !== rightKeys.length) {
+      return false;
+    }
+
+    return leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && deepEqual(left[key], right[key]));
+  }
+
+  return false;
+}
+
+function applyGeneratedTestEdit(generatedTests, testIndex, field, value) {
+  return generatedTests.map((testCase, index) => {
+    if (index !== testIndex) {
+      return testCase;
+    }
+
+    if (field === "expected_result") {
+      return {
+        ...testCase,
+        expected_result: value,
+      };
+    }
+
+    const steps = Array.isArray(testCase.steps) ? [...testCase.steps] : [];
+    const firstStep = steps[0] && typeof steps[0] === "object"
+      ? { ...steps[0] }
+      : { step_number: 1, action: "Execute request", input_data: {} };
+
+    firstStep.input_data = value;
+    steps[0] = firstStep;
+
+    return {
+      ...testCase,
+      steps,
+    };
+  });
+}
+
+function applyGeneratedTestReset(generatedTests, originalGeneratedTests, testIndex) {
+  if (!Array.isArray(originalGeneratedTests) || !originalGeneratedTests[testIndex]) {
+    return generatedTests;
+  }
+
+  return generatedTests.map((testCase, index) => {
+    if (index !== testIndex) {
+      return testCase;
+    }
+
+    return cloneJsonValue(originalGeneratedTests[testIndex]);
+  });
 }
 
 function prettifyCategory(categoryKey) {
@@ -195,13 +299,26 @@ function UploadPanel({ loading, onUpload, message, error }) {
       <div className="panel-header">
         <p className="eyebrow">Uploads</p>
         <h2>Upload one or more API specs</h2>
-        <p className="muted">Select JSON or YAML OpenAPI files. Multiple uploads are supported.</p>
+        <p className="muted">Select JSON/YAML files or pick a folder. Multiple uploads are supported.</p>
       </div>
 
       <label className="upload-dropzone">
         <input type="file" accept=".json,.yaml,.yml" multiple onChange={onUpload} disabled={loading} />
         <span>{loading ? "Uploading..." : "Choose API files"}</span>
-        <small>Supports multiple selection</small>
+        <small>Supports multiple files</small>
+      </label>
+
+      <label className="folder-upload-inline">
+        <input
+          type="file"
+          multiple
+          webkitdirectory=""
+          directory=""
+          mozdirectory=""
+          onChange={onUpload}
+          disabled={loading}
+        />
+        <span>{loading ? "Uploading..." : "Or choose a folder"}</span>
       </label>
 
       {message ? <p className="message success">{message}</p> : null}
@@ -265,7 +382,102 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
   );
 }
 
-function SpecDetails({ entry }) {
+function SpecDetails({ entry, onUpdateTestCase, onResetTestCase }) {
+  const generatedCases = Array.isArray(entry?.generatedTests) ? entry.generatedTests : [];
+  const originalCases = Array.isArray(entry?.originalGeneratedTests) ? entry.originalGeneratedTests : generatedCases;
+  const [jsonDrafts, setJsonDrafts] = useState({});
+
+  useEffect(() => {
+    if (!entry) {
+      setJsonDrafts({});
+      return;
+    }
+
+    const nextDrafts = {};
+    generatedCases.forEach((testCase, index) => {
+      const firstStep = testCase?.steps?.[0] || null;
+      nextDrafts[index] = {
+        inputDataText: toPrettyJson(firstStep?.input_data ?? null),
+        expectedResultText: toPrettyJson(testCase?.expected_result ?? null),
+        inputDataError: "",
+        expectedResultError: "",
+      };
+    });
+
+    setJsonDrafts(nextDrafts);
+  }, [entry?.id]);
+
+  function handleJsonEdit(testIndex, field, nextText) {
+    const textKey = field === "input_data" ? "inputDataText" : "expectedResultText";
+    const errorKey = field === "input_data" ? "inputDataError" : "expectedResultError";
+
+    let nextError = "";
+    let parsedValue = null;
+
+    try {
+      parsedValue = JSON.parse(nextText);
+      if (!parsedValue || typeof parsedValue !== "object" || Array.isArray(parsedValue)) {
+        nextError = "Must be a JSON object.";
+      }
+    } catch {
+      nextError = "Invalid JSON.";
+    }
+
+    setJsonDrafts((current) => ({
+      ...current,
+      [testIndex]: {
+        ...(current[testIndex] || {}),
+        [textKey]: nextText,
+        [errorKey]: nextError,
+      },
+    }));
+
+    if (!nextError && entry) {
+      onUpdateTestCase?.(entry.id, testIndex, field, parsedValue);
+    }
+  }
+
+  function handleResetCase(testIndex) {
+    if (!entry) {
+      return;
+    }
+
+    const originalCase = originalCases[testIndex];
+    const firstStep = originalCase?.steps?.[0] || null;
+
+    setJsonDrafts((current) => ({
+      ...current,
+      [testIndex]: {
+        ...(current[testIndex] || {}),
+        inputDataText: toPrettyJson(firstStep?.input_data ?? null),
+        expectedResultText: toPrettyJson(originalCase?.expected_result ?? null),
+        inputDataError: "",
+        expectedResultError: "",
+      },
+    }));
+
+    onResetTestCase?.(entry.id, testIndex);
+  }
+
+  function handleSummaryToggleNoScroll(event) {
+    event.preventDefault();
+    const details = event.currentTarget.parentElement;
+    if (!details) {
+      return;
+    }
+
+    const lockedY = window.scrollY;
+    details.open = !details.open;
+
+    // Re-apply on consecutive frames to neutralize browser scroll anchoring.
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: lockedY });
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: lockedY });
+      });
+    });
+  }
+
   if (!entry) {
     return (
       <section className="panel details-panel">
@@ -277,13 +489,12 @@ function SpecDetails({ entry }) {
     );
   }
 
-  const generatedCases = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
-  const casesByCategory = generatedCases.reduce((acc, testCase) => {
+  const casesByCategory = generatedCases.reduce((acc, testCase, index) => {
     const key = testCase?.category || "other";
     if (!acc[key]) {
       acc[key] = [];
     }
-    acc[key].push(testCase);
+    acc[key].push({ testCase, index });
     return acc;
   }, {});
 
@@ -292,7 +503,7 @@ function SpecDetails({ entry }) {
       <div className="panel-header">
         <p className="eyebrow">Spec Detail</p>
         <h2>{entry.title || entry.filename}</h2>
-        <p className="muted">Review metadata, test coverage overview, and endpoint details.</p>
+        <p className="muted">Review metadata, test coverage overview, and edit generated JSON before running tests.</p>
       </div>
 
       <div className="stats-grid">
@@ -305,8 +516,8 @@ function SpecDetails({ entry }) {
       {entry.preview ? (
         <>
           <div className="expandable-list">
-            <details className="expandable" onToggle={keepScrollOnToggle}>
-              <summary>Test Coverage</summary>
+            <details className="expandable">
+              <summary onClick={handleSummaryToggleNoScroll}>Test Coverage</summary>
               <div className="expandable-body">
                 <div className="preview-grid">
                   <div className="subpanel">
@@ -321,26 +532,36 @@ function SpecDetails({ entry }) {
                       {Object.entries(entry.preview.totals).map(([category, count]) => {
                         const categoryCases = casesByCategory[category] || [];
                         return (
-                          <details key={category} className="category-detail" onToggle={keepScrollOnToggle}>
-                            <summary>
+                          <details key={category} className="category-detail">
+                            <summary onClick={handleSummaryToggleNoScroll}>
                               <span>{prettifyCategory(category)}</span>
                               <strong>{count}</strong>
                             </summary>
                             <div className="category-body">
                               {categoryCases.length > 0 ? (
                                 <div className="testcase-list">
-                                  {categoryCases.map((testCase) => {
+                                  {categoryCases.map(({ testCase, index: testIndex }) => {
                                     const firstStep = testCase.steps?.[0] || null;
                                     const inputData = firstStep?.input_data ?? null;
                                     const expectedResult = testCase.expected_result ?? null;
+                                    const originalCase = originalCases[testIndex] || {};
+                                    const originalFirstStep = originalCase?.steps?.[0] || null;
+                                    const originalInputData = originalFirstStep?.input_data ?? null;
+                                    const originalExpectedResult = originalCase?.expected_result ?? null;
+                                    const draft = jsonDrafts[testIndex] || {};
+                                    const inputDataText = draft.inputDataText ?? toPrettyJson(inputData);
+                                    const expectedResultText = draft.expectedResultText ?? toPrettyJson(expectedResult);
+                                    const inputDataError = draft.inputDataError || "";
+                                    const expectedResultError = draft.expectedResultError || "";
+                                    const hasEdits =
+                                      !deepEqual(inputData, originalInputData) || !deepEqual(expectedResult, originalExpectedResult);
 
                                     return (
                                       <details
-                                        key={testCase.test_id || testCase.title}
+                                        key={testCase.test_id || `${testCase.title}-${testIndex}`}
                                         className="testcase-detail"
-                                        onToggle={keepScrollOnToggle}
                                       >
-                                        <summary>
+                                        <summary onClick={handleSummaryToggleNoScroll}>
                                           <span>{testCase.test_id || "Test case"}</span>
                                           <span>{testCase.method} {testCase.path}</span>
                                         </summary>
@@ -351,13 +572,36 @@ function SpecDetails({ entry }) {
                                           </p>
 
                                           <div className="json-section">
-                                            <span className="json-label">Input Data (JSON)</span>
-                                            <pre className="json-block">{toPrettyJson(inputData)}</pre>
+                                            <span className="json-label">Input Data (Editable JSON)</span>
+                                            <textarea
+                                              className="json-editor"
+                                              value={inputDataText}
+                                              onChange={(event) => handleJsonEdit(testIndex, "input_data", event.target.value)}
+                                              rows={8}
+                                              spellCheck={false}
+                                            />
+                                            {inputDataError ? <p className="json-error">{inputDataError}</p> : null}
                                           </div>
 
                                           <div className="json-section">
-                                            <span className="json-label">Expected Result (JSON)</span>
-                                            <pre className="json-block">{toPrettyJson(expectedResult)}</pre>
+                                            <span className="json-label">Expected Result (Editable JSON)</span>
+                                            <textarea
+                                              className="json-editor"
+                                              value={expectedResultText}
+                                              onChange={(event) => handleJsonEdit(testIndex, "expected_result", event.target.value)}
+                                              rows={8}
+                                              spellCheck={false}
+                                            />
+                                            {expectedResultError ? <p className="json-error">{expectedResultError}</p> : null}
+                                            {hasEdits ? (
+                                              <button
+                                                type="button"
+                                                className="reset-text-button"
+                                                onClick={() => handleResetCase(testIndex)}
+                                              >
+                                                Reset
+                                              </button>
+                                            ) : null}
                                           </div>
                                         </div>
                                       </details>
@@ -389,13 +633,13 @@ function SpecDetails({ entry }) {
               </div>
             </details>
 
-            <details className="expandable" onToggle={keepScrollOnToggle}>
-              <summary>Endpoint Breakdown ({entry.preview.endpoints.length})</summary>
+            <details className="expandable">
+              <summary onClick={handleSummaryToggleNoScroll}>Endpoint Breakdown ({entry.preview.endpoints.length})</summary>
               <div className="expandable-body">
                 <div className="endpoint-list">
                   {entry.preview.endpoints.map((endpoint) => (
-                    <details key={endpoint.endpointId} className="endpoint-card" onToggle={keepScrollOnToggle}>
-                      <summary>
+                    <details key={endpoint.endpointId} className="endpoint-card">
+                      <summary onClick={handleSummaryToggleNoScroll}>
                         <span className={`method-badge method-${endpoint.method.toLowerCase()}`}>{endpoint.method}</span>
                         <code>{endpoint.path}</code>
                         <span className="endpoint-total">Estimated total: {endpoint.totalCases}</span>
@@ -503,11 +747,16 @@ export default function App() {
           ? rows.map((row) => {
               const cached = userCache[row.id];
               const generatedTests = Array.isArray(cached?.generatedTests) ? cached.generatedTests : [];
+              const originalGeneratedTests = Array.isArray(cached?.originalGeneratedTests)
+                ? cached.originalGeneratedTests
+                : generatedTests;
               return {
                 ...row,
+                created_at: row.created_at || cached?.createdAt || cached?.uploadedAt || null,
                 preview: cached?.preview || null,
                 parsed: cached?.parsed || null,
                 generatedTests,
+                originalGeneratedTests,
                 totalCases: cached?.preview?.totalCases || generatedTests.length || 0,
               };
             })
@@ -532,12 +781,99 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [session, specCache]);
+  }, [session]);
 
   const selectedEntry = useMemo(
     () => specHistory.find((entry) => entry.id === selectedSpecId) || null,
     [selectedSpecId, specHistory],
   );
+
+  function handleUpdateTestCase(specId, testIndex, field, value) {
+    setSpecHistory((current) =>
+      current.map((entry) => {
+        if (entry.id !== specId) {
+          return entry;
+        }
+
+        const tests = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
+        return {
+          ...entry,
+          generatedTests: applyGeneratedTestEdit(tests, testIndex, field, value),
+        };
+      }),
+    );
+
+    if (!session?.userId) {
+      return;
+    }
+
+    setSpecCache((current) => {
+      const userCache = { ...(current[session.userId] || {}) };
+      const existing = userCache[specId];
+      if (!existing) {
+        return current;
+      }
+
+      const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
+      userCache[specId] = {
+        ...existing,
+        generatedTests: applyGeneratedTestEdit(currentTests, testIndex, field, value),
+        originalGeneratedTests: Array.isArray(existing.originalGeneratedTests)
+          ? existing.originalGeneratedTests
+          : cloneJsonValue(currentTests),
+      };
+
+      return {
+        ...current,
+        [session.userId]: userCache,
+      };
+    });
+  }
+
+  function handleResetTestCase(specId, testIndex) {
+    setSpecHistory((current) =>
+      current.map((entry) => {
+        if (entry.id !== specId) {
+          return entry;
+        }
+
+        const tests = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
+        const originalTests = Array.isArray(entry.originalGeneratedTests) ? entry.originalGeneratedTests : tests;
+        return {
+          ...entry,
+          generatedTests: applyGeneratedTestReset(tests, originalTests, testIndex),
+        };
+      }),
+    );
+
+    if (!session?.userId) {
+      return;
+    }
+
+    setSpecCache((current) => {
+      const userCache = { ...(current[session.userId] || {}) };
+      const existing = userCache[specId];
+      if (!existing) {
+        return current;
+      }
+
+      const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
+      const originalTests = Array.isArray(existing.originalGeneratedTests)
+        ? existing.originalGeneratedTests
+        : currentTests;
+
+      userCache[specId] = {
+        ...existing,
+        generatedTests: applyGeneratedTestReset(currentTests, originalTests, testIndex),
+        originalGeneratedTests: originalTests,
+      };
+
+      return {
+        ...current,
+        [session.userId]: userCache,
+      };
+    });
+  }
 
   async function handleAuthSubmit(event) {
     event.preventDefault();
@@ -601,10 +937,19 @@ export default function App() {
   }
 
   async function handleUpload(event) {
-    const files = Array.from(event.target.files || []);
+    const selectedFiles = Array.from(event.target.files || []);
     event.target.value = "";
 
-    if (files.length === 0 || !session?.token) {
+    if (selectedFiles.length === 0 || !session?.token) {
+      return;
+    }
+
+    const files = selectedFiles.filter(isSupportedSpecFile);
+    const skippedCount = selectedFiles.length - files.length;
+
+    if (files.length === 0) {
+      setUploadError("No JSON/YAML OpenAPI files found in your selection.");
+      setUploadMessage("");
       return;
     }
 
@@ -615,32 +960,85 @@ export default function App() {
     try {
       const nextUserCache = { ...(specCache[session.userId] || {}) };
       let lastUploadedId = null;
+      const uploadedEntries = [];
+      let skippedInvalidSpecCount = 0;
 
       for (const file of files) {
-        const payload = await uploadSpecFile(session.token, file);
-        const parsed = payload?.parsed || null;
-        const preview = parsed ? buildSpecPreview(parsed) : null;
-        const generatedTests = Array.isArray(payload?.generated_tests?.test_cases) ? payload.generated_tests.test_cases : [];
-        lastUploadedId = payload?.id ?? lastUploadedId;
+        try {
+          const payload = await uploadSpecFile(session.token, file);
+          const parsed = payload?.parsed || null;
+          const preview = parsed ? buildSpecPreview(parsed) : null;
+          const rawGeneratedTests = Array.isArray(payload?.generated_tests?.test_cases) ? payload.generated_tests.test_cases : [];
+          const generatedTests = cloneJsonValue(rawGeneratedTests) || [];
+          const originalGeneratedTests = cloneJsonValue(rawGeneratedTests) || [];
+          const createdAt = new Date().toISOString();
+          lastUploadedId = payload?.id ?? lastUploadedId;
 
-        nextUserCache[payload.id] = {
-          filename: file.name,
-          uploadedAt: new Date().toISOString(),
-          parsed,
-          preview,
-          generatedTests,
-        };
+          nextUserCache[payload.id] = {
+            filename: file.name,
+            uploadedAt: createdAt,
+            createdAt,
+            parsed,
+            preview,
+            generatedTests,
+            originalGeneratedTests,
+          };
+
+          uploadedEntries.push({
+            id: payload.id,
+            filename: file.name,
+            title: parsed?.title || file.name,
+            version: parsed?.version || "Unknown",
+            created_at: createdAt,
+            parsed,
+            preview,
+            generatedTests,
+            originalGeneratedTests,
+            totalCases: preview?.totalCases || generatedTests.length || 0,
+          });
+        } catch (error) {
+          if (isLikelyInvalidSpecError(error)) {
+            skippedInvalidSpecCount += 1;
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      if (uploadedEntries.length === 0) {
+        const skippedTotal = skippedCount + skippedInvalidSpecCount;
+        setUploadError(
+          skippedTotal > 0
+            ? `No valid OpenAPI specs were uploaded. Skipped ${skippedTotal} file${skippedTotal === 1 ? "" : "s"}.`
+            : "No files were uploaded.",
+        );
+        setUploadMessage("");
+        return;
       }
 
       setSpecCache((current) => ({
         ...current,
         [session.userId]: nextUserCache,
       }));
+      setSpecHistory((current) => {
+        const byId = new Map(current.map((entry) => [entry.id, entry]));
+        for (const entry of uploadedEntries) {
+          byId.set(entry.id, entry);
+        }
+
+        return Array.from(byId.values()).sort((a, b) => Number(b.id) - Number(a.id));
+      });
       if (lastUploadedId !== null) {
         setSelectedSpecId(lastUploadedId);
       }
 
-      setUploadMessage(`Uploaded ${files.length} file${files.length === 1 ? "" : "s"} successfully.`);
+      const skippedTotal = skippedCount + skippedInvalidSpecCount;
+      const skippedSuffix = skippedTotal > 0
+        ? ` Skipped ${skippedTotal} unsupported/invalid file${skippedTotal === 1 ? "" : "s"}.`
+        : "";
+      setUploadMessage(
+        `Uploaded ${uploadedEntries.length} valid spec file${uploadedEntries.length === 1 ? "" : "s"} successfully.${skippedSuffix}`,
+      );
     } catch (error) {
       setUploadError(error.message);
     } finally {
@@ -655,8 +1053,8 @@ export default function App() {
 
       <header className="hero">
         <div>
-          <p className="eyebrow">ContractGuard</p>
-          <h1>API Contract Testing Dashboard</h1>
+          <p className="eyebrow">API Contract Testing</p>
+          <h1>ContractGuard</h1>
           <p className="hero-copy">
             Service status: <span>{apiStatus}</span>
           </p>
@@ -723,7 +1121,11 @@ export default function App() {
             />
           </div>
 
-          <SpecDetails entry={selectedEntry} />
+          <SpecDetails
+            entry={selectedEntry}
+            onUpdateTestCase={handleUpdateTestCase}
+            onResetTestCase={handleResetTestCase}
+          />
         </main>
       )}
     </div>

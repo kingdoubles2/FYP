@@ -376,10 +376,15 @@ code {
   border: 1.5px dashed #b0c0da;
   background: linear-gradient(135deg, rgba(245, 248, 255, 0.95), rgba(255, 251, 243, 0.95));
   text-align: center;
+  cursor: pointer;
 }
 
 .upload-dropzone input {
   display: none;
+}
+
+.upload-dropzone:hover {
+  border-color: #7ba6ff;
 }
 
 .upload-dropzone span {
@@ -388,6 +393,19 @@ code {
 
 .upload-dropzone small {
   color: #657089;
+}
+
+.folder-upload-inline {
+  display: inline-block;
+  margin-top: 0.55rem;
+  color: #2f3f60;
+  font-size: 0.86rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.folder-upload-inline input {
+  display: none;
 }
 
 .history-list,
@@ -618,6 +636,44 @@ code {
   font-family: "Consolas", "Courier New", monospace;
   overflow: auto;
   max-height: 12rem;
+}
+
+.json-editor {
+  width: 100%;
+  margin: 0;
+  padding: 0.62rem;
+  border-radius: 0.55rem;
+  border: 1px solid #d8e0ef;
+  background: #f8fbff;
+  color: #29324a;
+  font-size: 0.79rem;
+  line-height: 1.4;
+  font-family: "Consolas", "Courier New", monospace;
+  resize: vertical;
+  min-height: 8rem;
+  max-height: 20rem;
+  overflow: auto;
+}
+
+.json-editor:focus {
+  outline: 2px solid rgba(76, 132, 255, 0.25);
+  border-color: #7ba6ff;
+}
+
+.json-error {
+  margin: 0.35rem 0 0;
+  color: #8b2323;
+  font-size: 0.78rem;
+}
+
+.reset-text-button {
+  border: 0;
+  background: transparent;
+  color: #b32a2a;
+  padding: 0;
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  display: inline-block;
 }
 
 .endpoint-section {
