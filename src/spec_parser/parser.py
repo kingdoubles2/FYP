@@ -281,6 +281,16 @@ def _backfill_param_examples(
             param_ir.schema["example"] = val
 
 
+def _extract_first_server_url(servers: Any) -> Optional[str]:
+    """Return the URL from the first valid entry in an OpenAPI servers list."""
+    if not isinstance(servers, list):
+        return None
+    for srv in servers:
+        if isinstance(srv, dict) and srv.get("url"):
+            return srv["url"]
+    return None
+
+
 def parse_openapi(spec_text: str) -> ParsedSpecIR:
     spec = load_spec(spec_text)
 
@@ -342,4 +352,23 @@ def parse_openapi(spec_text: str) -> ParsedSpecIR:
             )
             endpoints.append(endpoint_ir)
 
-    return ParsedSpecIR(title=title, version=version, endpoints=endpoints)
+    # Extract base URL from OpenAPI servers field.
+    # OpenAPI 3 allows servers at global, path, and operation levels.
+    # We check global first, then fall back to the first path/operation server.
+    base_url: Optional[str] = _extract_first_server_url(spec.get("servers"))
+    if not base_url:
+        for _path, path_item in paths.items():
+            if not isinstance(path_item, dict):
+                continue
+            base_url = _extract_first_server_url(path_item.get("servers"))
+            if base_url:
+                break
+            for _method, op in path_item.items():
+                if isinstance(op, dict):
+                    base_url = _extract_first_server_url(op.get("servers"))
+                    if base_url:
+                        break
+            if base_url:
+                break
+
+    return ParsedSpecIR(title=title, version=version, base_url=base_url, endpoints=endpoints)
