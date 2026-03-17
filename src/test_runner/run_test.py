@@ -318,6 +318,8 @@ def run_suite(
             print(f"  FAIL  {label} (expected {exp_display}, got {status})")
             if result["error_message"]:
                 print(f"        Error: {result['error_message']}")
+            if result["response_snippet"]:
+                print(f"        Response: {result['response_snippet']}")
 
             # Detect auth wall: if first 3 requests all return 401 and
             # no auth was provided, stop early and tell the user.
