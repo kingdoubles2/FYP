@@ -7,7 +7,7 @@ stages:
 before_script:
   - python --version
   - pip install --upgrade pip
-  - pip install pyyaml flake8
+  - pip install pyyaml flake8 requests
 
 #lint:
   #stage: lint
@@ -43,3 +43,17 @@ generate-tests:
     paths:
       - src/test_cases/
     expire_in: 1 week
+
+run-tests:
+  stage: test
+  script:
+    - cd src
+    - python test_runner/run_test.py test_cases/ --json-output test_runner_results.json
+    - cat test_runner_results.json
+  needs:
+    - generate-tests
+  artifacts:
+    paths:
+      - src/test_runner_results.json
+    expire_in: 1 week
+  allow_failure: true
