@@ -25,6 +25,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RunTestsRequest(BaseModel):
+    api_title: Optional[str] = None
+    api_version: Optional[str] = None
+    base_url: Optional[str] = None
+    test_cases: list[dict[str, Any]]
+    timeout: int = 10
+    bearer_token: Optional[str] = None
+    api_key: Optional[str] = None
+    api_key_header: Optional[str] = None
+
+
 def _validate_credentials(req: RegisterRequest | LoginRequest) -> None:
     email = req.email.strip().lower()
     if "@" not in email or "." not in email.split("@")[-1]:
@@ -147,6 +158,60 @@ async def upload_ir(file: UploadFile = File(...)) -> dict[str, Any]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/tests/run")
+def run_generated_tests(req: RunTestsRequest, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    _ = current_user
+
+    if not req.test_cases:
+        raise HTTPException(status_code=400, detail="No test cases were provided.")
+
+    try:
+        from test_runner.run_test import resolve_base_url, run_suite
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Test runner unavailable. {exc}") from exc
+
+    resolved_base_url = resolve_base_url(None, req.base_url)
+    if not resolved_base_url:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid base_url found. Please provide an absolute http(s) URL in the generated test suite.",
+        )
+
+    timeout = max(1, min(int(req.timeout or 10), 120))
+
+    auth_headers: dict[str, str] = {}
+    if req.bearer_token:
+        auth_headers["Authorization"] = f"Bearer {req.bearer_token}"
+    elif req.api_key:
+        header_name = (req.api_key_header or "X-API-Key").strip() or "X-API-Key"
+        auth_headers[header_name] = req.api_key
+
+    suite_data = {
+        "api_title": req.api_title or "Generated Test Suite",
+        "api_version": req.api_version or "Unknown",
+        "base_url": req.base_url,
+        "test_cases": req.test_cases,
+    }
+
+    try:
+        results, summary = run_suite(
+            suite_data=suite_data,
+            base_url=resolved_base_url,
+            auth_headers=auth_headers,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Unable to execute test suite. {exc}") from exc
+
+    return {
+        "api_title": suite_data["api_title"],
+        "api_version": suite_data["api_version"],
+        "base_url": resolved_base_url,
+        "summary": summary,
+        "results": results,
+    }
 
 
 @app.get("/api/specs")

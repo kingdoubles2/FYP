@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { API_BASE_URL, clearSpecs, healthCheck, listSpecs, loginUser, registerUser, uploadSpecFile } from "./api.js";
+import {
+  API_BASE_URL,
+  clearSpecs,
+  healthCheck,
+  listSpecs,
+  loginUser,
+  registerUser,
+  runGeneratedTests,
+  uploadSpecFile,
+} from "./api.js";
 import { buildSpecPreview } from "./testPreview.js";
 
 const SESSION_KEY = "contractguard.session.v1";
@@ -382,7 +391,7 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
   );
 }
 
-function SpecDetails({ entry, onUpdateTestCase, onResetTestCase }) {
+function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRunTests }) {
   const generatedCases = Array.isArray(entry?.generatedTests) ? entry.generatedTests : [];
   const originalCases = Array.isArray(entry?.originalGeneratedTests) ? entry.originalGeneratedTests : generatedCases;
   const [jsonDrafts, setJsonDrafts] = useState({});
@@ -497,6 +506,95 @@ function SpecDetails({ entry, onUpdateTestCase, onResetTestCase }) {
     acc[key].push({ testCase, index });
     return acc;
   }, {});
+  const hasJsonDraftErrors = Object.values(jsonDrafts).some(
+    (draft) => Boolean(draft?.inputDataError || draft?.expectedResultError),
+  );
+  const latestRunSummary = runState?.result?.summary || null;
+
+  function buildRunPayloadFromDrafts() {
+    const nextDrafts = {};
+    const nextTestCases = [];
+    let hasValidationError = false;
+
+    generatedCases.forEach((testCase, testIndex) => {
+      const draft = jsonDrafts[testIndex] || {};
+      const firstStep = testCase?.steps?.[0] || null;
+      const inputDataText = draft.inputDataText ?? toPrettyJson(firstStep?.input_data ?? null);
+      const expectedResultText = draft.expectedResultText ?? toPrettyJson(testCase?.expected_result ?? null);
+
+      let parsedInputData = null;
+      let parsedExpectedResult = null;
+      let inputDataError = "";
+      let expectedResultError = "";
+
+      try {
+        parsedInputData = JSON.parse(inputDataText);
+        if (!parsedInputData || typeof parsedInputData !== "object" || Array.isArray(parsedInputData)) {
+          inputDataError = "Must be a JSON object.";
+        }
+      } catch {
+        inputDataError = "Invalid JSON.";
+      }
+
+      try {
+        parsedExpectedResult = JSON.parse(expectedResultText);
+        if (!parsedExpectedResult || typeof parsedExpectedResult !== "object" || Array.isArray(parsedExpectedResult)) {
+          expectedResultError = "Must be a JSON object.";
+        }
+      } catch {
+        expectedResultError = "Invalid JSON.";
+      }
+
+      nextDrafts[testIndex] = {
+        ...draft,
+        inputDataText,
+        expectedResultText,
+        inputDataError,
+        expectedResultError,
+      };
+
+      if (inputDataError || expectedResultError) {
+        hasValidationError = true;
+        return;
+      }
+
+      const nextCase = cloneJsonValue(testCase) || {};
+      const nextSteps = Array.isArray(nextCase.steps) ? [...nextCase.steps] : [];
+      const nextFirstStep = nextSteps[0] && typeof nextSteps[0] === "object"
+        ? { ...nextSteps[0] }
+        : { step_number: 1, action: "Execute request", input_data: {} };
+      nextFirstStep.input_data = parsedInputData;
+      nextSteps[0] = nextFirstStep;
+      nextCase.steps = nextSteps;
+      nextCase.expected_result = parsedExpectedResult;
+      nextTestCases.push(nextCase);
+    });
+
+    if (hasValidationError) {
+      setJsonDrafts((current) => ({ ...current, ...nextDrafts }));
+      return null;
+    }
+
+    return {
+      api_title: entry?.title || entry?.filename || "Generated Test Suite",
+      api_version: entry?.version || "Unknown",
+      base_url: entry?.generatedSuite?.base_url || entry?.parsed?.base_url || null,
+      test_cases: nextTestCases,
+    };
+  }
+
+  function handleRunTests() {
+    if (!entry || !onRunTests) {
+      return;
+    }
+
+    const runPayload = buildRunPayloadFromDrafts();
+    if (!runPayload) {
+      return;
+    }
+
+    onRunTests(entry.id, runPayload);
+  }
 
   return (
     <section className="panel details-panel">
@@ -528,6 +626,29 @@ function SpecDetails({ entry, onUpdateTestCase, onResetTestCase }) {
                         <strong>{entry.preview.totalCases}</strong>
                       </div>
                     </div>
+                    <div className="preview-actions">
+                      <button
+                        type="button"
+                        className="primary-button run-tests-button"
+                        onClick={handleRunTests}
+                        disabled={generatedCases.length === 0 || hasJsonDraftErrors || runState?.loading}
+                      >
+                        {runState?.loading ? "Running..." : "Run Tests"}
+                      </button>
+                      {hasJsonDraftErrors ? <p className="json-error">Fix invalid JSON before running tests.</p> : null}
+                      {runState?.error ? <p className="message error">{runState.error}</p> : null}
+                      {latestRunSummary ? (
+                        <div className="run-summary">
+                          <strong>Latest Run</strong>
+                          <div className="run-summary-row">
+                            <span className="run-chip run-chip-total">Total: {latestRunSummary.total ?? 0}</span>
+                            <span className="run-chip run-chip-pass">Passed: {latestRunSummary.passed ?? 0}</span>
+                            <span className="run-chip run-chip-fail">Failed: {latestRunSummary.failed ?? 0}</span>
+                            <span className="run-chip run-chip-skip">Skipped: {latestRunSummary.skipped ?? 0}</span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="coverage-categories">
                       {Object.entries(entry.preview.totals).map(([category, count]) => {
                         const categoryCases = casesByCategory[category] || [];
@@ -553,8 +674,13 @@ function SpecDetails({ entry, onUpdateTestCase, onResetTestCase }) {
                                     const expectedResultText = draft.expectedResultText ?? toPrettyJson(expectedResult);
                                     const inputDataError = draft.inputDataError || "";
                                     const expectedResultError = draft.expectedResultError || "";
-                                    const hasEdits =
+                                    const originalInputDataText = toPrettyJson(originalInputData);
+                                    const originalExpectedResultText = toPrettyJson(originalExpectedResult);
+                                    const hasParsedEdits =
                                       !deepEqual(inputData, originalInputData) || !deepEqual(expectedResult, originalExpectedResult);
+                                    const hasDraftEdits =
+                                      inputDataText !== originalInputDataText || expectedResultText !== originalExpectedResultText;
+                                    const shouldShowReset = hasParsedEdits || hasDraftEdits;
 
                                     return (
                                       <details
@@ -572,7 +698,18 @@ function SpecDetails({ entry, onUpdateTestCase, onResetTestCase }) {
                                           </p>
 
                                           <div className="json-section">
-                                            <span className="json-label">Input Data (Editable JSON)</span>
+                                            <div className="json-section-header">
+                                              <span className="json-label">Input Data</span>
+                                              {shouldShowReset ? (
+                                                <button
+                                                  type="button"
+                                                  className="reset-text-button"
+                                                  onClick={() => handleResetCase(testIndex)}
+                                                >
+                                                  Reset
+                                                </button>
+                                              ) : null}
+                                            </div>
                                             <textarea
                                               className="json-editor"
                                               value={inputDataText}
@@ -584,7 +721,7 @@ function SpecDetails({ entry, onUpdateTestCase, onResetTestCase }) {
                                           </div>
 
                                           <div className="json-section">
-                                            <span className="json-label">Expected Result (Editable JSON)</span>
+                                            <span className="json-label">Expected Result</span>
                                             <textarea
                                               className="json-editor"
                                               value={expectedResultText}
@@ -593,15 +730,6 @@ function SpecDetails({ entry, onUpdateTestCase, onResetTestCase }) {
                                               spellCheck={false}
                                             />
                                             {expectedResultError ? <p className="json-error">{expectedResultError}</p> : null}
-                                            {hasEdits ? (
-                                              <button
-                                                type="button"
-                                                className="reset-text-button"
-                                                onClick={() => handleResetCase(testIndex)}
-                                              >
-                                                Reset
-                                              </button>
-                                            ) : null}
                                           </div>
                                         </div>
                                       </details>
@@ -695,6 +823,7 @@ export default function App() {
   const [specHistory, setSpecHistory] = useState([]);
   const [specCache, setSpecCache] = useState(() => loadSpecCache());
   const [selectedSpecId, setSelectedSpecId] = useState(null);
+  const [testRunBySpecId, setTestRunBySpecId] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -727,6 +856,7 @@ export default function App() {
     if (!session?.token) {
       setSpecHistory([]);
       setSelectedSpecId(null);
+      setTestRunBySpecId({});
       return;
     }
 
@@ -746,7 +876,11 @@ export default function App() {
         const merged = Array.isArray(rows)
           ? rows.map((row) => {
               const cached = userCache[row.id];
-              const generatedTests = Array.isArray(cached?.generatedTests) ? cached.generatedTests : [];
+              const generatedSuite = cached?.generatedSuite && typeof cached.generatedSuite === "object"
+                ? cached.generatedSuite
+                : null;
+              const suiteTestCases = Array.isArray(generatedSuite?.test_cases) ? generatedSuite.test_cases : [];
+              const generatedTests = Array.isArray(cached?.generatedTests) ? cached.generatedTests : suiteTestCases;
               const originalGeneratedTests = Array.isArray(cached?.originalGeneratedTests)
                 ? cached.originalGeneratedTests
                 : generatedTests;
@@ -755,6 +889,7 @@ export default function App() {
                 created_at: row.created_at || cached?.createdAt || cached?.uploadedAt || null,
                 preview: cached?.preview || null,
                 parsed: cached?.parsed || null,
+                generatedSuite,
                 generatedTests,
                 originalGeneratedTests,
                 totalCases: cached?.preview?.totalCases || generatedTests.length || 0,
@@ -764,6 +899,16 @@ export default function App() {
 
         setSpecHistory(merged);
         setSelectedSpecId((current) => current ?? merged[0]?.id ?? null);
+        setTestRunBySpecId((current) => {
+          const validIds = new Set(merged.map((entry) => String(entry.id)));
+          const next = {};
+          for (const [specId, value] of Object.entries(current)) {
+            if (validIds.has(String(specId))) {
+              next[specId] = value;
+            }
+          }
+          return next;
+        });
       } catch (error) {
         if (!cancelled) {
           setHistoryError(error.message);
@@ -787,6 +932,12 @@ export default function App() {
     () => specHistory.find((entry) => entry.id === selectedSpecId) || null,
     [selectedSpecId, specHistory],
   );
+  const selectedRunState = useMemo(() => {
+    if (!selectedEntry) {
+      return { loading: false, error: "", result: null };
+    }
+    return testRunBySpecId[selectedEntry.id] || { loading: false, error: "", result: null };
+  }, [selectedEntry, testRunBySpecId]);
 
   function handleUpdateTestCase(specId, testIndex, field, value) {
     setSpecHistory((current) =>
@@ -796,12 +947,25 @@ export default function App() {
         }
 
         const tests = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
+        const updatedTests = applyGeneratedTestEdit(tests, testIndex, field, value);
         return {
           ...entry,
-          generatedTests: applyGeneratedTestEdit(tests, testIndex, field, value),
+          generatedTests: updatedTests,
+          generatedSuite: entry.generatedSuite
+            ? { ...entry.generatedSuite, test_cases: updatedTests }
+            : entry.generatedSuite,
         };
       }),
     );
+    setTestRunBySpecId((current) => {
+      if (!current[specId]) {
+        return current;
+      }
+      return {
+        ...current,
+        [specId]: { loading: false, error: "", result: null },
+      };
+    });
 
     if (!session?.userId) {
       return;
@@ -815,9 +979,13 @@ export default function App() {
       }
 
       const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
+      const updatedTests = applyGeneratedTestEdit(currentTests, testIndex, field, value);
       userCache[specId] = {
         ...existing,
-        generatedTests: applyGeneratedTestEdit(currentTests, testIndex, field, value),
+        generatedTests: updatedTests,
+        generatedSuite: existing.generatedSuite
+          ? { ...existing.generatedSuite, test_cases: updatedTests }
+          : existing.generatedSuite,
         originalGeneratedTests: Array.isArray(existing.originalGeneratedTests)
           ? existing.originalGeneratedTests
           : cloneJsonValue(currentTests),
@@ -839,12 +1007,25 @@ export default function App() {
 
         const tests = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
         const originalTests = Array.isArray(entry.originalGeneratedTests) ? entry.originalGeneratedTests : tests;
+        const resetTests = applyGeneratedTestReset(tests, originalTests, testIndex);
         return {
           ...entry,
-          generatedTests: applyGeneratedTestReset(tests, originalTests, testIndex),
+          generatedTests: resetTests,
+          generatedSuite: entry.generatedSuite
+            ? { ...entry.generatedSuite, test_cases: resetTests }
+            : entry.generatedSuite,
         };
       }),
     );
+    setTestRunBySpecId((current) => {
+      if (!current[specId]) {
+        return current;
+      }
+      return {
+        ...current,
+        [specId]: { loading: false, error: "", result: null },
+      };
+    });
 
     if (!session?.userId) {
       return;
@@ -861,10 +1042,14 @@ export default function App() {
       const originalTests = Array.isArray(existing.originalGeneratedTests)
         ? existing.originalGeneratedTests
         : currentTests;
+      const resetTests = applyGeneratedTestReset(currentTests, originalTests, testIndex);
 
       userCache[specId] = {
         ...existing,
-        generatedTests: applyGeneratedTestReset(currentTests, originalTests, testIndex),
+        generatedTests: resetTests,
+        generatedSuite: existing.generatedSuite
+          ? { ...existing.generatedSuite, test_cases: resetTests }
+          : existing.generatedSuite,
         originalGeneratedTests: originalTests,
       };
 
@@ -873,6 +1058,42 @@ export default function App() {
         [session.userId]: userCache,
       };
     });
+  }
+
+  async function handleRunTests(specId, suitePayload) {
+    if (!session?.token) {
+      return;
+    }
+
+    setTestRunBySpecId((current) => ({
+      ...current,
+      [specId]: {
+        loading: true,
+        error: "",
+        result: current[specId]?.result || null,
+      },
+    }));
+
+    try {
+      const payload = await runGeneratedTests(session.token, suitePayload);
+      setTestRunBySpecId((current) => ({
+        ...current,
+        [specId]: {
+          loading: false,
+          error: "",
+          result: payload || null,
+        },
+      }));
+    } catch (error) {
+      setTestRunBySpecId((current) => ({
+        ...current,
+        [specId]: {
+          loading: false,
+          error: error.message,
+          result: current[specId]?.result || null,
+        },
+      }));
+    }
   }
 
   async function handleAuthSubmit(event) {
@@ -902,6 +1123,7 @@ export default function App() {
     setSession(null);
     setSpecHistory([]);
     setSelectedSpecId(null);
+    setTestRunBySpecId({});
     setClearHistoryLoading(false);
     setUploadError("");
     setUploadMessage("");
@@ -924,6 +1146,7 @@ export default function App() {
       await clearSpecs(session.token);
       setSpecHistory([]);
       setSelectedSpecId(null);
+      setTestRunBySpecId({});
       setSpecCache((current) => {
         const next = { ...current };
         delete next[session.userId];
@@ -968,7 +1191,10 @@ export default function App() {
           const payload = await uploadSpecFile(session.token, file);
           const parsed = payload?.parsed || null;
           const preview = parsed ? buildSpecPreview(parsed) : null;
-          const rawGeneratedTests = Array.isArray(payload?.generated_tests?.test_cases) ? payload.generated_tests.test_cases : [];
+          const generatedSuite = payload?.generated_tests && typeof payload.generated_tests === "object"
+            ? cloneJsonValue(payload.generated_tests)
+            : null;
+          const rawGeneratedTests = Array.isArray(generatedSuite?.test_cases) ? generatedSuite.test_cases : [];
           const generatedTests = cloneJsonValue(rawGeneratedTests) || [];
           const originalGeneratedTests = cloneJsonValue(rawGeneratedTests) || [];
           const createdAt = new Date().toISOString();
@@ -980,6 +1206,7 @@ export default function App() {
             createdAt,
             parsed,
             preview,
+            generatedSuite,
             generatedTests,
             originalGeneratedTests,
           };
@@ -992,6 +1219,7 @@ export default function App() {
             created_at: createdAt,
             parsed,
             preview,
+            generatedSuite,
             generatedTests,
             originalGeneratedTests,
             totalCases: preview?.totalCases || generatedTests.length || 0,
@@ -1123,8 +1351,10 @@ export default function App() {
 
           <SpecDetails
             entry={selectedEntry}
+            runState={selectedRunState}
             onUpdateTestCase={handleUpdateTestCase}
             onResetTestCase={handleResetTestCase}
+            onRunTests={handleRunTests}
           />
         </main>
       )}

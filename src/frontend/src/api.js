@@ -83,4 +83,15 @@ export async function uploadSpecFile(token, file) {
   });
 }
 
+export async function runGeneratedTests(token, suitePayload) {
+  return request("/api/tests/run", {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(suitePayload),
+  });
+}
+
 export { API_BASE_URL };
