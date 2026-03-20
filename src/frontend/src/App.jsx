@@ -14,6 +14,8 @@ import { buildSpecPreview } from "./testPreview.js";
 const SESSION_KEY = "contractguard.session.v1";
 const SPEC_CACHE_KEY = "contractguard.spec-cache.v1";
 const SPEC_FILE_EXTENSIONS = [".json", ".yaml", ".yml"];
+const JSON_EDITOR_INDENT = "  ";
+const FAILURE_REASON_KEYS = ["message", "detail", "error", "reason", "title", "description"];
 
 function decodeJwtPayload(token) {
   if (!token) {
@@ -232,9 +234,141 @@ function prettifyCategory(categoryKey) {
   return String(categoryKey || "").replaceAll("_", " ");
 }
 
+function normalizeRunOutcome(value) {
+  const text = String(value || "").trim().toUpperCase();
+  if (text === "PASS" || text === "FAIL" || text === "SKIP") {
+    return text;
+  }
+  return "";
+}
+
+function formatExpectedStatusLabel(expectedStatus, expectedStatusAnyOf) {
+  if (Array.isArray(expectedStatusAnyOf) && expectedStatusAnyOf.length > 0) {
+    return expectedStatusAnyOf.join(" / ");
+  }
+  if (expectedStatus !== undefined && expectedStatus !== null && expectedStatus !== "") {
+    return String(expectedStatus);
+  }
+  return "Unknown";
+}
+
+function isExpectedStatusMatch(actualStatus, expectedStatus, expectedStatusAnyOf) {
+  if (actualStatus === undefined || actualStatus === null || actualStatus === "") {
+    return false;
+  }
+
+  const normalizedActual = Number(actualStatus);
+  if (!Number.isNaN(normalizedActual)) {
+    if (Array.isArray(expectedStatusAnyOf) && expectedStatusAnyOf.length > 0) {
+      return expectedStatusAnyOf.some((value) => Number(value) === normalizedActual);
+    }
+    if (expectedStatus !== undefined && expectedStatus !== null && expectedStatus !== "") {
+      return Number(expectedStatus) === normalizedActual;
+    }
+  }
+
+  const actualText = String(actualStatus);
+  if (Array.isArray(expectedStatusAnyOf) && expectedStatusAnyOf.length > 0) {
+    return expectedStatusAnyOf.some((value) => String(value) === actualText);
+  }
+  if (expectedStatus !== undefined && expectedStatus !== null && expectedStatus !== "") {
+    return String(expectedStatus) === actualText;
+  }
+  return false;
+}
+
+function truncateText(text, maxLength = 220) {
+  if (!text || text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function parseResponseSnippetMeta(snippetText) {
+  const raw = String(snippetText || "").trim();
+  if (!raw) {
+    return { reason: "", raw: "", documentationUrl: "" };
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const documentationUrl = String(parsed.documentation_url || parsed.docs_url || parsed.help_url || "").trim();
+
+      for (const key of FAILURE_REASON_KEYS) {
+        const value = parsed[key];
+        if (typeof value === "string" && value.trim()) {
+          return {
+            reason: value.trim(),
+            raw: JSON.stringify(parsed, null, 2),
+            documentationUrl,
+          };
+        }
+      }
+
+      if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+        const first = parsed.errors[0];
+        if (typeof first === "string" && first.trim()) {
+          return {
+            reason: first.trim(),
+            raw: JSON.stringify(parsed, null, 2),
+            documentationUrl,
+          };
+        }
+        if (first && typeof first === "object") {
+          for (const key of FAILURE_REASON_KEYS) {
+            const value = first[key];
+            if (typeof value === "string" && value.trim()) {
+              return {
+                reason: value.trim(),
+                raw: JSON.stringify(parsed, null, 2),
+                documentationUrl,
+              };
+            }
+          }
+        }
+      }
+
+      return { reason: "", raw: JSON.stringify(parsed, null, 2), documentationUrl };
+    }
+
+    if (typeof parsed === "string" && parsed.trim()) {
+      return { reason: parsed.trim(), raw, documentationUrl: "" };
+    }
+  } catch {
+    // Non-JSON snippet; fall through.
+  }
+
+  return { reason: "", raw, documentationUrl: "" };
+}
+
 function isAbsoluteHttpUrl(value) {
   const text = String(value || "").trim();
   return /^https?:\/\/\S+$/i.test(text);
+}
+
+function getLineStartIndex(text, index) {
+  const clampedIndex = Math.max(0, index);
+  const breakIndex = text.lastIndexOf("\n", Math.max(0, clampedIndex - 1));
+  return breakIndex === -1 ? 0 : breakIndex + 1;
+}
+
+function getLineEndIndex(text, index) {
+  const clampedIndex = Math.max(0, index);
+  const breakIndex = text.indexOf("\n", clampedIndex);
+  return breakIndex === -1 ? text.length : breakIndex;
+}
+
+function countOutdentCharacters(lineText) {
+  if (lineText.startsWith("\t")) {
+    return 1;
+  }
+
+  let removeCount = 0;
+  while (removeCount < JSON_EDITOR_INDENT.length && lineText.charAt(removeCount) === " ") {
+    removeCount += 1;
+  }
+  return removeCount;
 }
 
 function getDefaultBaseUrl(entry) {
@@ -413,6 +547,8 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
 function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRunTests }) {
   const generatedCases = Array.isArray(entry?.generatedTests) ? entry.generatedTests : [];
   const originalCases = Array.isArray(entry?.originalGeneratedTests) ? entry.originalGeneratedTests : generatedCases;
+  const runBaselineCases = Array.isArray(runState?.baselineTests) ? runState.baselineTests : [];
+  const baselineCases = runBaselineCases.length > 0 ? runBaselineCases : originalCases;
   const [jsonDrafts, setJsonDrafts] = useState({});
   const [baseUrlInput, setBaseUrlInput] = useState("");
   const [runAuthMode, setRunAuthMode] = useState("none");
@@ -487,12 +623,119 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
     }
   }
 
+  function commitJsonEditorUpdate(event, testIndex, field, nextText, nextSelectionStart, nextSelectionEnd = nextSelectionStart) {
+    const textarea = event.currentTarget;
+    handleJsonEdit(testIndex, field, nextText);
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(nextSelectionStart, nextSelectionEnd);
+    });
+  }
+
+  function handleJsonEditorKeyDown(testIndex, field, event) {
+    const { key, shiftKey, altKey, ctrlKey, metaKey } = event;
+
+    if (key !== "Tab" && key !== "Enter") {
+      return;
+    }
+
+    const textarea = event.currentTarget;
+    const value = textarea.value;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+
+    if (key === "Tab") {
+      event.preventDefault();
+
+      if (!shiftKey) {
+        if (selectionStart === selectionEnd) {
+          const nextValue = `${value.slice(0, selectionStart)}${JSON_EDITOR_INDENT}${value.slice(selectionEnd)}`;
+          const nextCursor = selectionStart + JSON_EDITOR_INDENT.length;
+          commitJsonEditorUpdate(event, testIndex, field, nextValue, nextCursor);
+          return;
+        }
+
+        const blockStart = getLineStartIndex(value, selectionStart);
+        const blockEnd = getLineEndIndex(value, selectionEnd);
+        const selectedBlock = value.slice(blockStart, blockEnd);
+        const lines = selectedBlock.split("\n");
+        const indentedBlock = lines.map((line) => `${JSON_EDITOR_INDENT}${line}`).join("\n");
+        const nextValue = `${value.slice(0, blockStart)}${indentedBlock}${value.slice(blockEnd)}`;
+        const nextSelectionStart = selectionStart + JSON_EDITOR_INDENT.length;
+        const nextSelectionEnd = selectionEnd + (JSON_EDITOR_INDENT.length * lines.length);
+        commitJsonEditorUpdate(event, testIndex, field, nextValue, nextSelectionStart, nextSelectionEnd);
+        return;
+      }
+
+      const blockStart = getLineStartIndex(value, selectionStart);
+      const blockEnd = getLineEndIndex(value, selectionEnd);
+      const selectedBlock = value.slice(blockStart, blockEnd);
+      const lines = selectedBlock.split("\n");
+
+      let lineGlobalStart = blockStart;
+      let removedBeforeStart = 0;
+      let removedBeforeEnd = 0;
+
+      const outdentedLines = lines.map((line) => {
+        const removeCount = countOutdentCharacters(line);
+        const charsBeforeStartOnLine = Math.max(0, selectionStart - lineGlobalStart);
+        const charsBeforeEndOnLine = Math.max(0, selectionEnd - lineGlobalStart);
+
+        removedBeforeStart += Math.min(removeCount, charsBeforeStartOnLine);
+        removedBeforeEnd += Math.min(removeCount, charsBeforeEndOnLine);
+
+        lineGlobalStart += line.length + 1;
+        return line.slice(removeCount);
+      });
+
+      const nextBlock = outdentedLines.join("\n");
+      if (nextBlock === selectedBlock) {
+        return;
+      }
+
+      const nextValue = `${value.slice(0, blockStart)}${nextBlock}${value.slice(blockEnd)}`;
+      const nextSelectionStart = Math.max(blockStart, selectionStart - removedBeforeStart);
+      const nextSelectionEnd = Math.max(nextSelectionStart, selectionEnd - removedBeforeEnd);
+      commitJsonEditorUpdate(event, testIndex, field, nextValue, nextSelectionStart, nextSelectionEnd);
+      return;
+    }
+
+    if (altKey || ctrlKey || metaKey) {
+      return;
+    }
+
+    event.preventDefault();
+    const currentLineStart = getLineStartIndex(value, selectionStart);
+    const linePrefix = value.slice(currentLineStart, selectionStart);
+    const baseIndentMatch = linePrefix.match(/^\s*/);
+    const baseIndent = baseIndentMatch ? baseIndentMatch[0] : "";
+    const previousChar = value.charAt(selectionStart - 1);
+    const nextChar = value.charAt(selectionEnd);
+    const opensBlock = previousChar === "{" || previousChar === "[";
+    const closesBlock = nextChar === "}" || nextChar === "]";
+
+    let insertedText = `\n${baseIndent}`;
+    let nextCursor = selectionStart + insertedText.length;
+
+    if (opensBlock && closesBlock) {
+      insertedText = `\n${baseIndent}${JSON_EDITOR_INDENT}\n${baseIndent}`;
+      nextCursor = selectionStart + 1 + baseIndent.length + JSON_EDITOR_INDENT.length;
+    } else if (opensBlock) {
+      insertedText = `\n${baseIndent}${JSON_EDITOR_INDENT}`;
+      nextCursor = selectionStart + insertedText.length;
+    }
+
+    const nextValue = `${value.slice(0, selectionStart)}${insertedText}${value.slice(selectionEnd)}`;
+    commitJsonEditorUpdate(event, testIndex, field, nextValue, nextCursor);
+  }
+
   function handleResetCase(testIndex) {
     if (!entry) {
       return;
     }
 
-    const originalCase = originalCases[testIndex];
+    const originalCase = baselineCases[testIndex];
     const firstStep = originalCase?.steps?.[0] || null;
 
     setJsonDrafts((current) => ({
@@ -551,6 +794,24 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
     (draft) => Boolean(draft?.inputDataError || draft?.expectedResultError),
   );
   const latestRunSummary = runState?.result?.summary || null;
+  const latestRunResults = Array.isArray(runState?.result?.results) ? runState.result.results : [];
+  const hasLatestRun = Boolean(latestRunSummary || latestRunResults.length > 0);
+  const runResultByTestId = latestRunResults.reduce((acc, result) => {
+    const testId = String(result?.test_id || "");
+    if (!testId) {
+      return acc;
+    }
+    acc[testId] = result;
+    return acc;
+  }, {});
+  const runOutcomeByTestId = latestRunResults.reduce((acc, result) => {
+    const testId = String(result?.test_id || "");
+    if (!testId) {
+      return acc;
+    }
+    acc[testId] = normalizeRunOutcome(result?.outcome);
+    return acc;
+  }, {});
   const trimmedBaseUrl = baseUrlInput.trim();
   const isBaseUrlMissing = trimmedBaseUrl.length === 0;
   const trimmedRunBearerToken = runBearerToken.trim();
@@ -782,11 +1043,33 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                     <div className="coverage-categories">
                       {Object.entries(entry.preview.totals).map(([category, count]) => {
                         const categoryCases = casesByCategory[category] || [];
+                        const categoryRunStats = categoryCases.reduce((acc, { testCase }) => {
+                          const outcome = runOutcomeByTestId[testCase?.test_id || ""];
+                          if (outcome === "PASS") {
+                            acc.pass += 1;
+                          } else if (outcome === "FAIL") {
+                            acc.fail += 1;
+                          } else if (outcome === "SKIP") {
+                            acc.skip += 1;
+                          }
+                          return acc;
+                        }, { pass: 0, fail: 0, skip: 0 });
                         return (
                           <details key={category} className="category-detail">
                             <summary onClick={handleSummaryToggleNoScroll}>
                               <span>{prettifyCategory(category)}</span>
-                              <strong>{count}</strong>
+                              <span className="category-summary-right">
+                                <strong>{count}</strong>
+                                {hasLatestRun ? (
+                                  <span className="category-run-text">
+                                    <span className="category-run-part category-run-part-pass">{categoryRunStats.pass}P</span>
+                                    <span className="category-run-separator">/</span>
+                                    <span className="category-run-part category-run-part-fail">{categoryRunStats.fail}F</span>
+                                    <span className="category-run-separator">/</span>
+                                    <span className="category-run-part category-run-part-skip">{categoryRunStats.skip}S</span>
+                                  </span>
+                                ) : null}
+                              </span>
                             </summary>
                             <div className="category-body">
                               {categoryCases.length > 0 ? (
@@ -795,7 +1078,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                                     const firstStep = testCase.steps?.[0] || null;
                                     const inputData = firstStep?.input_data ?? null;
                                     const expectedResult = testCase.expected_result ?? null;
-                                    const originalCase = originalCases[testIndex] || {};
+                                    const originalCase = baselineCases[testIndex] || {};
                                     const originalFirstStep = originalCase?.steps?.[0] || null;
                                     const originalInputData = originalFirstStep?.input_data ?? null;
                                     const originalExpectedResult = originalCase?.expected_result ?? null;
@@ -811,22 +1094,57 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                                     const hasDraftEdits =
                                       inputDataText !== originalInputDataText || expectedResultText !== originalExpectedResultText;
                                     const shouldShowReset = hasParsedEdits || hasDraftEdits;
+                                    const runResult = runResultByTestId[testCase?.test_id || ""] || null;
+                                    const testOutcome = runOutcomeByTestId[testCase?.test_id || ""];
+                                    const outcomeClass = testOutcome ? `testcase-outcome-${testOutcome.toLowerCase()}` : "";
+                                    const expectedStatusLabel = formatExpectedStatusLabel(
+                                      runResult?.expected_status,
+                                      runResult?.expected_status_any_of,
+                                    );
+                                    const actualStatusLabel = runResult?.actual_status ?? "No response";
+                                    const runErrorMessage = String(runResult?.error_message || "").trim();
+                                    const responseSnippet = String(runResult?.response_snippet || "").trim();
+                                    const snippetMeta = parseResponseSnippetMeta(responseSnippet);
+                                    const statusMatchesExpectation = isExpectedStatusMatch(
+                                      runResult?.actual_status,
+                                      runResult?.expected_status,
+                                      runResult?.expected_status_any_of,
+                                    );
+                                    let fallbackReason = "Unexpected response from server.";
+                                    if (!statusMatchesExpectation) {
+                                      if (runResult?.actual_status === undefined || runResult?.actual_status === null) {
+                                        fallbackReason = "Request failed before receiving a response.";
+                                      } else {
+                                        fallbackReason = `Expected ${expectedStatusLabel} but got ${actualStatusLabel}.`;
+                                      }
+                                    }
+                                    const failureReasonRaw = runErrorMessage || snippetMeta.reason || fallbackReason;
+                                    const failureReason = truncateText(failureReasonRaw, 220);
+                                    const hasRawResponse = Boolean(snippetMeta.raw)
+                                      && snippetMeta.raw !== failureReasonRaw
+                                      && snippetMeta.raw !== failureReason;
 
                                     return (
                                       <details
                                         key={testCase.test_id || `${testCase.title}-${testIndex}`}
-                                        className="testcase-detail"
+                                        className={`testcase-detail ${outcomeClass}`.trim()}
                                       >
                                         <summary onClick={handleSummaryToggleNoScroll}>
                                           <span>{testCase.test_id || "Test case"}</span>
-                                          <span>{testCase.method} {testCase.path}</span>
+                                          <span className="testcase-summary-right">
+                                            <span>{testCase.method} {testCase.path}</span>
+                                            {testOutcome ? (
+                                              <span className={`result-pill result-pill-${testOutcome.toLowerCase()}`}>
+                                                {testOutcome}
+                                              </span>
+                                            ) : null}
+                                          </span>
                                         </summary>
                                         <div className="testcase-body">
                                           <p className="testcase-title">{testCase.title}</p>
                                           <p className="testcase-line">
                                             <strong>Action:</strong> {firstStep?.action || "Step details unavailable"}
                                           </p>
-
                                           <div className="json-section">
                                             <div className="json-section-header">
                                               <span className="json-label">Input Data</span>
@@ -844,6 +1162,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                                               className="json-editor"
                                               value={inputDataText}
                                               onChange={(event) => handleJsonEdit(testIndex, "input_data", event.target.value)}
+                                              onKeyDown={(event) => handleJsonEditorKeyDown(testIndex, "input_data", event)}
                                               rows={8}
                                               spellCheck={false}
                                             />
@@ -853,14 +1172,49 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                                           <div className="json-section">
                                             <span className="json-label">Expected Result</span>
                                             <textarea
-                                              className="json-editor"
+                                              className={`json-editor json-editor-readonly ${testOutcome ? `json-editor-readonly-${testOutcome.toLowerCase()}` : ""}`.trim()}
                                               value={expectedResultText}
-                                              onChange={(event) => handleJsonEdit(testIndex, "expected_result", event.target.value)}
                                               rows={8}
                                               spellCheck={false}
+                                              readOnly
                                             />
                                             {expectedResultError ? <p className="json-error">{expectedResultError}</p> : null}
                                           </div>
+
+                                          {testOutcome === "FAIL" ? (
+                                            <div className="run-feedback run-feedback-fail">
+                                              <p className="run-feedback-title">Failure Details</p>
+                                              <p className="run-feedback-line"><strong>Expected status:</strong> {expectedStatusLabel}</p>
+                                              <p className="run-feedback-line"><strong>Actual status:</strong> {actualStatusLabel}</p>
+                                              <p className="run-feedback-line"><strong>Reason:</strong> {failureReason}</p>
+                                              {snippetMeta.documentationUrl ? (
+                                                <p className="run-feedback-line">
+                                                  <strong>Docs:</strong>{" "}
+                                                  <a
+                                                    href={snippetMeta.documentationUrl}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="run-feedback-link"
+                                                  >
+                                                    {snippetMeta.documentationUrl}
+                                                  </a>
+                                                </p>
+                                              ) : null}
+                                              {hasRawResponse ? (
+                                                <details className="run-feedback-details">
+                                                  <summary>Raw response</summary>
+                                                  <pre className="run-feedback-pre">{snippetMeta.raw}</pre>
+                                                </details>
+                                              ) : null}
+                                            </div>
+                                          ) : null}
+
+                                          {testOutcome === "SKIP" ? (
+                                            <div className="run-feedback run-feedback-skip">
+                                              <p className="run-feedback-title">Skipped</p>
+                                              <p className="run-feedback-line">{runErrorMessage || "Runner skipped this test."}</p>
+                                            </div>
+                                          ) : null}
                                         </div>
                                       </details>
                                     );
@@ -1064,10 +1418,59 @@ export default function App() {
   );
   const selectedRunState = useMemo(() => {
     if (!selectedEntry) {
-      return { loading: false, error: "", result: null };
+      return { loading: false, error: "", result: null, baselineTests: null };
     }
-    return testRunBySpecId[selectedEntry.id] || { loading: false, error: "", result: null };
+    return testRunBySpecId[selectedEntry.id] || { loading: false, error: "", result: null, baselineTests: null };
   }, [selectedEntry, testRunBySpecId]);
+
+  function setRunBaselineForSpec(specId, executedTests) {
+    const normalizedTests = Array.isArray(executedTests) ? (cloneJsonValue(executedTests) || []) : [];
+
+    setSpecHistory((current) =>
+      current.map((entry) => {
+        if (entry.id !== specId) {
+          return entry;
+        }
+
+        const nextTests = cloneJsonValue(normalizedTests) || [];
+        return {
+          ...entry,
+          generatedTests: nextTests,
+          originalGeneratedTests: cloneJsonValue(nextTests) || [],
+          generatedSuite: entry.generatedSuite
+            ? { ...entry.generatedSuite, test_cases: nextTests }
+            : entry.generatedSuite,
+        };
+      }),
+    );
+
+    if (!session?.userId) {
+      return;
+    }
+
+    setSpecCache((current) => {
+      const userCache = { ...(current[session.userId] || {}) };
+      const existing = userCache[specId];
+      if (!existing) {
+        return current;
+      }
+
+      const nextTests = cloneJsonValue(normalizedTests) || [];
+      userCache[specId] = {
+        ...existing,
+        generatedTests: nextTests,
+        originalGeneratedTests: cloneJsonValue(nextTests) || [],
+        generatedSuite: existing.generatedSuite
+          ? { ...existing.generatedSuite, test_cases: nextTests }
+          : existing.generatedSuite,
+      };
+
+      return {
+        ...current,
+        [session.userId]: userCache,
+      };
+    });
+  }
 
   function handleUpdateTestCase(specId, testIndex, field, value) {
     setSpecHistory((current) =>
@@ -1087,16 +1490,6 @@ export default function App() {
         };
       }),
     );
-    setTestRunBySpecId((current) => {
-      if (!current[specId]) {
-        return current;
-      }
-      return {
-        ...current,
-        [specId]: { loading: false, error: "", result: null },
-      };
-    });
-
     if (!session?.userId) {
       return;
     }
@@ -1129,6 +1522,10 @@ export default function App() {
   }
 
   function handleResetTestCase(specId, testIndex) {
+    const runBaseline = Array.isArray(testRunBySpecId[specId]?.baselineTests)
+      ? testRunBySpecId[specId].baselineTests
+      : null;
+
     setSpecHistory((current) =>
       current.map((entry) => {
         if (entry.id !== specId) {
@@ -1136,7 +1533,9 @@ export default function App() {
         }
 
         const tests = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
-        const originalTests = Array.isArray(entry.originalGeneratedTests) ? entry.originalGeneratedTests : tests;
+        const originalTests = Array.isArray(runBaseline) && runBaseline.length > 0
+          ? runBaseline
+          : (Array.isArray(entry.originalGeneratedTests) ? entry.originalGeneratedTests : tests);
         const resetTests = applyGeneratedTestReset(tests, originalTests, testIndex);
         return {
           ...entry,
@@ -1147,16 +1546,6 @@ export default function App() {
         };
       }),
     );
-    setTestRunBySpecId((current) => {
-      if (!current[specId]) {
-        return current;
-      }
-      return {
-        ...current,
-        [specId]: { loading: false, error: "", result: null },
-      };
-    });
-
     if (!session?.userId) {
       return;
     }
@@ -1169,9 +1558,9 @@ export default function App() {
       }
 
       const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
-      const originalTests = Array.isArray(existing.originalGeneratedTests)
-        ? existing.originalGeneratedTests
-        : currentTests;
+      const originalTests = Array.isArray(runBaseline) && runBaseline.length > 0
+        ? runBaseline
+        : (Array.isArray(existing.originalGeneratedTests) ? existing.originalGeneratedTests : currentTests);
       const resetTests = applyGeneratedTestReset(currentTests, originalTests, testIndex);
 
       userCache[specId] = {
@@ -1201,17 +1590,21 @@ export default function App() {
         loading: true,
         error: "",
         result: current[specId]?.result || null,
+        baselineTests: Array.isArray(current[specId]?.baselineTests) ? current[specId].baselineTests : null,
       },
     }));
 
     try {
       const payload = await runGeneratedTests(session.token, suitePayload);
+      const executedTests = Array.isArray(suitePayload?.test_cases) ? suitePayload.test_cases : [];
+      setRunBaselineForSpec(specId, executedTests);
       setTestRunBySpecId((current) => ({
         ...current,
         [specId]: {
           loading: false,
           error: "",
           result: payload || null,
+          baselineTests: cloneJsonValue(executedTests) || [],
         },
       }));
     } catch (error) {
@@ -1221,6 +1614,7 @@ export default function App() {
           loading: false,
           error: error.message,
           result: current[specId]?.result || null,
+          baselineTests: Array.isArray(current[specId]?.baselineTests) ? current[specId].baselineTests : null,
         },
       }));
     }

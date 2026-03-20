@@ -343,6 +343,28 @@ def run_suite(
                 print(f"  ** Or set environment variables:")
                 print(f"       CONTRACTGUARD_BEARER_TOKEN")
                 print(f"       CONTRACTGUARD_API_KEY\n")
+
+                # Emit explicit SKIP results for all tests we didn't execute,
+                # so UI/JSON consumers can reflect skipped status per test case.
+                for pending_tc in test_cases[len(results):]:
+                    pending_exp = pending_tc.get("expected_result", {}) or {}
+                    skip_result = {
+                        "test_id": pending_tc.get("test_id", "<no id>"),
+                        "title": pending_tc.get("title", ""),
+                        "method": pending_tc.get("method", "GET"),
+                        "path": pending_tc.get("path", "/"),
+                        "final_url": "",
+                        "expected_status": pending_exp.get("status_code"),
+                        "expected_status_any_of": pending_exp.get("status_code_any_of"),
+                        "actual_status": None,
+                        "outcome": "SKIP",
+                        "response_snippet": "",
+                        "error_message": "Skipped after repeated 401 Unauthorized without authentication.",
+                        "duration_ms": 0,
+                    }
+                    results.append(skip_result)
+                    print(f"  SKIP  {skip_result['test_id']} (auth wall)")
+
                 break
 
     summary = {
