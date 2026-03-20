@@ -28,3 +28,33 @@ You should replace all of this file with a README describing your own project.
 
 ## Additional resources
 
+## CLI auth test workflow (GitHub sample)
+
+Use this flow to reproduce auth-required behavior with `api.github.com.2026-03-10.yaml`.
+
+```powershell
+$env:PYTHONPATH='src'
+python src/extract_ir.py src/test_uploads/user1/api.github.com.2026-03-10.yaml --pretty -o build/ir
+python src/generate_tests.py build/ir/api.github.com.2026-03-10_ir.json --pretty -o build/tests
+python src/test_runner/run_test.py build/tests/api.github.com.2026-03-10_tests.json --timeout 12
+```
+
+Expected without token: the suite hits an auth wall after initial `401` responses (for this sample: `3 failed, 8 skipped`).
+
+Run with bearer token:
+
+```powershell
+$env:PYTHONPATH='src'
+python src/test_runner/run_test.py build/tests/api.github.com.2026-03-10_tests.json --timeout 12 --bearer-token <GITHUB_TOKEN>
+```
+
+Or with env var:
+
+```powershell
+$env:PYTHONPATH='src'
+$env:CONTRACTGUARD_BEARER_TOKEN='<GITHUB_TOKEN>'
+python src/test_runner/run_test.py build/tests/api.github.com.2026-03-10_tests.json --timeout 12
+```
+
+Note: global auth headers are now ignored for tests with `category="auth"` so auth-negative cases still validate correctly.
+

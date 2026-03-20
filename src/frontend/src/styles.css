@@ -529,8 +529,80 @@ code {
   margin-top: 0.75rem;
 }
 
+.run-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 .preview-actions .primary-button {
   width: fit-content;
+}
+
+.base-url-input {
+  min-width: 16rem;
+  flex: 1 1 18rem;
+  max-width: 30rem;
+  height: 2.6rem;
+  padding: 0.5rem 0.72rem;
+  border-radius: 0.68rem;
+  border: 1px solid #c9d7ee;
+  background: #ffffff;
+  color: #1f2c46;
+  font-size: 0.9rem;
+}
+
+.base-url-input:focus {
+  outline: 2px solid rgba(76, 132, 255, 0.24);
+  border-color: #7ba6ff;
+}
+
+.base-url-required {
+  margin-top: 0;
+}
+
+.auth-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+
+.auth-field {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 10rem;
+}
+
+.auth-field-wide {
+  flex: 1 1 18rem;
+  min-width: 15rem;
+}
+
+.auth-label {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #596883;
+}
+
+.auth-select,
+.auth-input {
+  width: 100%;
+  height: 2.4rem;
+  padding: 0.45rem 0.62rem;
+  border-radius: 0.62rem;
+  border: 1px solid #c9d7ee;
+  background: #ffffff;
+  color: #1f2c46;
+  font-size: 0.88rem;
+}
+
+.auth-select:focus,
+.auth-input:focus {
+  outline: 2px solid rgba(76, 132, 255, 0.24);
+  border-color: #7ba6ff;
 }
 
 .run-tests-button {

@@ -232,6 +232,25 @@ function prettifyCategory(categoryKey) {
   return String(categoryKey || "").replaceAll("_", " ");
 }
 
+function isAbsoluteHttpUrl(value) {
+  const text = String(value || "").trim();
+  return /^https?:\/\/\S+$/i.test(text);
+}
+
+function getDefaultBaseUrl(entry) {
+  const generatedBaseUrl = String(entry?.generatedSuite?.base_url || "").trim();
+  if (isAbsoluteHttpUrl(generatedBaseUrl)) {
+    return generatedBaseUrl;
+  }
+
+  const parsedBaseUrl = String(entry?.parsed?.base_url || "").trim();
+  if (isAbsoluteHttpUrl(parsedBaseUrl)) {
+    return parsedBaseUrl;
+  }
+
+  return "";
+}
+
 function StatCard({ label, value, accent }) {
   return (
     <div className="stat-card">
@@ -395,6 +414,11 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
   const generatedCases = Array.isArray(entry?.generatedTests) ? entry.generatedTests : [];
   const originalCases = Array.isArray(entry?.originalGeneratedTests) ? entry.originalGeneratedTests : generatedCases;
   const [jsonDrafts, setJsonDrafts] = useState({});
+  const [baseUrlInput, setBaseUrlInput] = useState("");
+  const [runAuthMode, setRunAuthMode] = useState("none");
+  const [runBearerToken, setRunBearerToken] = useState("");
+  const [runApiKeyValue, setRunApiKeyValue] = useState("");
+  const [runApiKeyHeader, setRunApiKeyHeader] = useState("X-API-Key");
 
   useEffect(() => {
     if (!entry) {
@@ -414,6 +438,23 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
     });
 
     setJsonDrafts(nextDrafts);
+  }, [entry?.id]);
+
+  useEffect(() => {
+    if (!entry) {
+      setBaseUrlInput("");
+      setRunAuthMode("none");
+      setRunBearerToken("");
+      setRunApiKeyValue("");
+      setRunApiKeyHeader("X-API-Key");
+      return;
+    }
+
+    setBaseUrlInput(getDefaultBaseUrl(entry));
+    setRunAuthMode("none");
+    setRunBearerToken("");
+    setRunApiKeyValue("");
+    setRunApiKeyHeader("X-API-Key");
   }, [entry?.id]);
 
   function handleJsonEdit(testIndex, field, nextText) {
@@ -510,6 +551,14 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
     (draft) => Boolean(draft?.inputDataError || draft?.expectedResultError),
   );
   const latestRunSummary = runState?.result?.summary || null;
+  const trimmedBaseUrl = baseUrlInput.trim();
+  const isBaseUrlMissing = trimmedBaseUrl.length === 0;
+  const trimmedRunBearerToken = runBearerToken.trim();
+  const trimmedRunApiKeyValue = runApiKeyValue.trim();
+  const trimmedRunApiKeyHeader = runApiKeyHeader.trim() || "X-API-Key";
+  const isBearerTokenMissing = runAuthMode === "bearer" && trimmedRunBearerToken.length === 0;
+  const isApiKeyMissing = runAuthMode === "api_key" && trimmedRunApiKeyValue.length === 0;
+  const hasAuthInputError = isBearerTokenMissing || isApiKeyMissing;
 
   function buildRunPayloadFromDrafts() {
     const nextDrafts = {};
@@ -575,16 +624,25 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
       return null;
     }
 
-    return {
+    const runPayload = {
       api_title: entry?.title || entry?.filename || "Generated Test Suite",
       api_version: entry?.version || "Unknown",
-      base_url: entry?.generatedSuite?.base_url || entry?.parsed?.base_url || null,
+      base_url: trimmedBaseUrl,
       test_cases: nextTestCases,
     };
+
+    if (runAuthMode === "bearer") {
+      runPayload.bearer_token = trimmedRunBearerToken;
+    } else if (runAuthMode === "api_key") {
+      runPayload.api_key = trimmedRunApiKeyValue;
+      runPayload.api_key_header = trimmedRunApiKeyHeader;
+    }
+
+    return runPayload;
   }
 
   function handleRunTests() {
-    if (!entry || !onRunTests) {
+    if (!entry || !onRunTests || isBaseUrlMissing || hasAuthInputError) {
       return;
     }
 
@@ -627,14 +685,86 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                       </div>
                     </div>
                     <div className="preview-actions">
-                      <button
-                        type="button"
-                        className="primary-button run-tests-button"
-                        onClick={handleRunTests}
-                        disabled={generatedCases.length === 0 || hasJsonDraftErrors || runState?.loading}
-                      >
-                        {runState?.loading ? "Running..." : "Run Tests"}
-                      </button>
+                      <div className="run-controls">
+                        <button
+                          type="button"
+                          className="primary-button run-tests-button"
+                          onClick={handleRunTests}
+                          disabled={
+                            generatedCases.length === 0
+                            || hasJsonDraftErrors
+                            || isBaseUrlMissing
+                            || hasAuthInputError
+                            || runState?.loading
+                          }
+                        >
+                          {runState?.loading ? "Running..." : "Run Tests"}
+                        </button>
+                        <input
+                          type="text"
+                          className="base-url-input"
+                          placeholder="https://api.example.com"
+                          value={baseUrlInput}
+                          onChange={(event) => setBaseUrlInput(event.target.value)}
+                          aria-label="Base URL"
+                        />
+                      </div>
+                      <div className="auth-controls">
+                        <label className="auth-field">
+                          <span className="auth-label">Run Auth</span>
+                          <select
+                            className="auth-select"
+                            value={runAuthMode}
+                            onChange={(event) => setRunAuthMode(event.target.value)}
+                          >
+                            <option value="none">None</option>
+                            <option value="bearer">Bearer Token</option>
+                            <option value="api_key">API Key Header</option>
+                          </select>
+                        </label>
+                        {runAuthMode === "bearer" ? (
+                          <label className="auth-field auth-field-wide">
+                            <span className="auth-label">Bearer Token</span>
+                            <input
+                              type="password"
+                              className="auth-input"
+                              placeholder="ghp_..."
+                              value={runBearerToken}
+                              onChange={(event) => setRunBearerToken(event.target.value)}
+                              autoComplete="off"
+                            />
+                          </label>
+                        ) : null}
+                        {runAuthMode === "api_key" ? (
+                          <>
+                            <label className="auth-field auth-field-wide">
+                              <span className="auth-label">API Key Value</span>
+                              <input
+                                type="password"
+                                className="auth-input"
+                                placeholder="Enter API key"
+                                value={runApiKeyValue}
+                                onChange={(event) => setRunApiKeyValue(event.target.value)}
+                                autoComplete="off"
+                              />
+                            </label>
+                            <label className="auth-field">
+                              <span className="auth-label">Header Name</span>
+                              <input
+                                type="text"
+                                className="auth-input"
+                                placeholder="X-API-Key"
+                                value={runApiKeyHeader}
+                                onChange={(event) => setRunApiKeyHeader(event.target.value)}
+                                autoComplete="off"
+                              />
+                            </label>
+                          </>
+                        ) : null}
+                      </div>
+                      {isBaseUrlMissing ? <p className="json-error base-url-required">*Base URL required*.</p> : null}
+                      {isBearerTokenMissing ? <p className="json-error">*Bearer token required*.</p> : null}
+                      {isApiKeyMissing ? <p className="json-error">*API key value required*.</p> : null}
                       {hasJsonDraftErrors ? <p className="json-error">Fix invalid JSON before running tests.</p> : null}
                       {runState?.error ? <p className="message error">{runState.error}</p> : null}
                       {latestRunSummary ? (

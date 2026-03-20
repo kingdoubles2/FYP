@@ -214,6 +214,7 @@ def run_one(
     exp = tc.get("expected_result", {}) or {}
     result["expected_status"] = exp.get("status_code")
     result["expected_status_any_of"] = exp.get("status_code_any_of")
+    is_auth_case = str(tc.get("category") or "").lower() == "auth"
 
     # Extract input data from first step
     try:
@@ -231,9 +232,12 @@ def run_one(
     url = base_url.rstrip("/") + path
     result["final_url"] = url
 
-    # Merge headers: auth headers first, then test-specified headers on top
+    # Merge headers:
+    # - apply global auth only for non-auth test categories
+    # - always let test-specified headers override
     request_headers: Dict[str, str] = {}
-    request_headers.update(auth_headers)
+    if not is_auth_case:
+        request_headers.update(auth_headers)
     if body is not None:
         request_headers["Content-Type"] = "application/json"
     request_headers.update(headers)

@@ -1,0 +1,427 @@
+{
+  "title": "GitHub v3 REST API - Minimal Subset",
+  "version": "1.0.0",
+  "base_url": "https://api.github.com",
+  "endpoints": [
+    {
+      "endpoint_id": "GET /user",
+      "method": "GET",
+      "path": "/user",
+      "operation_id": "users/get-authenticated",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "login": {
+              "type": "string"
+            },
+            "id": {
+              "type": "integer"
+            },
+            "node_id": {
+              "type": "string"
+            },
+            "avatar_url": {
+              "type": "string"
+            },
+            "html_url": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "required": [
+            "login",
+            "id",
+            "node_id",
+            "avatar_url",
+            "html_url",
+            "type"
+          ]
+        },
+        "401": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "documentation_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        },
+        "403": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "documentation_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      }
+    },
+    {
+      "endpoint_id": "GET /rate_limit",
+      "method": "GET",
+      "path": "/rate_limit",
+      "operation_id": "rate-limit/get",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "resources": {
+              "type": "object",
+              "properties": {
+                "core": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "remaining": {
+                      "type": "integer"
+                    },
+                    "reset": {
+                      "type": "integer"
+                    },
+                    "used": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit",
+                    "remaining",
+                    "reset",
+                    "used"
+                  ]
+                },
+                "search": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "remaining": {
+                      "type": "integer"
+                    },
+                    "reset": {
+                      "type": "integer"
+                    },
+                    "used": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit",
+                    "remaining",
+                    "reset",
+                    "used"
+                  ]
+                },
+                "graphql": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "remaining": {
+                      "type": "integer"
+                    },
+                    "reset": {
+                      "type": "integer"
+                    },
+                    "used": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit",
+                    "remaining",
+                    "reset",
+                    "used"
+                  ]
+                },
+                "integration_manifest": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "remaining": {
+                      "type": "integer"
+                    },
+                    "reset": {
+                      "type": "integer"
+                    },
+                    "used": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit",
+                    "remaining",
+                    "reset",
+                    "used"
+                  ]
+                },
+                "code_search": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "remaining": {
+                      "type": "integer"
+                    },
+                    "reset": {
+                      "type": "integer"
+                    },
+                    "used": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "limit",
+                    "remaining",
+                    "reset",
+                    "used"
+                  ]
+                }
+              }
+            },
+            "rate": {
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "type": "integer"
+                },
+                "remaining": {
+                  "type": "integer"
+                },
+                "reset": {
+                  "type": "integer"
+                },
+                "used": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "limit",
+                "remaining",
+                "reset",
+                "used"
+              ]
+            }
+          },
+          "required": [
+            "resources",
+            "rate"
+          ]
+        },
+        "404": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "documentation_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      }
+    },
+    {
+      "endpoint_id": "GET /repos/{owner}/{repo}",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}",
+      "operation_id": "repos/get",
+      "path_params": [
+        {
+          "name": "owner",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "repo",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "node_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "full_name": {
+              "type": "string"
+            },
+            "private": {
+              "type": "boolean"
+            },
+            "owner": {
+              "type": "object",
+              "properties": {
+                "login": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "login",
+                "id"
+              ]
+            },
+            "html_url": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string",
+              "nullable": true
+            },
+            "fork": {
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "pushed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "homepage": {
+              "type": "string",
+              "nullable": true
+            },
+            "size": {
+              "type": "integer"
+            },
+            "stargazers_count": {
+              "type": "integer"
+            },
+            "watchers_count": {
+              "type": "integer"
+            },
+            "language": {
+              "type": "string",
+              "nullable": true
+            },
+            "forks_count": {
+              "type": "integer"
+            },
+            "open_issues_count": {
+              "type": "integer"
+            },
+            "default_branch": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "node_id",
+            "name",
+            "full_name",
+            "private",
+            "owner",
+            "html_url",
+            "fork",
+            "url",
+            "created_at",
+            "updated_at",
+            "pushed_at",
+            "size",
+            "stargazers_count",
+            "watchers_count",
+            "forks_count",
+            "open_issues_count",
+            "default_branch"
+          ]
+        },
+        "301": null,
+        "403": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "documentation_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        },
+        "404": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "documentation_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      }
+    }
+  ]
+}
