@@ -161,6 +161,7 @@ code {
   display: grid;
   gap: 1rem;
   align-content: start;
+  min-width: 0;
 }
 
 .upload-panel {
@@ -185,6 +186,7 @@ code {
   border: 1px solid rgba(166, 174, 192, 0.28);
   box-shadow: 0 14px 32px rgba(32, 42, 66, 0.08);
   backdrop-filter: blur(10px);
+  min-width: 0;
 }
 
 .panel-header {
@@ -301,6 +303,9 @@ code {
   margin: 0.9rem 0 0;
   padding: 0.75rem 0.9rem;
   border-radius: 0.9rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message.success {

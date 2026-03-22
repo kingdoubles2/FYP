@@ -517,7 +517,7 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
         </div>
       ) : (
         <div className="history-list">
-          {entries.map((entry) => (
+          {entries.map((entry, index) => (
             <button
               key={entry.id}
               type="button"
@@ -526,7 +526,7 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
             >
               <div className="history-topline">
                 <strong>{entry.title || entry.filename}</strong>
-                <span>#{entry.id}</span>
+                <span>#{index + 1}</span>
               </div>
               <div className="history-meta">
                 <span>{entry.filename}</span>
