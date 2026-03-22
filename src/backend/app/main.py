@@ -106,157 +106,41 @@ def login(req: LoginRequest) -> dict[str, Any]:
         db.close()
 
 
-class SpecIngestError(Exception):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
-def _classify_spec_error(exc: Exception) -> tuple[str, str]:
-    message = str(exc) or exc.__class__.__name__
-    message_lc = message.lower()
-
-    if isinstance(exc, RecursionError) or "maximum recursion depth" in message_lc:
-        return "schema_resolution_error", "Schema resolution exceeded safe recursion limits."
-    if "not a valid openapi 3 specification" in message_lc:
-        return "invalid_openapi", message
-    if "openapi spec missing 'paths'" in message_lc or "'paths' must be an object" in message_lc:
-        return "invalid_openapi", message
-    if "only local refs supported" in message_lc:
-        return "unsupported_external_ref", message
-    if "resolved ref is not an object" in message_lc or "invalid ref path" in message_lc:
-        return "invalid_ref_target", message
-    if "schema $ref must be a string" in message_lc:
-        return "invalid_ref_target", message
-    return "parse_error", message
-
-
-def _ingest_spec_for_user(*, user_id: int, filename: str, content: bytes) -> dict[str, Any]:
-    spec_text = content.decode("utf-8", errors="replace")
-    is_large_spec = len(content) >= 2_000_000
-
-    try:
-        parsed = parse_openapi(spec_text)
-    except Exception as exc:
-        code, message = _classify_spec_error(exc)
-        raise SpecIngestError(code=code, message=message) from exc
-
-    try:
-        parsed_full = parsed.to_dict()
-        suite = generate_test_cases(parsed_full)
-    except Exception as exc:
-        raise SpecIngestError(code="test_generation_error", message=str(exc) or "Unable to generate test cases.") from exc
-
-    db = SessionLocal()
-    try:
-        spec_row = Spec(
-            user_id=user_id,
-            filename=filename,
-            title=parsed.title,
-            version=parsed.version,
-        )
-        db.add(spec_row)
-        db.commit()
-        db.refresh(spec_row)
-    except Exception as exc:
-        db.rollback()
-        raise SpecIngestError(code="parse_error", message=f"Unable to save parsed spec. {exc}") from exc
-    finally:
-        db.close()
-
-    parsed_payload = parsed.to_dict(compact=is_large_spec)
-
-    return {
-        "id": spec_row.id,
-        "parsed": parsed_payload,
-        "generated_tests": suite.to_dict(),
-        "summary": {
-            "total_test_cases": len(suite.test_cases),
-            "endpoint_count": len(parsed.endpoints),
-        },
-    }
-
-
 @app.post("/api/specs/parse")
 async def parse_spec(file: UploadFile = File(...), current_user: User = Depends(get_current_user)) -> dict[str, Any]:
     try:
         content = await file.read()
-        return _ingest_spec_for_user(
-            user_id=current_user.id,
-            filename=file.filename or "uploaded",
-            content=content,
-        )
+        spec_text = content.decode("utf-8", errors="replace")
+        parsed = parse_openapi(spec_text)
+        suite = generate_test_cases(parsed.to_dict())
+
+        db = SessionLocal()
+        try:
+            spec_row = Spec(
+                user_id=current_user.id,
+                filename=file.filename or "uploaded",
+                title=parsed.title,
+                version=parsed.version,
+            )
+            db.add(spec_row)
+            db.commit()
+            db.refresh(spec_row)
+        finally:
+            db.close()
+
+        return {
+            "id": spec_row.id,
+            "parsed": parsed.to_dict(),
+            "generated_tests": suite.to_dict(),
+            "summary": {
+                "total_test_cases": len(suite.test_cases),
+                "endpoint_count": len(parsed.endpoints),
+            },
+        }
     except HTTPException:
         raise
-    except SpecIngestError as exc:
-        raise HTTPException(status_code=400, detail=exc.message) from exc
     except Exception as exc:
-        _code, message = _classify_spec_error(exc)
-        raise HTTPException(status_code=400, detail=message) from exc
-
-
-@app.post("/api/specs/parse-batch")
-async def parse_specs_batch(
-    files: list[UploadFile] = File(...),
-    current_user: User = Depends(get_current_user),
-) -> dict[str, Any]:
-    if not files:
-        raise HTTPException(status_code=400, detail="No files were provided.")
-
-    results: list[dict[str, Any]] = []
-    succeeded = 0
-
-    for file in files:
-        filename = file.filename or "uploaded"
-        try:
-            content = await file.read()
-            payload = _ingest_spec_for_user(
-                user_id=current_user.id,
-                filename=filename,
-                content=content,
-            )
-            results.append(
-                {
-                    "filename": filename,
-                    "status": "success",
-                    "data": payload,
-                },
-            )
-            succeeded += 1
-        except SpecIngestError as exc:
-            results.append(
-                {
-                    "filename": filename,
-                    "status": "failed",
-                    "error": {
-                        "code": exc.code,
-                        "message": exc.message,
-                    },
-                },
-            )
-        except Exception as exc:
-            code, message = _classify_spec_error(exc)
-            results.append(
-                {
-                    "filename": filename,
-                    "status": "failed",
-                    "error": {
-                        "code": code,
-                        "message": message,
-                    },
-                },
-            )
-
-    total = len(files)
-    return {
-        "summary": {
-            "total": total,
-            "succeeded": succeeded,
-            "failed": total - succeeded,
-        },
-        "results": results,
-    }
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/specs/upload-ir")

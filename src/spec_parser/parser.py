@@ -1,5 +1,4 @@
 import json
-from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple
 
 import yaml
@@ -8,18 +7,6 @@ from .models import ParsedSpecIR, EndpointIR, ParamIR
 
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
-MAX_SCHEMA_RESOLUTION_DEPTH = 80
-MAX_SCHEMA_RESOLUTION_NODES = 20000
-
-
-@dataclass
-class ResolutionContext:
-    max_depth: int = MAX_SCHEMA_RESOLUTION_DEPTH
-    max_nodes: int = MAX_SCHEMA_RESOLUTION_NODES
-    ref_cache: Dict[str, Any] = field(default_factory=dict)
-    active_ref_stack: List[str] = field(default_factory=list)
-    active_ref_set: set[str] = field(default_factory=set)
-    node_count: int = 0
 
 
 def load_spec(text: str) -> Dict[str, Any]:
@@ -39,10 +26,7 @@ def resolve_ref(ref: str, spec: Dict[str, Any]) -> Dict[str, Any]:
     parts = ref.lstrip("#/").split("/")
     result: Any = spec
     for part in parts:
-        if isinstance(result, dict) and part in result:
-            result = result[part]
-            continue
-        raise ValueError(f"Invalid ref path: {ref}")
+        result = result[part]
 
     if not isinstance(result, dict):
         raise ValueError(f"Resolved ref is not an object: {ref}")
@@ -50,96 +34,25 @@ def resolve_ref(ref: str, spec: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _truncated_schema(ref: str, reason: str) -> Dict[str, Any]:
-    return {
-        "type": "object",
-        "x-contractguard-truncated": True,
-        "x-contractguard-reason": reason,
-        "x-contractguard-ref": ref,
-    }
-
-
-def _resolve_schema_internal(
-    schema: Any,
-    spec: Dict[str, Any],
-    context: ResolutionContext,
-    depth: int,
-    ref_hint: str,
-) -> Any:
-    if not isinstance(schema, (dict, list)):
-        return schema
-
-    if context.node_count >= context.max_nodes:
-        return _truncated_schema(ref_hint, "max_nodes")
-
-    context.node_count += 1
-
-    if isinstance(schema, list):
-        return [
-            _resolve_schema_internal(item, spec, context, depth + 1, ref_hint)
-            for item in schema
-        ]
-
-    if "$ref" in schema:
-        ref = schema["$ref"]
-        if not isinstance(ref, str):
-            raise ValueError("Schema $ref must be a string.")
-
-        if depth >= context.max_depth:
-            return _truncated_schema(ref, "max_depth")
-
-        if ref in context.active_ref_set:
-            return _truncated_schema(ref, "cycle")
-
-        if ref in context.ref_cache:
-            resolved_ref_schema = context.ref_cache[ref]
-        else:
-            resolved_target = resolve_ref(ref, spec)
-            context.active_ref_stack.append(ref)
-            context.active_ref_set.add(ref)
-            try:
-                resolved_ref_schema = _resolve_schema_internal(
-                    resolved_target, spec, context, depth + 1, ref,
-                )
-            finally:
-                context.active_ref_stack.pop()
-                context.active_ref_set.discard(ref)
-            context.ref_cache[ref] = resolved_ref_schema
-
-        if isinstance(resolved_ref_schema, dict):
-            merged_schema: Dict[str, Any] = dict(resolved_ref_schema)
-            for key, value in schema.items():
-                if key == "$ref":
-                    continue
-                merged_schema[key] = _resolve_schema_internal(
-                    value, spec, context, depth + 1, ref,
-                )
-            return merged_schema
-
-        return resolved_ref_schema
-
-    resolved_schema: Dict[str, Any] = {}
-    for key, value in schema.items():
-        resolved_schema[key] = _resolve_schema_internal(
-            value, spec, context, depth + 1, ref_hint,
-        )
-    return resolved_schema
-
-
-def resolve_schema(
-    schema: Any,
-    spec: Dict[str, Any],
-    context: Optional[ResolutionContext] = None,
-    *,
-    reset_counters: bool = False,
-) -> Any:
+def resolve_schema(schema: Any, spec: Dict[str, Any]) -> Any:
     """
     Recursively resolve $ref in schema. Returns a dict/list/primitive.
     """
-    resolver_context = context or ResolutionContext()
-    if reset_counters:
-        resolver_context.node_count = 0
-    return _resolve_schema_internal(schema, spec, resolver_context, depth=0, ref_hint="<inline>")
+    if not isinstance(schema, (dict, list)):
+        return schema
+
+    if isinstance(schema, list):
+        return [resolve_schema(item, spec) for item in schema]
+
+    # dict
+    if "$ref" in schema:
+        resolved = resolve_ref(schema["$ref"], spec)
+        return resolve_schema(resolved, spec)
+
+    resolved_schema: Dict[str, Any] = {}
+    for key, value in schema.items():
+        resolved_schema[key] = resolve_schema(value, spec)
+    return resolved_schema
 
 
 def _first_example_value(examples: Dict[str, Any], spec: Dict[str, Any]) -> Any:
@@ -158,13 +71,12 @@ def _first_example_value(examples: Dict[str, Any], spec: Dict[str, Any]) -> Any:
     return _MISSING
 
 
-_MISSING = object()  # sentinel - never appears in user data
+_MISSING = object()  # sentinel – never appears in user data
 
 
 def extract_parameters(
     parameters: List[Dict[str, Any]],
     spec: Dict[str, Any],
-    context: ResolutionContext,
 ) -> Tuple[List[ParamIR], List[ParamIR], List[ParamIR]]:
     path_params: List[ParamIR] = []
     query_params: List[ParamIR] = []
@@ -182,7 +94,7 @@ def extract_parameters(
         if location not in {"path", "query", "header"}:
             continue
 
-        schema = resolve_schema(param.get("schema", {}), spec, context=context, reset_counters=True)
+        schema = resolve_schema(param.get("schema", {}), spec)
         param_schema = schema if isinstance(schema, dict) else {}
 
         # Embed parameter-level example into schema so the generator picks
@@ -216,11 +128,7 @@ def extract_parameters(
     return path_params, query_params, header_params
 
 
-def extract_request_schema(
-    operation: Dict[str, Any],
-    spec: Dict[str, Any],
-    context: ResolutionContext,
-) -> Optional[Dict[str, Any]]:
+def extract_request_schema(operation: Dict[str, Any], spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     request_body = operation.get("requestBody")
     if not request_body:
         return None
@@ -240,7 +148,7 @@ def extract_request_schema(
     if not schema:
         return None
 
-    resolved = resolve_schema(schema, spec, context=context, reset_counters=True)
+    resolved = resolve_schema(schema, spec)
     if not isinstance(resolved, dict):
         return None
 
@@ -261,11 +169,7 @@ def extract_request_schema(
     return resolved
 
 
-def extract_response_schemas(
-    operation: Dict[str, Any],
-    spec: Dict[str, Any],
-    context: ResolutionContext,
-) -> Dict[str, Optional[Dict[str, Any]]]:
+def extract_response_schemas(operation: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, Optional[Dict[str, Any]]]:
     responses = operation.get("responses", {})
     response_schemas: Dict[str, Optional[Dict[str, Any]]] = {}
 
@@ -292,7 +196,7 @@ def extract_response_schemas(
             response_schemas[str(status_code)] = None
             continue
 
-        resolved = resolve_schema(schema, spec, context=context, reset_counters=True)
+        resolved = resolve_schema(schema, spec)
         response_schemas[str(status_code)] = resolved if isinstance(resolved, dict) else None
 
     return response_schemas
@@ -400,7 +304,6 @@ def parse_openapi(spec_text: str) -> ParsedSpecIR:
     version = spec.get("info", {}).get("version", "Unknown")
 
     endpoints: List[EndpointIR] = []
-    resolver_context = ResolutionContext()
 
     paths = spec["paths"]
     if not isinstance(paths, dict):
@@ -431,10 +334,10 @@ def parse_openapi(spec_text: str) -> ParsedSpecIR:
 
             all_params = path_level_params + op_params
 
-            path_params, query_params, header_params = extract_parameters(all_params, spec, resolver_context)
+            path_params, query_params, header_params = extract_parameters(all_params, spec)
             _backfill_param_examples(path_params, query_params, operation, spec)
-            request_schema = extract_request_schema(operation, spec, resolver_context)
-            response_schemas = extract_response_schemas(operation, spec, resolver_context)
+            request_schema = extract_request_schema(operation, spec)
+            response_schemas = extract_response_schemas(operation, spec)
 
             endpoint_ir = EndpointIR(
                 endpoint_id=endpoint_id,
