@@ -195,6 +195,8 @@ def issue_record(
     issue_id: str,
     context: Dict[str, Any],
     include_extra_tests: bool,
+    max_response_chars: Optional[int],
+    progress: Optional[Tuple[int, int]] = None,
     announce: bool = True,
 ) -> Dict[str, Any]:
     ctx_path = issues_dir / f"{issue_id}_context.json"
@@ -206,7 +208,10 @@ def issue_record(
     write_text(prompt_path, prompt)
 
     if announce:
-        print(f"    LLM: generating explanation for {issue_id} ...")
+        if progress:
+            print(f"    LLM issue {progress[0]}/{progress[1]}: generating explanation for {issue_id} ...")
+        else:
+            print(f"    LLM: generating explanation for {issue_id} ...")
     response, err = client.generate(model=model, prompt=prompt)
     if announce:
         status = "ok" if not err else "error"
@@ -216,6 +221,11 @@ def issue_record(
     else:
         response_text = response or ""
 
+    truncated = False
+    if max_response_chars and max_response_chars > 0 and len(response_text) > max_response_chars:
+        response_text = response_text[:max_response_chars].rstrip() + "\n\n[TRUNCATED]"
+        truncated = True
+
     write_text(response_path, response_text)
     return {
         "issue_id": issue_id,
@@ -223,6 +233,7 @@ def issue_record(
         "prompt_file": str(prompt_path),
         "response_file": str(response_path),
         "llm_error": err,
+        "llm_truncated": truncated,
     }
 
 
@@ -294,6 +305,16 @@ def run_model(
 
     llm_scope = str(config.get("llm_scope", "every_fail")).lower()
     include_extra_tests = bool(config.get("include_extra_tests", True))
+    max_response_chars = config.get("llm_response_max_chars", 0)
+    max_failures_per_spec = config.get("llm_max_failures_per_spec", 25)
+    try:
+        max_response_chars = int(max_response_chars or 0)
+    except Exception:
+        max_response_chars = 0
+    try:
+        max_failures_per_spec = int(max_failures_per_spec or 0)
+    except Exception:
+        max_failures_per_spec = 0
     auth_cfg = config.get("auth_by_base_url") or {}
     runner_cfg = config.get("runner") or {}
     timeout_seconds = int(runner_cfg.get("timeout_seconds", 10))
@@ -338,6 +359,8 @@ def run_model(
                 issue_id,
                 context,
                 include_extra_tests,
+                max_response_chars,
+                progress=(1, 1),
             )
             spec_record["issues"].append(issue_id)
             issues_index.append(issue)
@@ -368,6 +391,8 @@ def run_model(
                 issue_id,
                 context,
                 include_extra_tests,
+                max_response_chars,
+                progress=(1, 1),
             )
             spec_record["issues"].append(issue_id)
             issues_index.append(issue)
@@ -400,6 +425,8 @@ def run_model(
                 issue_id,
                 context,
                 include_extra_tests,
+                max_response_chars,
+                progress=(1, 1),
             )
             spec_record["issues"].append(issue_id)
             issues_index.append(issue)
@@ -428,6 +455,8 @@ def run_model(
                 issue_id,
                 context,
                 include_extra_tests,
+                max_response_chars,
+                progress=(1, 1),
             )
             spec_record["issues"].append(issue_id)
             issues_index.append(issue)
@@ -469,6 +498,8 @@ def run_model(
                 issue_id,
                 context,
                 include_extra_tests,
+                max_response_chars,
+                progress=(1, 1),
             )
             spec_record["issues"].append(issue_id)
             issues_index.append(issue)
@@ -493,9 +524,13 @@ def run_model(
 
         if llm_scope == "every_fail":
             by_id = {tc.get("test_id"): tc for tc in suite_data.get("test_cases", [])}
-            for res in results:
-                if res.get("outcome") != "FAIL":
-                    continue
+            fail_results = [r for r in results if r.get("outcome") == "FAIL"]
+            total_fails = len(fail_results)
+            if max_failures_per_spec and max_failures_per_spec > 0 and total_fails > max_failures_per_spec:
+                print(f"  LLM: limiting failures to {max_failures_per_spec} of {total_fails}")
+                fail_results = fail_results[:max_failures_per_spec]
+            total_issues = len(fail_results)
+            for idx, res in enumerate(fail_results, start=1):
                 tc = by_id.get(res.get("test_id"), {})
                 steps = tc.get("steps") or []
                 input_data = steps[0].get("input_data") if steps else {}
@@ -527,12 +562,15 @@ def run_model(
                     issue_id,
                     context,
                     include_extra_tests,
+                    max_response_chars,
+                    progress=(idx, total_issues),
                 )
                 spec_record["issues"].append(issue_id)
                 issues_index.append(issue)
 
         elif llm_scope == "suite_summary" and summary.get("failed", 0) > 0:
-            context = collect_failed_contexts(spec_path, base_url, suite_data, results)
+            limit = max_failures_per_spec if max_failures_per_spec > 0 else 25
+            context = collect_failed_contexts(spec_path, base_url, suite_data, results, limit=limit)
             issue_id = make_issue_id(f"{spec_path.stem}_suite_summary", issue_counter)
             issue_counter += 1
             issue = issue_record(
@@ -543,6 +581,8 @@ def run_model(
                 issue_id,
                 context,
                 include_extra_tests,
+                max_response_chars,
+                progress=(1, 1),
             )
             spec_record["issues"].append(issue_id)
             issues_index.append(issue)
@@ -624,6 +664,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help="Override Ollama timeout seconds",
     )
+    parser.add_argument(
+        "--llm-max-chars",
+        type=int,
+        default=None,
+        help="Override LLM response max chars",
+    )
+    parser.add_argument(
+        "--llm-max-failures-per-spec",
+        type=int,
+        default=None,
+        help="Override max FAILs per spec sent to the LLM",
+    )
     args = parser.parse_args(argv)
 
     config_path = Path(args.config)
@@ -658,6 +710,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         ollama_cfg = config.get("ollama") or {}
         ollama_cfg["timeout_seconds"] = int(args.llm_timeout)
         config["ollama"] = ollama_cfg
+    if args.llm_max_chars is not None:
+        config["llm_response_max_chars"] = int(args.llm_max_chars)
+    if args.llm_max_failures_per_spec is not None:
+        config["llm_max_failures_per_spec"] = int(args.llm_max_failures_per_spec)
 
     models = coerce_list(config.get("models"), "models")
     specs = coerce_list(config.get("specs"), "specs")

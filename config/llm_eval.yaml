@@ -11,6 +11,8 @@ output_dir: build/llm_runs
 
 llm_scope: every_fail
 include_extra_tests: true
+llm_response_max_chars: 2000
+llm_max_failures_per_spec: 25
 
 ollama:
   base_url: http://localhost:11434
