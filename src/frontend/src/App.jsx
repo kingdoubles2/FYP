@@ -7,7 +7,7 @@ import {
   loginUser,
   registerUser,
   runGeneratedTests,
-  uploadSpecFile,
+  uploadSpecFilesBatch,
 } from "./api.js";
 import { buildSpecPreview } from "./testPreview.js";
 
@@ -17,6 +17,8 @@ const THEME_KEY = "contractguard.theme.v1";
 const SPEC_FILE_EXTENSIONS = [".json", ".yaml", ".yml"];
 const JSON_EDITOR_INDENT = "  ";
 const FAILURE_REASON_KEYS = ["message", "detail", "error", "reason", "title", "description"];
+const MAX_CACHE_ENDPOINTS = 200;
+const MAX_CACHE_TESTS = 1200;
 
 function decodeJwtPayload(token) {
   if (!token) {
@@ -93,7 +95,63 @@ function loadSpecCache() {
 }
 
 function saveSpecCache(cache) {
-  localStorage.setItem(SPEC_CACHE_KEY, JSON.stringify(cache));
+  try {
+    localStorage.setItem(SPEC_CACHE_KEY, JSON.stringify(cache));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function shouldTrimCacheEntry(entry) {
+  const endpointCount = Array.isArray(entry?.parsed?.endpoints) ? entry.parsed.endpoints.length : 0;
+  const testCount = Array.isArray(entry?.generatedTests) ? entry.generatedTests.length : 0;
+  const suiteCount = Array.isArray(entry?.generatedSuite?.test_cases) ? entry.generatedSuite.test_cases.length : 0;
+  return endpointCount > MAX_CACHE_ENDPOINTS || testCount > MAX_CACHE_TESTS || suiteCount > MAX_CACHE_TESTS;
+}
+
+function buildStorageCache(cache) {
+  const result = {};
+  for (const [userId, entries] of Object.entries(cache || {})) {
+    const userEntries = entries && typeof entries === "object" ? entries : {};
+    const trimmedEntries = {};
+
+    for (const [specId, entry] of Object.entries(userEntries)) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+
+      if (!shouldTrimCacheEntry(entry)) {
+        trimmedEntries[specId] = entry;
+        continue;
+      }
+
+      const parsed = entry.parsed && typeof entry.parsed === "object" ? entry.parsed : null;
+      const endpoints = Array.isArray(parsed?.endpoints) ? parsed.endpoints.slice(0, MAX_CACHE_ENDPOINTS) : parsed?.endpoints;
+      const slimParsed = parsed
+        ? {
+            ...parsed,
+            endpoints,
+            "x-contractguard-cache-trimmed": true,
+          }
+        : parsed;
+
+      trimmedEntries[specId] = {
+        ...entry,
+        parsed: slimParsed,
+        generatedTests: [],
+        originalGeneratedTests: [],
+        generatedSuite: entry.generatedSuite
+          ? { ...entry.generatedSuite, test_cases: [] }
+          : entry.generatedSuite,
+        cacheTrimmed: true,
+      };
+    }
+
+    result[userId] = trimmedEntries;
+  }
+
+  return result;
 }
 
 function getPreferredTheme() {
@@ -152,18 +210,6 @@ function cloneJsonValue(value) {
 function isSupportedSpecFile(file) {
   const name = String(file?.name || "").toLowerCase();
   return SPEC_FILE_EXTENSIONS.some((extension) => name.endsWith(extension));
-}
-
-function isLikelyInvalidSpecError(error) {
-  const message = String(error?.message || "").toLowerCase();
-  return (
-    message.includes("openapi") ||
-    message.includes("missing 'paths'") ||
-    message.includes("missing paths") ||
-    message.includes("invalid json") ||
-    message.includes("invalid yaml") ||
-    message.includes("yaml")
-  );
 }
 
 function toPrettyJson(value) {
@@ -371,6 +417,23 @@ function parseResponseSnippetMeta(snippetText) {
   return { reason: "", raw, documentationUrl: "" };
 }
 
+function extractUploadFailureMessage(errorPayload) {
+  if (typeof errorPayload === "string" && errorPayload.trim()) {
+    return errorPayload.trim();
+  }
+
+  if (errorPayload && typeof errorPayload === "object") {
+    for (const key of FAILURE_REASON_KEYS) {
+      const value = errorPayload[key];
+      if (typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+    }
+  }
+
+  return "Upload failed.";
+}
+
 function isAbsoluteHttpUrl(value) {
   const text = String(value || "").trim();
   return /^https?:\/\/\S+$/i.test(text);
@@ -484,7 +547,7 @@ function AuthPanel({ mode, email, password, loading, error, onModeChange, onEmai
   );
 }
 
-function UploadPanel({ loading, onUpload, message, error }) {
+function UploadPanel({ loading, onUpload, message, error, failures, warning }) {
   return (
     <section className="panel upload-panel">
       <div className="panel-header">
@@ -514,6 +577,20 @@ function UploadPanel({ loading, onUpload, message, error }) {
 
       {message ? <p className="message success">{message}</p> : null}
       {error ? <p className="message error">{error}</p> : null}
+      {warning ? <p className="message warning">{warning}</p> : null}
+      {Array.isArray(failures) && failures.length > 0 ? (
+        <div className="upload-failures">
+          <p>Failed files</p>
+          <ul className="upload-failure-list">
+            {failures.map((failure, index) => (
+              <li key={`${failure.filename}-${index}`}>
+                <strong>{failure.filename}</strong>
+                <span>{failure.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1334,6 +1411,8 @@ export default function App() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [uploadMessage, setUploadMessage] = useState("");
+  const [uploadFailures, setUploadFailures] = useState([]);
+  const [cacheWarning, setCacheWarning] = useState("");
   const [specHistory, setSpecHistory] = useState([]);
   const [specCache, setSpecCache] = useState(() => loadSpecCache());
   const [selectedSpecId, setSelectedSpecId] = useState(null);
@@ -1364,7 +1443,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    saveSpecCache(specCache);
+    if (saveSpecCache(specCache)) {
+      setCacheWarning("");
+      return;
+    }
+
+    const slimCache = buildStorageCache(specCache);
+    if (saveSpecCache(slimCache)) {
+      setCacheWarning("Large specs exceed browser storage. Full details are kept for this session only.");
+      return;
+    }
+
+    setCacheWarning("Browser storage is full. Uploads will not persist after a refresh.");
   }, [specCache]);
 
   useEffect(() => {
@@ -1686,6 +1776,8 @@ export default function App() {
     setClearHistoryLoading(false);
     setUploadError("");
     setUploadMessage("");
+    setUploadFailures([]);
+    setCacheWarning("");
   }
 
   async function handleClearHistory() {
@@ -1732,22 +1824,28 @@ export default function App() {
     if (files.length === 0) {
       setUploadError("No JSON/YAML OpenAPI files found in your selection.");
       setUploadMessage("");
+      setUploadFailures([]);
       return;
     }
 
     setUploadLoading(true);
     setUploadError("");
     setUploadMessage("");
+    setUploadFailures([]);
 
     try {
+      const batchPayload = await uploadSpecFilesBatch(session.token, files);
+      const batchResults = Array.isArray(batchPayload?.results) ? batchPayload.results : [];
       const nextUserCache = { ...(specCache[session.userId] || {}) };
       let lastUploadedId = null;
       const uploadedEntries = [];
-      let skippedInvalidSpecCount = 0;
+      const failedEntries = [];
 
-      for (const file of files) {
-        try {
-          const payload = await uploadSpecFile(session.token, file);
+      for (const result of batchResults) {
+        const filename = String(result?.filename || "uploaded");
+
+        if (result?.status === "success" && result?.data && typeof result.data === "object") {
+          const payload = result.data;
           const parsed = payload?.parsed || null;
           const preview = parsed ? buildSpecPreview(parsed) : null;
           const generatedSuite = payload?.generated_tests && typeof payload.generated_tests === "object"
@@ -1757,10 +1855,18 @@ export default function App() {
           const generatedTests = cloneJsonValue(rawGeneratedTests) || [];
           const originalGeneratedTests = cloneJsonValue(rawGeneratedTests) || [];
           const createdAt = new Date().toISOString();
-          lastUploadedId = payload?.id ?? lastUploadedId;
 
+          if (payload?.id === undefined || payload?.id === null) {
+            failedEntries.push({
+              filename,
+              message: "Upload succeeded but no spec id was returned.",
+            });
+            continue;
+          }
+
+          lastUploadedId = payload.id;
           nextUserCache[payload.id] = {
-            filename: file.name,
+            filename,
             uploadedAt: createdAt,
             createdAt,
             parsed,
@@ -1772,8 +1878,8 @@ export default function App() {
 
           uploadedEntries.push({
             id: payload.id,
-            filename: file.name,
-            title: parsed?.title || file.name,
+            filename,
+            title: parsed?.title || filename,
             version: parsed?.version || "Unknown",
             created_at: createdAt,
             parsed,
@@ -1783,21 +1889,30 @@ export default function App() {
             originalGeneratedTests,
             totalCases: preview?.totalCases || generatedTests.length || 0,
           });
-        } catch (error) {
-          if (isLikelyInvalidSpecError(error)) {
-            skippedInvalidSpecCount += 1;
-            continue;
-          }
-          throw error;
+          continue;
         }
+
+        const failureMessage = result?.status === "failed"
+          ? extractUploadFailureMessage(result?.error)
+          : "Upload returned an unknown result.";
+        failedEntries.push({
+          filename,
+          message: truncateText(failureMessage, 220),
+        });
       }
 
+      setUploadFailures(failedEntries);
+
       if (uploadedEntries.length === 0) {
-        const skippedTotal = skippedCount + skippedInvalidSpecCount;
+        const failedTotal = failedEntries.length;
+        const skippedSuffix = skippedCount > 0
+          ? ` Skipped ${skippedCount} unsupported file${skippedCount === 1 ? "" : "s"}.`
+          : "";
+        const failedSuffix = failedTotal > 0
+          ? ` ${failedTotal} file${failedTotal === 1 ? "" : "s"} failed.`
+          : "";
         setUploadError(
-          skippedTotal > 0
-            ? `No valid OpenAPI specs were uploaded. Skipped ${skippedTotal} file${skippedTotal === 1 ? "" : "s"}.`
-            : "No files were uploaded.",
+          `No valid OpenAPI specs were uploaded.${failedSuffix}${skippedSuffix}`.trim(),
         );
         setUploadMessage("");
         return;
@@ -1819,15 +1934,18 @@ export default function App() {
         setSelectedSpecId(lastUploadedId);
       }
 
-      const skippedTotal = skippedCount + skippedInvalidSpecCount;
-      const skippedSuffix = skippedTotal > 0
-        ? ` Skipped ${skippedTotal} unsupported/invalid file${skippedTotal === 1 ? "" : "s"}.`
+      const failedSuffix = failedEntries.length > 0
+        ? ` ${failedEntries.length} file${failedEntries.length === 1 ? "" : "s"} failed.`
+        : "";
+      const skippedSuffix = skippedCount > 0
+        ? ` Skipped ${skippedCount} unsupported file${skippedCount === 1 ? "" : "s"}.`
         : "";
       setUploadMessage(
-        `Uploaded ${uploadedEntries.length} valid spec file${uploadedEntries.length === 1 ? "" : "s"} successfully.${skippedSuffix}`,
+        `Uploaded ${uploadedEntries.length} valid spec file${uploadedEntries.length === 1 ? "" : "s"} successfully.${failedSuffix}${skippedSuffix}`,
       );
     } catch (error) {
       setUploadError(error.message);
+      setUploadFailures([]);
     } finally {
       setUploadLoading(false);
     }
@@ -1932,7 +2050,14 @@ export default function App() {
           </section>
 
           <div className="left-column">
-            <UploadPanel loading={uploadLoading} onUpload={handleUpload} message={uploadMessage} error={uploadError} />
+            <UploadPanel
+              loading={uploadLoading}
+              onUpload={handleUpload}
+              message={uploadMessage}
+              error={uploadError}
+              failures={uploadFailures}
+              warning={cacheWarning}
+            />
             <HistoryList
               entries={specHistory}
               selectedSpecId={selectedSpecId}

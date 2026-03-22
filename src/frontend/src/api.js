@@ -83,6 +83,21 @@ export async function uploadSpecFile(token, file) {
   });
 }
 
+export async function uploadSpecFilesBatch(token, files) {
+  const formData = new FormData();
+  files.forEach((file) => {
+    formData.append("files", file);
+  });
+
+  return request("/api/specs/parse-batch", {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+    },
+    body: formData,
+  });
+}
+
 export async function runGeneratedTests(token, suitePayload) {
   return request("/api/tests/run", {
     method: "POST",
