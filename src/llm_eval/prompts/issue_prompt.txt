@@ -1,0 +1,16 @@
+You are given JSON context about a ContractGuard pipeline issue or a test failure.
+
+Rules:
+- Use only the evidence in the JSON context below.
+- Do not assume behavior not shown in the context.
+- Do not fabricate endpoints, fields, or server behavior.
+- If information is missing, say "Insufficient data" and state what is missing.
+
+Output (Markdown):
+- Summary
+- Evidence (list concrete fields/values from the JSON)
+- Likely cause (only if supported by evidence; otherwise "Insufficient data")
+- Troubleshooting steps (actionable, based on evidence)
+- Suggested extra tests (only if instructed)
+
+JSON context:

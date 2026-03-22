@@ -1,0 +1,25 @@
+models:
+  - qwen3:8b
+  - qwen2.5-coder:7b
+
+specs:
+  - src/test_uploads/user1/api.github.com.2026-03-10.yaml
+  - src/test_uploads/user1/open_meteo.yaml
+  - src/test_uploads/user1/petstore.json
+
+output_dir: build/llm_runs
+
+llm_scope: every_fail
+include_extra_tests: true
+
+ollama:
+  base_url: http://localhost:11434
+  timeout_seconds: 120
+
+runner:
+  timeout_seconds: 12
+
+auth_by_base_url:
+  api.github.com:
+    type: bearer
+    value: env:CONTRACTGUARD_BEARER_TOKEN
