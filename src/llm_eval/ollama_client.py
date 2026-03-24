@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import requests
 
@@ -10,13 +10,27 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = max(1, int(timeout_seconds))
 
-    def generate(self, model: str, prompt: str) -> Tuple[Optional[str], Optional[str]]:
+    def generate(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        system: Optional[str] = None,
+        format_json: bool = False,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
         url = f"{self.base_url}/api/generate"
         payload = {
             "model": model,
             "prompt": prompt,
             "stream": False,
         }
+        if system:
+            payload["system"] = system
+        if format_json:
+            payload["format"] = "json"
+        if isinstance(options, dict) and options:
+            payload["options"] = options
         try:
             resp = requests.post(url, json=payload, timeout=self.timeout_seconds)
             resp.raise_for_status()

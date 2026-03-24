@@ -1,0 +1,29 @@
+Case:
+- case_id: {case_id}
+- intent/category: {intent}/{category}
+- endpoint: {method} {path}
+- expected: {expected_outcome}
+- actual: {actual_outcome}
+
+Evidence:
+{evidence_json}
+
+Task:
+Give the best root-cause explanation for this case.
+
+Return STRICT JSON with exactly these keys:
+{{
+  "cause": "single concise sentence",
+  "why_likely": "single concise sentence tied to evidence",
+  "check_next": "single concise next check",
+  "confidence": "confirmed|likely",
+  "expected_negative_behavior": false,
+  "evidence_quotes": ["tiny snippet from evidence 1", "tiny snippet from evidence 2"]
+}}
+
+Rules:
+- Do not define metadata fields or describe framework structure.
+- Do not give generic debugging advice.
+- Keep each field concise and case-specific.
+- Use tiny evidence quotes only (short snippets).
+- Return JSON only, no markdown, no prose wrapper.

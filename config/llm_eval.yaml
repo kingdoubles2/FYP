@@ -1,22 +1,28 @@
 models:
-  - qwen3:8b
-  - qwen2.5-coder:7b
+  - kimi-k2.5:cloud
 
 specs:
   - src/test_uploads/user1/api.github.com.2026-03-10.yaml
-  - src/test_uploads/user1/open_meteo.yaml
-  - src/test_uploads/user1/petstore.json
 
 output_dir: build/llm_runs
 
-llm_scope: every_fail
-include_extra_tests: true
-llm_response_max_chars: 2000
-llm_max_failures_per_spec: 25
+case_scope: fail
+
+llm:
+  timeout_seconds: 120
+  output_word_target: 55
+  output_word_max: 100
+  retry_invalid_output: 1
+  max_cases_per_spec: 5
+
+evidence:
+  max_items_per_section: 12
+  snippet_chars: 300
+  max_similar_failures: 5
 
 ollama:
   base_url: http://localhost:11434
-  timeout_seconds: 120
+  options: {}
 
 runner:
   timeout_seconds: 12

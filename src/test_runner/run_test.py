@@ -26,6 +26,25 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+SENSITIVE_HEADERS = {
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "api-key",
+    "apikey",
+    "token",
+}
+
+
+def redact_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
+    redacted: Dict[str, Any] = {}
+    for key, value in (headers or {}).items():
+        if str(key).lower() in SENSITIVE_HEADERS:
+            redacted[key] = "<redacted>"
+        else:
+            redacted[key] = value
+    return redacted
+
 
 # ---------------------------------------------------------------------------
 # Auth resolution
@@ -207,6 +226,12 @@ def run_one(
         "actual_status": None,
         "outcome": "FAIL",
         "response_snippet": "",
+        "response_body": "",
+        "response_headers": {},
+        "request_path_params": {},
+        "request_query_params": {},
+        "request_headers": {},
+        "request_body": None,
         "error_message": "",
         "duration_ms": 0,
     }
@@ -231,6 +256,8 @@ def run_one(
     path = apply_path_params(raw_path, path_params)
     url = base_url.rstrip("/") + path
     result["final_url"] = url
+    result["request_path_params"] = dict(path_params)
+    result["request_query_params"] = dict(query_params)
 
     # Merge headers:
     # - apply global auth only for non-auth test categories
@@ -241,6 +268,8 @@ def run_one(
     if body is not None:
         request_headers["Content-Type"] = "application/json"
     request_headers.update(headers)
+    result["request_headers"] = redact_headers(request_headers)
+    result["request_body"] = body
 
     # Execute the request
     start = time.perf_counter()
@@ -262,9 +291,11 @@ def run_one(
     elapsed = (time.perf_counter() - start) * 1000
     result["duration_ms"] = round(elapsed, 1)
     result["actual_status"] = resp.status_code
+    result["response_headers"] = dict(resp.headers)
+    result["response_body"] = (resp.text or "").strip()
 
     # Response snippet (truncated)
-    snippet = (resp.text or "").strip()
+    snippet = result["response_body"]
     if len(snippet) > 500:
         snippet = snippet[:500] + "..."
     result["response_snippet"] = snippet
@@ -359,6 +390,12 @@ def run_suite(
                         "actual_status": None,
                         "outcome": "SKIP",
                         "response_snippet": "",
+                        "response_body": "",
+                        "response_headers": {},
+                        "request_path_params": {},
+                        "request_query_params": {},
+                        "request_headers": {},
+                        "request_body": None,
                         "error_message": "Skipped after repeated 401 Unauthorized without authentication.",
                         "duration_ms": 0,
                     }
