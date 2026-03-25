@@ -13,6 +13,7 @@ import { buildSpecPreview } from "./testPreview.js";
 
 const SESSION_KEY = "contractguard.session.v1";
 const SPEC_CACHE_KEY = "contractguard.spec-cache.v1";
+const THEME_KEY = "contractguard.theme.v1";
 const SPEC_FILE_EXTENSIONS = [".json", ".yaml", ".yml"];
 const JSON_EDITOR_INDENT = "  ";
 const FAILURE_REASON_KEYS = ["message", "detail", "error", "reason", "title", "description"];
@@ -93,6 +94,34 @@ function loadSpecCache() {
 
 function saveSpecCache(cache) {
   localStorage.setItem(SPEC_CACHE_KEY, JSON.stringify(cache));
+}
+
+function getPreferredTheme() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "light";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function loadTheme() {
+  try {
+    const raw = localStorage.getItem(THEME_KEY);
+    if (raw === "light" || raw === "dark") {
+      return raw;
+    }
+  } catch {
+    return getPreferredTheme();
+  }
+
+  return getPreferredTheme();
+}
+
+function saveTheme(theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // Ignore write errors (private mode, storage restrictions).
+  }
 }
 
 function formatDate(value) {
@@ -517,7 +546,7 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
         </div>
       ) : (
         <div className="history-list">
-          {entries.map((entry) => (
+          {entries.map((entry, index) => (
             <button
               key={entry.id}
               type="button"
@@ -526,7 +555,7 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
             >
               <div className="history-topline">
                 <strong>{entry.title || entry.filename}</strong>
-                <span>#{entry.id}</span>
+                <span>#{index + 1}</span>
               </div>
               <div className="history-meta">
                 <span>{entry.filename}</span>
@@ -1292,6 +1321,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
 
 export default function App() {
   const [session, setSession] = useState(() => loadSession());
+  const [theme, setTheme] = useState(() => loadTheme());
   const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1308,6 +1338,7 @@ export default function App() {
   const [specCache, setSpecCache] = useState(() => loadSpecCache());
   const [selectedSpecId, setSelectedSpecId] = useState(null);
   const [testRunBySpecId, setTestRunBySpecId] = useState({});
+  const isDarkTheme = theme === "dark";
 
   useEffect(() => {
     let cancelled = false;
@@ -1335,6 +1366,10 @@ export default function App() {
   useEffect(() => {
     saveSpecCache(specCache);
   }, [specCache]);
+
+  useEffect(() => {
+    saveTheme(theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!session?.token) {
@@ -1798,29 +1833,63 @@ export default function App() {
     }
   }
 
+  function handleThemeToggle() {
+    setTheme((current) => (current === "dark" ? "light" : "dark"));
+  }
+
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme}>
       <div className="background-orb orb-one" />
       <div className="background-orb orb-two" />
 
       <header className="hero">
-        <div>
+        <div className="hero-main">
           <p className="eyebrow">API Contract Testing</p>
           <h1>ContractGuard</h1>
           <p className="hero-copy">
             Service status: <span>{apiStatus}</span>
           </p>
         </div>
-        {session ? (
-          <div className="session-card">
-            <span>Signed in as</span>
-            <strong>{session.email}</strong>
-            <small>User #{session.userId}</small>
-            <button type="button" className="secondary-button" onClick={handleLogout}>
-              Logout
-            </button>
-          </div>
-        ) : null}
+        <div className="hero-aside">
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={handleThemeToggle}
+            aria-pressed={isDarkTheme}
+            aria-label={isDarkTheme ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            <span className="theme-toggle-icon" aria-hidden="true">
+              {isDarkTheme ? (
+                <svg viewBox="0 0 24 24" role="presentation" focusable="false">
+                  <circle cx="12" cy="12" r="4.2" />
+                  <line x1="12" y1="1.6" x2="12" y2="5.1" />
+                  <line x1="12" y1="18.9" x2="12" y2="22.4" />
+                  <line x1="1.6" y1="12" x2="5.1" y2="12" />
+                  <line x1="18.9" y1="12" x2="22.4" y2="12" />
+                  <line x1="4.2" y1="4.2" x2="6.8" y2="6.8" />
+                  <line x1="17.2" y1="17.2" x2="19.8" y2="19.8" />
+                  <line x1="17.2" y1="6.8" x2="19.8" y2="4.2" />
+                  <line x1="4.2" y1="19.8" x2="6.8" y2="17.2" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" role="presentation" focusable="false">
+                  <path d="M15.8 2.9a9.6 9.6 0 1 0 5.3 16.9 9.2 9.2 0 1 1-5.3-16.9z" />
+                </svg>
+              )}
+            </span>
+            <span className="sr-only">{isDarkTheme ? "Switch to light mode" : "Switch to dark mode"}</span>
+          </button>
+          {session ? (
+            <div className="session-card">
+              <span>Signed in as</span>
+              <strong>{session.email}</strong>
+              <small>User #{session.userId}</small>
+              <button type="button" className="secondary-button" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
+          ) : null}
+        </div>
       </header>
 
       {!session ? (
