@@ -577,6 +577,19 @@ function resolveRunConfigs(entry, cachedEntry = null) {
   };
 }
 
+function resolveUploadDefaultTests(entry, cachedEntry = null) {
+  const cachedDefaults = Array.isArray(cachedEntry?.uploadDefaultTests) ? cachedEntry.uploadDefaultTests : null;
+  if (cachedDefaults && cachedDefaults.length > 0) {
+    return cloneJsonValue(cachedDefaults) || [];
+  }
+  const cachedOriginal = Array.isArray(cachedEntry?.originalGeneratedTests) ? cachedEntry.originalGeneratedTests : null;
+  if (cachedOriginal && cachedOriginal.length > 0) {
+    return cloneJsonValue(cachedOriginal) || [];
+  }
+  const suiteCases = Array.isArray(entry?.generatedSuite?.test_cases) ? entry.generatedSuite.test_cases : [];
+  return cloneJsonValue(suiteCases) || [];
+}
+
 function StatCard({ label, value, accent }) {
   return (
     <div className="stat-card">
@@ -748,7 +761,10 @@ function SpecDetails({
   onApplySuggestedTest,
 }) {
   const generatedCases = Array.isArray(entry?.generatedTests) ? entry.generatedTests : [];
-  const originalCases = Array.isArray(entry?.originalGeneratedTests) ? entry.originalGeneratedTests : generatedCases;
+  const uploadDefaultCases = Array.isArray(entry?.uploadDefaultTests)
+    ? entry.uploadDefaultTests
+    : (Array.isArray(entry?.originalGeneratedTests) ? entry.originalGeneratedTests : generatedCases);
+  const originalCases = uploadDefaultCases;
   const runBaselineCases = Array.isArray(runState?.baselineTests) ? runState.baselineTests : [];
   const baselineCases = runBaselineCases.length > 0 ? runBaselineCases : originalCases;
   const [jsonDrafts, setJsonDrafts] = useState({});
@@ -1017,6 +1033,8 @@ function SpecDetails({
   const isApiKeyMissing = runAuthMode === "api_key" && trimmedRunApiKeyValue.length === 0;
   const hasAuthInputError = isBearerTokenMissing || isApiKeyMissing;
   const isRunConfigAtDefault = deepEqual(runConfigCurrent, runConfigDefault);
+  const isPayloadAtDefault = deepEqual(generatedCases, uploadDefaultCases);
+  const isRunDefaultsApplied = isRunConfigAtDefault && isPayloadAtDefault;
 
   function buildRunPayloadFromDrafts() {
     const nextDrafts = {};
@@ -1131,6 +1149,17 @@ function SpecDetails({
     if (!entry || !onResetRunConfig) {
       return;
     }
+    const nextDrafts = {};
+    uploadDefaultCases.forEach((testCase, index) => {
+      const firstStep = testCase?.steps?.[0] || null;
+      nextDrafts[index] = {
+        inputDataText: toPrettyJson(firstStep?.input_data ?? null),
+        expectedResultText: toPrettyJson(testCase?.expected_result ?? null),
+        inputDataError: "",
+        expectedResultError: "",
+      };
+    });
+    setJsonDrafts(nextDrafts);
     onResetRunConfig(entry.id);
   }
 
@@ -1191,7 +1220,7 @@ function SpecDetails({
                           type="button"
                           className="secondary-button run-reset-button"
                           onClick={handleResetRunConfigToDefaults}
-                          disabled={runState?.loading || isRunConfigAtDefault}
+                          disabled={runState?.loading || isRunDefaultsApplied}
                         >
                           Reset Defaults
                         </button>
@@ -1675,6 +1704,10 @@ export default function App() {
               const originalGeneratedTests = Array.isArray(cached?.originalGeneratedTests)
                 ? cached.originalGeneratedTests
                 : generatedTests;
+              const uploadDefaultTests = resolveUploadDefaultTests(
+                { generatedSuite },
+                cached || null,
+              );
               const runConfigs = resolveRunConfigs(
                 {
                   parsed: cached?.parsed || null,
@@ -1690,6 +1723,7 @@ export default function App() {
                 generatedSuite,
                 generatedTests,
                 originalGeneratedTests,
+                uploadDefaultTests,
                 runConfigDefault: runConfigs.runConfigDefault,
                 runConfigCurrent: runConfigs.runConfigCurrent,
                 totalCases: generatedTests.length || cached?.preview?.totalCases || 0,
@@ -1775,6 +1809,15 @@ export default function App() {
             const nextOriginal = Array.isArray(entry.originalGeneratedTests) && entry.originalGeneratedTests.length > 0
               ? entry.originalGeneratedTests
               : (cloneJsonValue(nextGeneratedTests) || []);
+            const nextUploadDefault = Array.isArray(entry.uploadDefaultTests) && entry.uploadDefaultTests.length > 0
+              ? entry.uploadDefaultTests
+              : resolveUploadDefaultTests(
+                  {
+                    ...entry,
+                    generatedSuite: nextGeneratedSuite,
+                  },
+                  entry,
+                );
             const nextPreview = entry.preview || (nextParsed ? buildSpecPreview(nextParsed) : null);
             const runConfigs = resolveRunConfigs(
               {
@@ -1792,6 +1835,7 @@ export default function App() {
               generatedSuite: nextGeneratedSuite,
               generatedTests: nextGeneratedTests,
               originalGeneratedTests: nextOriginal,
+              uploadDefaultTests: nextUploadDefault,
               runConfigDefault: runConfigs.runConfigDefault,
               runConfigCurrent: runConfigs.runConfigCurrent,
               totalCases: nextPreview?.totalCases || nextGeneratedTests.length || entry.totalCases || 0,
@@ -1863,7 +1907,6 @@ export default function App() {
         return {
           ...entry,
           generatedTests: nextTests,
-          originalGeneratedTests: cloneJsonValue(nextTests) || [],
           totalCases: nextTests.length,
           generatedSuite: entry.generatedSuite
             ? { ...entry.generatedSuite, test_cases: nextTests }
@@ -1887,7 +1930,6 @@ export default function App() {
       userCache[specId] = {
         ...existing,
         generatedTests: nextTests,
-        originalGeneratedTests: cloneJsonValue(nextTests) || [],
         generatedSuite: existing.generatedSuite
           ? { ...existing.generatedSuite, test_cases: nextTests }
           : existing.generatedSuite,
@@ -1937,9 +1979,6 @@ export default function App() {
         generatedSuite: existing.generatedSuite
           ? { ...existing.generatedSuite, test_cases: updatedTests }
           : existing.generatedSuite,
-        originalGeneratedTests: Array.isArray(existing.originalGeneratedTests)
-          ? existing.originalGeneratedTests
-          : cloneJsonValue(currentTests),
       };
 
       return {
@@ -1997,7 +2036,6 @@ export default function App() {
         generatedSuite: existing.generatedSuite
           ? { ...existing.generatedSuite, test_cases: resetTests }
           : existing.generatedSuite,
-        originalGeneratedTests: originalTests,
       };
 
       return {
@@ -2060,7 +2098,60 @@ export default function App() {
   function handleResetRunConfig(specId) {
     const sourceEntry = specHistory.find((entry) => entry.id === specId) || null;
     const resolvedConfigs = resolveRunConfigs(sourceEntry || null, sourceEntry || null);
-    handleUpdateRunConfig(specId, resolvedConfigs.runConfigDefault);
+    const defaultTests = resolveUploadDefaultTests(sourceEntry || null, sourceEntry || null);
+
+    setSpecHistory((current) =>
+      current.map((entry) => {
+        if (entry.id !== specId) {
+          return entry;
+        }
+        const resetTests = cloneJsonValue(defaultTests) || [];
+        return {
+          ...entry,
+          runConfigDefault: resolvedConfigs.runConfigDefault,
+          runConfigCurrent: resolvedConfigs.runConfigDefault,
+          generatedTests: resetTests,
+          totalCases: resetTests.length,
+          generatedSuite: entry.generatedSuite
+            ? { ...entry.generatedSuite, test_cases: resetTests }
+            : entry.generatedSuite,
+        };
+      }),
+    );
+
+    setTestRunBySpecId((current) => ({
+      ...current,
+      [specId]: {
+        ...(current[specId] || getEmptyRunState()),
+        llmByTestId: {},
+      },
+    }));
+
+    if (!session?.userId) {
+      return;
+    }
+
+    setSpecCache((current) => {
+      const userCache = { ...(current[session.userId] || {}) };
+      const existing = userCache[specId];
+      if (!existing) {
+        return current;
+      }
+      const resetTests = cloneJsonValue(defaultTests) || [];
+      userCache[specId] = {
+        ...existing,
+        runConfigDefault: normalizeRunConfig(existing.runConfigDefault, resolvedConfigs.runConfigDefault),
+        runConfigCurrent: resolvedConfigs.runConfigDefault,
+        generatedTests: resetTests,
+        generatedSuite: existing.generatedSuite
+          ? { ...existing.generatedSuite, test_cases: resetTests }
+          : existing.generatedSuite,
+      };
+      return {
+        ...current,
+        [session.userId]: userCache,
+      };
+    });
   }
 
   async function handleRunTests(specId, suitePayload) {
@@ -2253,13 +2344,9 @@ export default function App() {
         }
         const currentTests = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
         const nextTests = [...currentTests, normalizedCaseCopy];
-        const nextOriginal = Array.isArray(entry.originalGeneratedTests)
-          ? [...entry.originalGeneratedTests, cloneJsonValue(normalizedCaseCopy)]
-          : (cloneJsonValue(nextTests) || []);
         return {
           ...entry,
           generatedTests: nextTests,
-          originalGeneratedTests: nextOriginal,
           totalCases: nextTests.length,
           generatedSuite: entry.generatedSuite
             ? { ...entry.generatedSuite, test_cases: nextTests }
@@ -2277,13 +2364,9 @@ export default function App() {
         }
         const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
         const nextTests = [...currentTests, normalizedCaseCopy];
-        const nextOriginal = Array.isArray(existing.originalGeneratedTests)
-          ? [...existing.originalGeneratedTests, cloneJsonValue(normalizedCaseCopy)]
-          : (cloneJsonValue(nextTests) || []);
         userCache[specId] = {
           ...existing,
           generatedTests: nextTests,
-          originalGeneratedTests: nextOriginal,
           generatedSuite: existing.generatedSuite
             ? { ...existing.generatedSuite, test_cases: nextTests }
             : existing.generatedSuite,
@@ -2403,6 +2486,7 @@ export default function App() {
             ? cloneJsonValue(payload.generated_tests)
             : null;
           const rawGeneratedTests = Array.isArray(generatedSuite?.test_cases) ? generatedSuite.test_cases : [];
+          const uploadDefaultTests = cloneJsonValue(rawGeneratedTests) || [];
           const generatedTests = cloneJsonValue(rawGeneratedTests) || [];
           const originalGeneratedTests = cloneJsonValue(rawGeneratedTests) || [];
           const runConfigDefault = buildDefaultRunConfig({ parsed, generatedSuite });
@@ -2421,6 +2505,7 @@ export default function App() {
             generatedSuite,
             generatedTests,
             originalGeneratedTests,
+            uploadDefaultTests,
             runConfigDefault,
             runConfigCurrent,
             totalCases: generatedTests.length || preview?.totalCases || 0,
@@ -2458,6 +2543,7 @@ export default function App() {
             generatedSuite: entry.generatedSuite,
             generatedTests: entry.generatedTests,
             originalGeneratedTests: entry.originalGeneratedTests,
+            uploadDefaultTests: entry.uploadDefaultTests,
             runConfigDefault: entry.runConfigDefault,
             runConfigCurrent: entry.runConfigCurrent,
           };
