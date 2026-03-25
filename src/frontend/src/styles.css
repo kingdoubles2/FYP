@@ -707,6 +707,10 @@ code {
   box-shadow: 0 8px 18px rgba(50, 89, 181, 0.24);
 }
 
+.run-reset-button {
+  border-radius: 0.68rem;
+}
+
 .metric-row {
   display: flex;
   align-items: center;
@@ -1100,6 +1104,51 @@ code {
   overflow: auto;
 }
 
+.llm-actions-row {
+  margin-top: 0.55rem;
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.llm-action-button {
+  padding: 0.42rem 0.78rem;
+  font-size: 0.74rem;
+}
+
+.llm-response-block {
+  margin-top: 0.5rem;
+  padding-top: 0.45rem;
+  border-top: 1px dashed #d6ddea;
+}
+
+.llm-warning {
+  color: #7f3f17;
+}
+
+.llm-apply-button {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.76rem;
+}
+
+.llm-apply-row {
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.llm-apply-row .llm-apply-button {
+  margin-top: 0;
+}
+
+.llm-apply-success {
+  font-size: 0.78rem;
+  color: #1f7a45;
+}
+
 .endpoint-section {
   margin-top: 1.25rem;
 }
@@ -1448,6 +1497,18 @@ code {
 
 .app-shell[data-theme="dark"] .run-feedback-details > summary {
   color: #aab5c9;
+}
+
+.app-shell[data-theme="dark"] .llm-response-block {
+  border-top-color: #3a404d;
+}
+
+.app-shell[data-theme="dark"] .llm-warning {
+  color: #efc57e;
+}
+
+.app-shell[data-theme="dark"] .llm-apply-success {
+  color: #9adfb8;
 }
 
 .app-shell[data-theme="dark"] .testcase-detail {

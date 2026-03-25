@@ -13,7 +13,7 @@ Give the best root-cause explanation for this case.
 
 Return STRICT JSON with exactly these keys:
 {{
-  "cause": "single concise sentence",
+  "cause": "concise short sentences",
   "why_likely": "single concise sentence tied to evidence",
   "check_next": "single concise next check",
   "confidence": "confirmed|likely",

@@ -94,4 +94,30 @@ export async function runGeneratedTests(token, suitePayload) {
   });
 }
 
+export async function fetchLatestRunForSpec(token, specId) {
+  return request(`/api/specs/${encodeURIComponent(specId)}/runs/latest`, {
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
+export async function requestLlmExplanation(token, runId, testId) {
+  return request(`/api/tests/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testId)}/llm/explanation`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
+export async function requestLlmSuggestedTest(token, runId, testId) {
+  return request(`/api/tests/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testId)}/llm/suggest-test`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
 export { API_BASE_URL };

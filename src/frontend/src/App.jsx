@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   API_BASE_URL,
   clearSpecs,
+  fetchLatestRunForSpec,
   healthCheck,
   listSpecs,
   loginUser,
+  requestLlmExplanation,
+  requestLlmSuggestedTest,
   registerUser,
   runGeneratedTests,
   uploadSpecFile,
@@ -259,6 +262,91 @@ function applyGeneratedTestReset(generatedTests, originalGeneratedTests, testInd
   });
 }
 
+function buildUniqueTestId(existingTests, preferredId) {
+  const existingIds = new Set(
+    (Array.isArray(existingTests) ? existingTests : [])
+      .map((testCase) => String(testCase?.test_id || "").trim())
+      .filter(Boolean),
+  );
+  const base = String(preferredId || "TC-LLM-FOLLOWUP").trim() || "TC-LLM-FOLLOWUP";
+  if (!existingIds.has(base)) {
+    return base;
+  }
+  let index = 1;
+  while (true) {
+    const candidate = `${base}-ADDED-${String(index).padStart(2, "0")}`;
+    if (!existingIds.has(candidate)) {
+      return candidate;
+    }
+    index += 1;
+  }
+}
+
+function normalizeSuggestedTestCaseForSuite(suggestedTestCase, existingTests, originCategory = "") {
+  if (!suggestedTestCase || typeof suggestedTestCase !== "object" || Array.isArray(suggestedTestCase)) {
+    return null;
+  }
+  const copy = cloneJsonValue(suggestedTestCase) || {};
+  const method = String(copy.method || "GET").toUpperCase();
+  const path = String(copy.path || "/");
+  const steps = Array.isArray(copy.steps) && copy.steps.length > 0 ? copy.steps : [{ step_number: 1, action: "Execute request", input_data: {} }];
+  const firstStep = steps[0] && typeof steps[0] === "object"
+    ? { ...steps[0], input_data: (steps[0].input_data && typeof steps[0].input_data === "object") ? steps[0].input_data : {} }
+    : { step_number: 1, action: "Execute request", input_data: {} };
+  const expectedResult = copy.expected_result && typeof copy.expected_result === "object"
+    ? copy.expected_result
+    : { status_code: 200, description: "LLM suggested follow-up case." };
+
+  return {
+    test_id: buildUniqueTestId(existingTests, copy.test_id),
+    title: String(copy.title || `LLM follow-up for ${method} ${path}`),
+    category: String(originCategory || copy.category || "llm_followup"),
+    requirement_ref: String(copy.requirement_ref || "llm_assistant"),
+    method,
+    path,
+    priority: String(copy.priority || "medium"),
+    preconditions: Array.isArray(copy.preconditions) ? copy.preconditions.map((item) => String(item)) : [],
+    steps: [firstStep],
+    expected_result: expectedResult,
+  };
+}
+
+function buildSuggestedCaseSignature(testCase) {
+  if (!testCase || typeof testCase !== "object" || Array.isArray(testCase)) {
+    return "";
+  }
+  const firstStep = Array.isArray(testCase.steps) && testCase.steps.length > 0 && testCase.steps[0]
+    ? testCase.steps[0]
+    : {};
+  const normalized = {
+    title: String(testCase.title || ""),
+    category: String(testCase.category || ""),
+    requirement_ref: String(testCase.requirement_ref || ""),
+    method: String(testCase.method || "").toUpperCase(),
+    path: String(testCase.path || ""),
+    priority: String(testCase.priority || ""),
+    preconditions: Array.isArray(testCase.preconditions) ? testCase.preconditions.map((item) => String(item)) : [],
+    step: {
+      action: String(firstStep?.action || ""),
+      input_data: firstStep?.input_data && typeof firstStep.input_data === "object" ? firstStep.input_data : {},
+    },
+    expected_result: testCase.expected_result && typeof testCase.expected_result === "object"
+      ? testCase.expected_result
+      : {},
+  };
+  return JSON.stringify(normalized);
+}
+
+function hasSuggestedCaseAlreadyBeenAdded(existingTests, candidateCase) {
+  const candidateSignature = buildSuggestedCaseSignature(candidateCase);
+  if (!candidateSignature) {
+    return false;
+  }
+  return (Array.isArray(existingTests) ? existingTests : []).some(
+    (testCase) => buildSuggestedCaseSignature(testCase) === candidateSignature,
+  );
+}
+
 function prettifyCategory(categoryKey) {
   return String(categoryKey || "").replaceAll("_", " ");
 }
@@ -311,6 +399,38 @@ function truncateText(text, maxLength = 220) {
     return text;
   }
   return `${text.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function getEmptyRunState() {
+  return {
+    loading: false,
+    error: "",
+    result: null,
+    baselineTests: null,
+    runId: null,
+    llmByTestId: {},
+  };
+}
+
+function indexLlmOutputsByTestId(outputs) {
+  if (!Array.isArray(outputs)) {
+    return {};
+  }
+  return outputs.reduce((acc, row) => {
+    const testId = String(row?.test_id || "");
+    const mode = String(row?.mode || "");
+    const payload = row?.payload && typeof row.payload === "object" ? row.payload : null;
+    if (!testId || !mode || !payload) {
+      return acc;
+    }
+    const current = acc[testId] || {};
+    if (mode === "explanation") {
+      acc[testId] = { ...current, explanation: payload };
+    } else if (mode === "suggest_test") {
+      acc[testId] = { ...current, suggestion: payload };
+    }
+    return acc;
+  }, {});
 }
 
 function parseResponseSnippetMeta(snippetText) {
@@ -412,6 +532,49 @@ function getDefaultBaseUrl(entry) {
   }
 
   return "";
+}
+
+function normalizeRunConfig(config, fallback = null) {
+  const base = fallback && typeof fallback === "object"
+    ? fallback
+    : {
+        baseUrl: "",
+        authMode: "none",
+        bearerToken: "",
+        apiKeyValue: "",
+        apiKeyHeader: "X-API-Key",
+      };
+  const source = config && typeof config === "object" ? config : {};
+  const authModeRaw = String(source.authMode ?? base.authMode ?? "none");
+  const authMode = authModeRaw === "bearer" || authModeRaw === "api_key" ? authModeRaw : "none";
+  const apiKeyHeader = String(source.apiKeyHeader ?? base.apiKeyHeader ?? "X-API-Key").trim() || "X-API-Key";
+
+  return {
+    baseUrl: String(source.baseUrl ?? base.baseUrl ?? ""),
+    authMode,
+    bearerToken: String(source.bearerToken ?? base.bearerToken ?? ""),
+    apiKeyValue: String(source.apiKeyValue ?? base.apiKeyValue ?? ""),
+    apiKeyHeader,
+  };
+}
+
+function buildDefaultRunConfig(entry) {
+  return normalizeRunConfig({
+    baseUrl: getDefaultBaseUrl(entry),
+    authMode: "none",
+    bearerToken: "",
+    apiKeyValue: "",
+    apiKeyHeader: "X-API-Key",
+  });
+}
+
+function resolveRunConfigs(entry, cachedEntry = null) {
+  const defaultConfig = normalizeRunConfig(cachedEntry?.runConfigDefault, buildDefaultRunConfig(entry));
+  const currentConfig = normalizeRunConfig(cachedEntry?.runConfigCurrent, defaultConfig);
+  return {
+    runConfigDefault: defaultConfig,
+    runConfigCurrent: currentConfig,
+  };
 }
 
 function StatCard({ label, value, accent }) {
@@ -573,17 +736,30 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
   );
 }
 
-function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRunTests }) {
+function SpecDetails({
+  entry,
+  runState,
+  onUpdateTestCase,
+  onResetTestCase,
+  onRunTests,
+  onExplainFailure,
+  onUpdateRunConfig,
+  onResetRunConfig,
+  onApplySuggestedTest,
+}) {
   const generatedCases = Array.isArray(entry?.generatedTests) ? entry.generatedTests : [];
   const originalCases = Array.isArray(entry?.originalGeneratedTests) ? entry.originalGeneratedTests : generatedCases;
   const runBaselineCases = Array.isArray(runState?.baselineTests) ? runState.baselineTests : [];
   const baselineCases = runBaselineCases.length > 0 ? runBaselineCases : originalCases;
   const [jsonDrafts, setJsonDrafts] = useState({});
-  const [baseUrlInput, setBaseUrlInput] = useState("");
-  const [runAuthMode, setRunAuthMode] = useState("none");
-  const [runBearerToken, setRunBearerToken] = useState("");
-  const [runApiKeyValue, setRunApiKeyValue] = useState("");
-  const [runApiKeyHeader, setRunApiKeyHeader] = useState("X-API-Key");
+  const runConfigs = resolveRunConfigs(entry || null, entry || null);
+  const runConfigDefault = runConfigs.runConfigDefault;
+  const runConfigCurrent = runConfigs.runConfigCurrent;
+  const baseUrlInput = runConfigCurrent.baseUrl;
+  const runAuthMode = runConfigCurrent.authMode;
+  const runBearerToken = runConfigCurrent.bearerToken;
+  const runApiKeyValue = runConfigCurrent.apiKeyValue;
+  const runApiKeyHeader = runConfigCurrent.apiKeyHeader;
 
   useEffect(() => {
     if (!entry) {
@@ -603,23 +779,6 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
     });
 
     setJsonDrafts(nextDrafts);
-  }, [entry?.id]);
-
-  useEffect(() => {
-    if (!entry) {
-      setBaseUrlInput("");
-      setRunAuthMode("none");
-      setRunBearerToken("");
-      setRunApiKeyValue("");
-      setRunApiKeyHeader("X-API-Key");
-      return;
-    }
-
-    setBaseUrlInput(getDefaultBaseUrl(entry));
-    setRunAuthMode("none");
-    setRunBearerToken("");
-    setRunApiKeyValue("");
-    setRunApiKeyHeader("X-API-Key");
   }, [entry?.id]);
 
   function handleJsonEdit(testIndex, field, nextText) {
@@ -819,12 +978,20 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
     acc[key].push({ testCase, index });
     return acc;
   }, {});
+  const previewTotals = entry?.preview?.totals && typeof entry.preview.totals === "object" ? entry.preview.totals : {};
+  const previewCategoryOrder = Object.keys(previewTotals);
+  const dynamicCategoryOrder = Object.keys(casesByCategory).filter((key) => !previewCategoryOrder.includes(key));
+  const categoryOrder = [...previewCategoryOrder, ...dynamicCategoryOrder];
   const hasJsonDraftErrors = Object.values(jsonDrafts).some(
     (draft) => Boolean(draft?.inputDataError || draft?.expectedResultError),
   );
   const latestRunSummary = runState?.result?.summary || null;
   const latestRunResults = Array.isArray(runState?.result?.results) ? runState.result.results : [];
   const hasLatestRun = Boolean(latestRunSummary || latestRunResults.length > 0);
+  const latestRunId = runState?.runId || null;
+  const llmByTestId = runState?.llmByTestId && typeof runState.llmByTestId === "object"
+    ? runState.llmByTestId
+    : {};
   const runResultByTestId = latestRunResults.reduce((acc, result) => {
     const testId = String(result?.test_id || "");
     if (!testId) {
@@ -849,6 +1016,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
   const isBearerTokenMissing = runAuthMode === "bearer" && trimmedRunBearerToken.length === 0;
   const isApiKeyMissing = runAuthMode === "api_key" && trimmedRunApiKeyValue.length === 0;
   const hasAuthInputError = isBearerTokenMissing || isApiKeyMissing;
+  const isRunConfigAtDefault = deepEqual(runConfigCurrent, runConfigDefault);
 
   function buildRunPayloadFromDrafts() {
     const nextDrafts = {};
@@ -915,6 +1083,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
     }
 
     const runPayload = {
+      spec_id: entry?.id ?? null,
       api_title: entry?.title || entry?.filename || "Generated Test Suite",
       api_version: entry?.version || "Unknown",
       base_url: trimmedBaseUrl,
@@ -944,6 +1113,34 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
     onRunTests(entry.id, runPayload);
   }
 
+  function handleExplainFailureCase(testId) {
+    if (!entry || !latestRunId || !onExplainFailure) {
+      return;
+    }
+    onExplainFailure(entry.id, latestRunId, testId);
+  }
+
+  function handleRunConfigChange(patch) {
+    if (!entry || !onUpdateRunConfig || !patch || typeof patch !== "object") {
+      return;
+    }
+    onUpdateRunConfig(entry.id, patch);
+  }
+
+  function handleResetRunConfigToDefaults() {
+    if (!entry || !onResetRunConfig) {
+      return;
+    }
+    onResetRunConfig(entry.id);
+  }
+
+  function handleApplySuggestedCase(testId) {
+    if (!entry || !onApplySuggestedTest) {
+      return;
+    }
+    onApplySuggestedTest(entry.id, testId);
+  }
+
   return (
     <section className="panel details-panel">
       <div className="panel-header">
@@ -970,8 +1167,8 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                     <h3>Generated Test Preview</h3>
                     <div className="metrics-list">
                       <div className="metric-row">
-                        <span>Total estimated tests</span>
-                        <strong>{entry.preview.totalCases}</strong>
+                        <span>Total generated tests</span>
+                        <strong>{generatedCases.length}</strong>
                       </div>
                     </div>
                     <div className="preview-actions">
@@ -990,12 +1187,20 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                         >
                           {runState?.loading ? "Running..." : "Run Tests"}
                         </button>
+                        <button
+                          type="button"
+                          className="secondary-button run-reset-button"
+                          onClick={handleResetRunConfigToDefaults}
+                          disabled={runState?.loading || isRunConfigAtDefault}
+                        >
+                          Reset Defaults
+                        </button>
                         <input
                           type="text"
                           className="base-url-input"
                           placeholder="https://api.example.com"
                           value={baseUrlInput}
-                          onChange={(event) => setBaseUrlInput(event.target.value)}
+                          onChange={(event) => handleRunConfigChange({ baseUrl: event.target.value })}
                           aria-label="Base URL"
                         />
                       </div>
@@ -1005,7 +1210,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                           <select
                             className="auth-select"
                             value={runAuthMode}
-                            onChange={(event) => setRunAuthMode(event.target.value)}
+                            onChange={(event) => handleRunConfigChange({ authMode: event.target.value })}
                           >
                             <option value="none">None</option>
                             <option value="bearer">Bearer Token</option>
@@ -1020,7 +1225,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                               className="auth-input"
                               placeholder="ghp_..."
                               value={runBearerToken}
-                              onChange={(event) => setRunBearerToken(event.target.value)}
+                              onChange={(event) => handleRunConfigChange({ bearerToken: event.target.value })}
                               autoComplete="off"
                             />
                           </label>
@@ -1034,7 +1239,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                                 className="auth-input"
                                 placeholder="Enter API key"
                                 value={runApiKeyValue}
-                                onChange={(event) => setRunApiKeyValue(event.target.value)}
+                                onChange={(event) => handleRunConfigChange({ apiKeyValue: event.target.value })}
                                 autoComplete="off"
                               />
                             </label>
@@ -1045,7 +1250,7 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                                 className="auth-input"
                                 placeholder="X-API-Key"
                                 value={runApiKeyHeader}
-                                onChange={(event) => setRunApiKeyHeader(event.target.value)}
+                                onChange={(event) => handleRunConfigChange({ apiKeyHeader: event.target.value })}
                                 autoComplete="off"
                               />
                             </label>
@@ -1070,8 +1275,9 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                       ) : null}
                     </div>
                     <div className="coverage-categories">
-                      {Object.entries(entry.preview.totals).map(([category, count]) => {
+                      {categoryOrder.map((category) => {
                         const categoryCases = casesByCategory[category] || [];
+                        const count = categoryCases.length;
                         const categoryRunStats = categoryCases.reduce((acc, { testCase }) => {
                           const outcome = runOutcomeByTestId[testCase?.test_id || ""];
                           if (outcome === "PASS") {
@@ -1125,6 +1331,21 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                                     const shouldShowReset = hasParsedEdits || hasDraftEdits;
                                     const runResult = runResultByTestId[testCase?.test_id || ""] || null;
                                     const testOutcome = runOutcomeByTestId[testCase?.test_id || ""];
+                                    const llmState = llmByTestId[testCase?.test_id || ""] || {};
+                                    const explanationPayload = llmState?.explanation || null;
+                                    const suggestionPayload = llmState?.suggestion || null;
+                                    const llmAction = String(llmState?.action || "");
+                                    const llmError = String(llmState?.error || "");
+                                    const addedMessage = String(llmState?.addedMessage || "");
+                                    const canApplySuggestion = Boolean(
+                                      suggestionPayload?.can_apply && suggestionPayload?.suggested_test_case,
+                                    );
+                                    const isLlmBusy = llmAction === "explaining" || llmAction === "suggesting";
+                                    const explainButtonLabel = llmAction === "explaining"
+                                      ? "Explaining..."
+                                      : llmAction === "suggesting"
+                                        ? "Generating..."
+                                        : "Explain with AI";
                                     const outcomeClass = testOutcome ? `testcase-outcome-${testOutcome.toLowerCase()}` : "";
                                     const expectedStatusLabel = formatExpectedStatusLabel(
                                       runResult?.expected_status,
@@ -1234,6 +1455,57 @@ function SpecDetails({ entry, runState, onUpdateTestCase, onResetTestCase, onRun
                                                   <summary>Raw response</summary>
                                                   <pre className="run-feedback-pre">{snippetMeta.raw}</pre>
                                                 </details>
+                                              ) : null}
+                                              <div className="llm-actions-row">
+                                                <button
+                                                  type="button"
+                                                  className="secondary-button llm-action-button"
+                                                  onClick={() => handleExplainFailureCase(testCase?.test_id || "")}
+                                                  disabled={!latestRunId || isLlmBusy}
+                                                >
+                                                  {explainButtonLabel}
+                                                </button>
+                                              </div>
+                                              {llmError ? <p className="json-error">{llmError}</p> : null}
+                                              {explanationPayload?.explanation ? (
+                                                <div className="llm-response-block">
+                                                  <p className="run-feedback-title">AI Explanation</p>
+                                                  <p className="run-feedback-line">{explanationPayload.explanation}</p>
+                                                  {explanationPayload?.warning ? (
+                                                    <p className="run-feedback-line llm-warning">{explanationPayload.warning}</p>
+                                                  ) : null}
+                                                </div>
+                                              ) : null}
+                                              {suggestionPayload ? (
+                                                <div className="llm-response-block">
+                                                  <p className="run-feedback-title">Suggested Extra Test</p>
+                                                  <p className="run-feedback-line">{suggestionPayload.reason || "No reason returned."}</p>
+                                                  {suggestionPayload?.warning ? (
+                                                    <p className="run-feedback-line llm-warning">{suggestionPayload.warning}</p>
+                                                  ) : null}
+                                                  {suggestionPayload?.suggested_test_case ? (
+                                                    <details className="run-feedback-details">
+                                                      <summary>Suggested test JSON</summary>
+                                                      <pre className="run-feedback-pre">
+                                                        {toPrettyJson(suggestionPayload.suggested_test_case)}
+                                                      </pre>
+                                                    </details>
+                                                  ) : null}
+                                                  {canApplySuggestion ? (
+                                                    <div className="llm-apply-row">
+                                                      <button
+                                                        type="button"
+                                                        className="primary-button llm-apply-button"
+                                                        onClick={() => handleApplySuggestedCase(testCase?.test_id || "")}
+                                                      >
+                                                        Add Suggested Test
+                                                      </button>
+                                                      {addedMessage ? (
+                                                        <span className="llm-apply-success">{addedMessage}</span>
+                                                      ) : null}
+                                                    </div>
+                                                  ) : null}
+                                                </div>
                                               ) : null}
                                             </div>
                                           ) : null}
@@ -1403,6 +1675,13 @@ export default function App() {
               const originalGeneratedTests = Array.isArray(cached?.originalGeneratedTests)
                 ? cached.originalGeneratedTests
                 : generatedTests;
+              const runConfigs = resolveRunConfigs(
+                {
+                  parsed: cached?.parsed || null,
+                  generatedSuite,
+                },
+                cached || null,
+              );
               return {
                 ...row,
                 created_at: row.created_at || cached?.createdAt || cached?.uploadedAt || null,
@@ -1411,7 +1690,9 @@ export default function App() {
                 generatedSuite,
                 generatedTests,
                 originalGeneratedTests,
-                totalCases: cached?.preview?.totalCases || generatedTests.length || 0,
+                runConfigDefault: runConfigs.runConfigDefault,
+                runConfigCurrent: runConfigs.runConfigCurrent,
+                totalCases: generatedTests.length || cached?.preview?.totalCases || 0,
               };
             })
           : [];
@@ -1453,10 +1734,121 @@ export default function App() {
   );
   const selectedRunState = useMemo(() => {
     if (!selectedEntry) {
-      return { loading: false, error: "", result: null, baselineTests: null };
+      return getEmptyRunState();
     }
-    return testRunBySpecId[selectedEntry.id] || { loading: false, error: "", result: null, baselineTests: null };
+    return testRunBySpecId[selectedEntry.id] || getEmptyRunState();
   }, [selectedEntry, testRunBySpecId]);
+
+  useEffect(() => {
+    if (!session?.token || !selectedEntry?.id) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function hydrateLatestRun() {
+      try {
+        const payload = await fetchLatestRunForSpec(session.token, selectedEntry.id);
+        if (cancelled) {
+          return;
+        }
+
+        const artifact = payload?.artifact && typeof payload.artifact === "object" ? payload.artifact : {};
+        const parsed = artifact?.parsed && typeof artifact.parsed === "object" ? artifact.parsed : null;
+        const generatedSuite = artifact?.generated_suite && typeof artifact.generated_suite === "object"
+          ? artifact.generated_suite
+          : null;
+
+        setSpecHistory((current) =>
+          current.map((entry) => {
+            if (entry.id !== selectedEntry.id) {
+              return entry;
+            }
+
+            const nextParsed = entry.parsed || parsed;
+            const nextGeneratedSuite = entry.generatedSuite || generatedSuite;
+            const suiteCases = Array.isArray(nextGeneratedSuite?.test_cases) ? nextGeneratedSuite.test_cases : [];
+            const hasLocalTests = Array.isArray(entry.generatedTests) && entry.generatedTests.length > 0;
+            const nextGeneratedTests = hasLocalTests
+              ? entry.generatedTests
+              : (cloneJsonValue(suiteCases) || []);
+            const nextOriginal = Array.isArray(entry.originalGeneratedTests) && entry.originalGeneratedTests.length > 0
+              ? entry.originalGeneratedTests
+              : (cloneJsonValue(nextGeneratedTests) || []);
+            const nextPreview = entry.preview || (nextParsed ? buildSpecPreview(nextParsed) : null);
+            const runConfigs = resolveRunConfigs(
+              {
+                ...entry,
+                parsed: nextParsed,
+                generatedSuite: nextGeneratedSuite,
+              },
+              entry,
+            );
+
+            return {
+              ...entry,
+              parsed: nextParsed,
+              preview: nextPreview,
+              generatedSuite: nextGeneratedSuite,
+              generatedTests: nextGeneratedTests,
+              originalGeneratedTests: nextOriginal,
+              runConfigDefault: runConfigs.runConfigDefault,
+              runConfigCurrent: runConfigs.runConfigCurrent,
+              totalCases: nextPreview?.totalCases || nextGeneratedTests.length || entry.totalCases || 0,
+            };
+          }),
+        );
+
+        const latestRun = payload?.latest_run && typeof payload.latest_run === "object" ? payload.latest_run : null;
+        if (!latestRun) {
+          setTestRunBySpecId((current) => ({
+            ...current,
+            [selectedEntry.id]: {
+              ...(current[selectedEntry.id] || getEmptyRunState()),
+              runId: null,
+              result: null,
+              baselineTests: null,
+              llmByTestId: {},
+            },
+          }));
+          return;
+        }
+
+        const runSummary = latestRun?.summary && typeof latestRun.summary === "object" ? latestRun.summary : null;
+        const runResults = Array.isArray(latestRun?.results) ? latestRun.results : [];
+        const runSuite = latestRun?.suite_snapshot && typeof latestRun.suite_snapshot === "object"
+          ? latestRun.suite_snapshot
+          : null;
+        const baselineTests = Array.isArray(runSuite?.test_cases) ? (cloneJsonValue(runSuite.test_cases) || []) : null;
+
+        setTestRunBySpecId((current) => ({
+          ...current,
+          [selectedEntry.id]: {
+            ...getEmptyRunState(),
+            result: (runSummary || runResults.length > 0)
+              ? { summary: runSummary, results: runResults }
+              : null,
+            baselineTests,
+            runId: latestRun?.id ?? null,
+            llmByTestId: indexLlmOutputsByTestId(payload?.llm_outputs),
+          },
+        }));
+      } catch {
+        if (!cancelled) {
+          setTestRunBySpecId((current) => ({
+            ...current,
+            [selectedEntry.id]: getEmptyRunState(),
+          }));
+        }
+      }
+    }
+
+    hydrateLatestRun();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEntry?.id, session?.token]);
 
   function setRunBaselineForSpec(specId, executedTests) {
     const normalizedTests = Array.isArray(executedTests) ? (cloneJsonValue(executedTests) || []) : [];
@@ -1472,6 +1864,7 @@ export default function App() {
           ...entry,
           generatedTests: nextTests,
           originalGeneratedTests: cloneJsonValue(nextTests) || [],
+          totalCases: nextTests.length,
           generatedSuite: entry.generatedSuite
             ? { ...entry.generatedSuite, test_cases: nextTests }
             : entry.generatedSuite,
@@ -1614,6 +2007,62 @@ export default function App() {
     });
   }
 
+  function handleUpdateRunConfig(specId, patch) {
+    if (!patch || typeof patch !== "object" || !specId) {
+      return;
+    }
+
+    const sourceEntry = specHistory.find((entry) => entry.id === specId) || null;
+    const resolvedConfigs = resolveRunConfigs(sourceEntry || null, sourceEntry || null);
+    const nextCurrent = normalizeRunConfig(
+      { ...resolvedConfigs.runConfigCurrent, ...patch },
+      resolvedConfigs.runConfigDefault,
+    );
+
+    setSpecHistory((current) =>
+      current.map((entry) => (
+        entry.id === specId
+          ? {
+              ...entry,
+              runConfigDefault: resolvedConfigs.runConfigDefault,
+              runConfigCurrent: nextCurrent,
+            }
+          : entry
+      )),
+    );
+
+    if (!session?.userId) {
+      return;
+    }
+
+    setSpecCache((current) => {
+      const userCache = { ...(current[session.userId] || {}) };
+      const existing = userCache[specId];
+      const seed = existing && typeof existing === "object"
+        ? existing
+        : {
+            filename: sourceEntry?.filename || `spec-${specId}`,
+            uploadedAt: sourceEntry?.created_at || null,
+            createdAt: sourceEntry?.created_at || null,
+          };
+      userCache[specId] = {
+        ...seed,
+        runConfigDefault: normalizeRunConfig(seed.runConfigDefault, resolvedConfigs.runConfigDefault),
+        runConfigCurrent: nextCurrent,
+      };
+      return {
+        ...current,
+        [session.userId]: userCache,
+      };
+    });
+  }
+
+  function handleResetRunConfig(specId) {
+    const sourceEntry = specHistory.find((entry) => entry.id === specId) || null;
+    const resolvedConfigs = resolveRunConfigs(sourceEntry || null, sourceEntry || null);
+    handleUpdateRunConfig(specId, resolvedConfigs.runConfigDefault);
+  }
+
   async function handleRunTests(specId, suitePayload) {
     if (!session?.token) {
       return;
@@ -1622,10 +2071,9 @@ export default function App() {
     setTestRunBySpecId((current) => ({
       ...current,
       [specId]: {
+        ...(current[specId] || getEmptyRunState()),
         loading: true,
         error: "",
-        result: current[specId]?.result || null,
-        baselineTests: Array.isArray(current[specId]?.baselineTests) ? current[specId].baselineTests : null,
       },
     }));
 
@@ -1636,23 +2084,223 @@ export default function App() {
       setTestRunBySpecId((current) => ({
         ...current,
         [specId]: {
+          ...(current[specId] || getEmptyRunState()),
           loading: false,
           error: "",
-          result: payload || null,
+          result: {
+            summary: payload?.summary || null,
+            results: Array.isArray(payload?.results) ? payload.results : [],
+          },
           baselineTests: cloneJsonValue(executedTests) || [],
+          runId: payload?.run_id ?? null,
+          llmByTestId: {},
         },
       }));
     } catch (error) {
       setTestRunBySpecId((current) => ({
         ...current,
         [specId]: {
+          ...(current[specId] || getEmptyRunState()),
           loading: false,
           error: error.message,
-          result: current[specId]?.result || null,
-          baselineTests: Array.isArray(current[specId]?.baselineTests) ? current[specId].baselineTests : null,
         },
       }));
     }
+  }
+
+  function setLlmCaseState(specId, testId, updater) {
+    setTestRunBySpecId((current) => {
+      const existingRun = current[specId] || getEmptyRunState();
+      const currentCaseState = existingRun.llmByTestId?.[testId] || {};
+      const nextCaseState = typeof updater === "function"
+        ? updater(currentCaseState)
+        : { ...currentCaseState, ...(updater || {}) };
+      return {
+        ...current,
+        [specId]: {
+          ...existingRun,
+          llmByTestId: {
+            ...(existingRun.llmByTestId || {}),
+            [testId]: nextCaseState,
+          },
+        },
+      };
+    });
+  }
+
+  async function handleExplainFailure(specId, runId, testId) {
+    if (!session?.token || !runId || !testId) {
+      return;
+    }
+
+    setLlmCaseState(specId, testId, (currentCase) => ({
+      ...currentCase,
+      action: "explaining",
+      error: "",
+      addedMessage: "",
+      addedSuggestionFingerprint: "",
+    }));
+
+    try {
+      const explanationResponse = await requestLlmExplanation(session.token, runId, testId);
+      const explanationPayload = explanationResponse?.payload && typeof explanationResponse.payload === "object"
+        ? explanationResponse.payload
+        : null;
+      if (!explanationPayload) {
+        throw new Error("Explanation payload missing from backend response.");
+      }
+
+      setLlmCaseState(specId, testId, (currentCase) => ({
+        ...currentCase,
+        action: "suggesting",
+        error: "",
+        explanation: explanationPayload,
+        suggestion: null,
+        addedMessage: "",
+        addedSuggestionFingerprint: "",
+      }));
+
+      try {
+        const suggestionResponse = await requestLlmSuggestedTest(session.token, runId, testId);
+        const suggestionPayload = suggestionResponse?.payload && typeof suggestionResponse.payload === "object"
+          ? suggestionResponse.payload
+          : null;
+        if (!suggestionPayload) {
+          throw new Error("Suggestion payload missing from backend response.");
+        }
+
+        setLlmCaseState(specId, testId, (currentCase) => ({
+          ...currentCase,
+          action: "",
+          error: "",
+          suggestion: suggestionPayload,
+          addedMessage: "",
+          addedSuggestionFingerprint: "",
+        }));
+      } catch (error) {
+        setLlmCaseState(specId, testId, (currentCase) => ({
+          ...currentCase,
+          action: "",
+          error: error.message || "Unable to generate suggested test.",
+          suggestion: null,
+          addedMessage: "",
+          addedSuggestionFingerprint: "",
+        }));
+      }
+    } catch (error) {
+      setLlmCaseState(specId, testId, (currentCase) => ({
+        ...currentCase,
+        action: "",
+        error: error.message || "Unable to generate AI explanation.",
+        addedMessage: "",
+        addedSuggestionFingerprint: "",
+      }));
+    }
+  }
+
+  function handleApplySuggestedTest(specId, testId) {
+    const runState = testRunBySpecId[specId] || getEmptyRunState();
+    const suggestionPayload = runState?.llmByTestId?.[testId]?.suggestion;
+    const suggestedCase = suggestionPayload?.suggested_test_case;
+    if (!suggestedCase) {
+      setLlmCaseState(specId, testId, (currentCase) => ({
+        ...currentCase,
+        error: "No suggested test is available to add.",
+      }));
+      return;
+    }
+
+    const sourceEntry = specHistory.find((entry) => entry.id === specId) || null;
+    const sourceTests = Array.isArray(sourceEntry?.generatedTests) ? sourceEntry.generatedTests : [];
+    const sourceCase = sourceTests.find((testCase) => String(testCase?.test_id || "") === String(testId)) || null;
+    const originCategory = sourceCase?.category ? String(sourceCase.category) : "";
+    const normalizedCase = normalizeSuggestedTestCaseForSuite(suggestedCase, sourceTests, originCategory);
+    if (!normalizedCase) {
+      setLlmCaseState(specId, testId, (currentCase) => ({
+        ...currentCase,
+        error: "Suggested test format is invalid.",
+      }));
+      return;
+    }
+
+    if (hasSuggestedCaseAlreadyBeenAdded(sourceTests, normalizedCase)) {
+      setLlmCaseState(specId, testId, (currentCase) => ({
+        ...currentCase,
+        error: "This suggested test is already in the payload.",
+      }));
+      return;
+    }
+
+    const normalizedSignature = buildSuggestedCaseSignature(normalizedCase);
+    const existingCaseState = runState?.llmByTestId?.[testId] || {};
+    if (
+      normalizedSignature
+      && String(existingCaseState?.addedSuggestionFingerprint || "") === normalizedSignature
+    ) {
+      setLlmCaseState(specId, testId, (currentCase) => ({
+        ...currentCase,
+        error: "This suggested test is already in the payload.",
+      }));
+      return;
+    }
+    const addedMessage = `${normalizedCase.title} has been added to payload`;
+    const normalizedCaseCopy = cloneJsonValue(normalizedCase) || normalizedCase;
+
+    setSpecHistory((current) =>
+      current.map((entry) => {
+        if (entry.id !== specId) {
+          return entry;
+        }
+        const currentTests = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
+        const nextTests = [...currentTests, normalizedCaseCopy];
+        const nextOriginal = Array.isArray(entry.originalGeneratedTests)
+          ? [...entry.originalGeneratedTests, cloneJsonValue(normalizedCaseCopy)]
+          : (cloneJsonValue(nextTests) || []);
+        return {
+          ...entry,
+          generatedTests: nextTests,
+          originalGeneratedTests: nextOriginal,
+          totalCases: nextTests.length,
+          generatedSuite: entry.generatedSuite
+            ? { ...entry.generatedSuite, test_cases: nextTests }
+            : entry.generatedSuite,
+        };
+      }),
+    );
+
+    if (session?.userId) {
+      setSpecCache((current) => {
+        const userCache = { ...(current[session.userId] || {}) };
+        const existing = userCache[specId];
+        if (!existing) {
+          return current;
+        }
+        const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
+        const nextTests = [...currentTests, normalizedCaseCopy];
+        const nextOriginal = Array.isArray(existing.originalGeneratedTests)
+          ? [...existing.originalGeneratedTests, cloneJsonValue(normalizedCaseCopy)]
+          : (cloneJsonValue(nextTests) || []);
+        userCache[specId] = {
+          ...existing,
+          generatedTests: nextTests,
+          originalGeneratedTests: nextOriginal,
+          generatedSuite: existing.generatedSuite
+            ? { ...existing.generatedSuite, test_cases: nextTests }
+            : existing.generatedSuite,
+        };
+        return {
+          ...current,
+          [session.userId]: userCache,
+        };
+      });
+    }
+
+    setLlmCaseState(specId, testId, (currentCase) => ({
+      ...currentCase,
+      error: "",
+      addedMessage,
+      addedSuggestionFingerprint: normalizedSignature,
+    }));
   }
 
   async function handleAuthSubmit(event) {
@@ -1706,6 +2354,8 @@ export default function App() {
       setSpecHistory([]);
       setSelectedSpecId(null);
       setTestRunBySpecId({});
+      setUploadMessage("");
+      setUploadError("");
       setSpecCache((current) => {
         const next = { ...current };
         delete next[session.userId];
@@ -1740,7 +2390,6 @@ export default function App() {
     setUploadMessage("");
 
     try {
-      const nextUserCache = { ...(specCache[session.userId] || {}) };
       let lastUploadedId = null;
       const uploadedEntries = [];
       let skippedInvalidSpecCount = 0;
@@ -1756,19 +2405,10 @@ export default function App() {
           const rawGeneratedTests = Array.isArray(generatedSuite?.test_cases) ? generatedSuite.test_cases : [];
           const generatedTests = cloneJsonValue(rawGeneratedTests) || [];
           const originalGeneratedTests = cloneJsonValue(rawGeneratedTests) || [];
+          const runConfigDefault = buildDefaultRunConfig({ parsed, generatedSuite });
+          const runConfigCurrent = normalizeRunConfig(runConfigDefault, runConfigDefault);
           const createdAt = new Date().toISOString();
           lastUploadedId = payload?.id ?? lastUploadedId;
-
-          nextUserCache[payload.id] = {
-            filename: file.name,
-            uploadedAt: createdAt,
-            createdAt,
-            parsed,
-            preview,
-            generatedSuite,
-            generatedTests,
-            originalGeneratedTests,
-          };
 
           uploadedEntries.push({
             id: payload.id,
@@ -1781,7 +2421,9 @@ export default function App() {
             generatedSuite,
             generatedTests,
             originalGeneratedTests,
-            totalCases: preview?.totalCases || generatedTests.length || 0,
+            runConfigDefault,
+            runConfigCurrent,
+            totalCases: generatedTests.length || preview?.totalCases || 0,
           });
         } catch (error) {
           if (isLikelyInvalidSpecError(error)) {
@@ -1803,10 +2445,26 @@ export default function App() {
         return;
       }
 
-      setSpecCache((current) => ({
-        ...current,
-        [session.userId]: nextUserCache,
-      }));
+      setSpecCache((current) => {
+        const next = { ...current };
+        const nextUserCache = { ...(next[session.userId] || {}) };
+        for (const entry of uploadedEntries) {
+          nextUserCache[entry.id] = {
+            filename: entry.filename,
+            uploadedAt: entry.created_at,
+            createdAt: entry.created_at,
+            parsed: entry.parsed,
+            preview: entry.preview,
+            generatedSuite: entry.generatedSuite,
+            generatedTests: entry.generatedTests,
+            originalGeneratedTests: entry.originalGeneratedTests,
+            runConfigDefault: entry.runConfigDefault,
+            runConfigCurrent: entry.runConfigCurrent,
+          };
+        }
+        next[session.userId] = nextUserCache;
+        return next;
+      });
       setSpecHistory((current) => {
         const byId = new Map(current.map((entry) => [entry.id, entry]));
         for (const entry of uploadedEntries) {
@@ -1814,6 +2472,13 @@ export default function App() {
         }
 
         return Array.from(byId.values()).sort((a, b) => Number(b.id) - Number(a.id));
+      });
+      setTestRunBySpecId((current) => {
+        const next = { ...current };
+        for (const entry of uploadedEntries) {
+          next[entry.id] = getEmptyRunState();
+        }
+        return next;
       });
       if (lastUploadedId !== null) {
         setSelectedSpecId(lastUploadedId);
@@ -1948,6 +2613,10 @@ export default function App() {
             onUpdateTestCase={handleUpdateTestCase}
             onResetTestCase={handleResetTestCase}
             onRunTests={handleRunTests}
+            onExplainFailure={handleExplainFailure}
+            onUpdateRunConfig={handleUpdateRunConfig}
+            onResetRunConfig={handleResetRunConfig}
+            onApplySuggestedTest={handleApplySuggestedTest}
           />
         </main>
       )}
