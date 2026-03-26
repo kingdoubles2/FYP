@@ -412,27 +412,6 @@ function getEmptyRunState() {
   };
 }
 
-function indexLlmOutputsByTestId(outputs) {
-  if (!Array.isArray(outputs)) {
-    return {};
-  }
-  return outputs.reduce((acc, row) => {
-    const testId = String(row?.test_id || "");
-    const mode = String(row?.mode || "");
-    const payload = row?.payload && typeof row.payload === "object" ? row.payload : null;
-    if (!testId || !mode || !payload) {
-      return acc;
-    }
-    const current = acc[testId] || {};
-    if (mode === "explanation") {
-      acc[testId] = { ...current, explanation: payload };
-    } else if (mode === "suggest_test") {
-      acc[testId] = { ...current, suggestion: payload };
-    }
-    return acc;
-  }, {});
-}
-
 function parseResponseSnippetMeta(snippetText) {
   const raw = String(snippetText || "").trim();
   if (!raw) {
@@ -1503,6 +1482,17 @@ function SpecDetails({
                                                   {explanationPayload?.warning ? (
                                                     <p className="run-feedback-line llm-warning">{explanationPayload.warning}</p>
                                                   ) : null}
+                                                  {explanationPayload?.used_fallback ? (
+                                                    <p className="run-feedback-line llm-warning">
+                                                      LLM output was unavailable or invalid, so a deterministic fallback explanation was used.
+                                                    </p>
+                                                  ) : null}
+                                                  {explanationPayload?.llm_error ? (
+                                                    <details className="run-feedback-details">
+                                                      <summary>LLM debug details</summary>
+                                                      <pre className="run-feedback-pre">{String(explanationPayload.llm_error)}</pre>
+                                                    </details>
+                                                  ) : null}
                                                 </div>
                                               ) : null}
                                               {suggestionPayload ? (
@@ -1511,6 +1501,17 @@ function SpecDetails({
                                                   <p className="run-feedback-line">{suggestionPayload.reason || "No reason returned."}</p>
                                                   {suggestionPayload?.warning ? (
                                                     <p className="run-feedback-line llm-warning">{suggestionPayload.warning}</p>
+                                                  ) : null}
+                                                  {suggestionPayload?.used_fallback ? (
+                                                    <p className="run-feedback-line llm-warning">
+                                                      Suggested test is a fallback because model output was unavailable or invalid.
+                                                    </p>
+                                                  ) : null}
+                                                  {suggestionPayload?.llm_error ? (
+                                                    <details className="run-feedback-details">
+                                                      <summary>LLM debug details</summary>
+                                                      <pre className="run-feedback-pre">{String(suggestionPayload.llm_error)}</pre>
+                                                    </details>
                                                   ) : null}
                                                   {suggestionPayload?.suggested_test_case ? (
                                                     <details className="run-feedback-details">
@@ -1874,7 +1875,7 @@ export default function App() {
               : null,
             baselineTests,
             runId: latestRun?.id ?? null,
-            llmByTestId: indexLlmOutputsByTestId(payload?.llm_outputs),
+            llmByTestId: {},
           },
         }));
       } catch {

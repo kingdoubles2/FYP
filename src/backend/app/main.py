@@ -1,6 +1,4 @@
 import json
-import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -66,66 +64,6 @@ def _json_load_or_default(raw: Optional[str], default: Any) -> Any:
     return parsed if parsed is not None else default
 
 
-def _format_test_case_for_report(test_id: str, test_case: dict[str, Any]) -> str:
-    method = str(test_case.get("method") or "").upper()
-    endpoint = str(test_case.get("endpoint") or test_case.get("path") or test_case.get("url") or "")
-    name = str(test_case.get("name") or test_case.get("description") or "")
-    endpoint_info = " ".join(part for part in [method, endpoint] if part).strip()
-    parts = [test_id]
-    if endpoint_info:
-        parts.append(endpoint_info)
-    if name:
-        parts.append(name)
-    return " | ".join(parts)
-
-
-def _extract_report_response(payload: dict[str, Any]) -> str:
-    explanation = payload.get("explanation")
-    if isinstance(explanation, str) and explanation.strip():
-        return explanation.strip()
-
-    parts: list[str] = []
-    warning = payload.get("warning")
-    if isinstance(warning, str) and warning.strip():
-        parts.append(f"warning={warning.strip()}")
-
-    rationale = payload.get("rationale")
-    if isinstance(rationale, str) and rationale.strip():
-        parts.append(f"rationale={rationale.strip()}")
-
-    if "suggested_test_case" in payload:
-        parts.append(f"suggested_test_case={safe_json_dumps(payload.get('suggested_test_case'))}")
-
-    if parts:
-        return " | ".join(parts)
-    return safe_json_dumps(payload)
-
-
-def _append_llm_report_entry(*, test_case: str, model: str, response_text: str) -> Optional[str]:
-    report_target = (os.getenv("CONTRACTGUARD_LLM_REPORT_FILE") or "").strip() or "build/backend_llm_report.txt"
-    report_path = Path(report_target)
-    if not report_path.is_absolute():
-        report_path = Path.cwd() / report_path
-
-    try:
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        normalized_response = str(response_text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-        if not normalized_response:
-            normalized_response = "(empty response)"
-        response_block = "\n".join(f"  {line}" for line in normalized_response.split("\n"))
-        timestamp = datetime.now(timezone.utc).isoformat()
-        with report_path.open("a", encoding="utf-8", newline="") as handle:
-            handle.write("---\n")
-            handle.write(f"time_utc: {timestamp}\n")
-            handle.write(f"test_case: {test_case}\n")
-            handle.write(f"model: {model}\n")
-            handle.write("response:\n")
-            handle.write(f"{response_block}\n")
-        return str(report_path)
-    except Exception:
-        return None
-
-
 def _get_owned_spec(db: Any, user_id: int, spec_id: int) -> Spec:
     spec_row = db.query(Spec).filter(Spec.id == spec_id, Spec.user_id == user_id).first()
     if not spec_row:
@@ -152,50 +90,6 @@ def _find_test_result(results: list[dict[str, Any]], test_id: str) -> dict[str, 
         if str(row.get("test_id") or "") == test_id:
             return row
     raise HTTPException(status_code=404, detail="Test result not found in this run.")
-
-
-def _upsert_llm_insight(
-    *,
-    db: Any,
-    run_row: TestRun,
-    user_id: int,
-    test_id: str,
-    mode: str,
-    model: str,
-    payload: dict[str, Any],
-) -> LLMRunInsight:
-    existing = (
-        db.query(LLMRunInsight)
-        .filter(
-            LLMRunInsight.run_id == run_row.id,
-            LLMRunInsight.user_id == user_id,
-            LLMRunInsight.test_id == test_id,
-            LLMRunInsight.mode == mode,
-        )
-        .first()
-    )
-
-    if existing:
-        existing.model = model
-        existing.payload_json = safe_json_dumps(payload)
-        db.add(existing)
-        db.commit()
-        db.refresh(existing)
-        return existing
-
-    row = LLMRunInsight(
-        run_id=run_row.id,
-        spec_id=run_row.spec_id,
-        user_id=user_id,
-        test_id=test_id,
-        mode=mode,
-        model=model,
-        payload_json=safe_json_dumps(payload),
-    )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
 
 
 def _load_run_case_bundle(
@@ -545,15 +439,6 @@ def get_latest_run_for_spec(spec_id: int, current_user: User = Depends(get_curre
             .first()
         )
 
-        llm_rows: list[LLMRunInsight] = []
-        if run_row:
-            llm_rows = (
-                db.query(LLMRunInsight)
-                .filter(LLMRunInsight.run_id == run_row.id, LLMRunInsight.user_id == current_user.id)
-                .order_by(LLMRunInsight.id.asc())
-                .all()
-            )
-
         artifact_payload = {
             "spec_hash": artifact_row.spec_hash if artifact_row else None,
             "parsed": _json_load_or_default(artifact_row.parsed_ir_json if artifact_row else None, None),
@@ -572,23 +457,11 @@ def get_latest_run_for_spec(spec_id: int, current_user: User = Depends(get_curre
                 "suite_snapshot": _json_load_or_default(run_row.suite_snapshot_json, {}),
             }
 
-        llm_outputs = [
-            {
-                "test_id": row.test_id,
-                "mode": row.mode,
-                "model": row.model,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-                "payload": _json_load_or_default(row.payload_json, {}),
-            }
-            for row in llm_rows
-        ]
-
         return {
             "spec_id": spec_row.id,
             "artifact": artifact_payload,
             "latest_run": run_payload,
-            "llm_outputs": llm_outputs,
+            "llm_outputs": [],
         }
     finally:
         db.close()
@@ -625,27 +498,10 @@ def explain_failed_case(run_id: int, test_id: str, current_user: User = Depends(
             ollama_options=settings.get("ollama_options") or {},
         )
 
-        row = _upsert_llm_insight(
-            db=db,
-            run_row=bundle["run_row"],
-            user_id=current_user.id,
-            test_id=test_id,
-            mode="explanation",
-            model=str(settings["model"]),
-            payload=payload,
-        )
-        report_file = _append_llm_report_entry(
-            test_case=_format_test_case_for_report(test_id, bundle["test_case"]),
-            model=str(settings["model"]),
-            response_text=_extract_report_response(payload),
-        )
         return {
             "run_id": run_id,
             "test_id": test_id,
             "mode": "explanation",
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-            "report_file": report_file,
             "payload": payload,
         }
     finally:
@@ -667,19 +523,6 @@ def suggest_test_for_failure(run_id: int, test_id: str, current_user: User = Dep
         if str(case_result.get("outcome") or "").upper() != "FAIL":
             raise HTTPException(status_code=400, detail="Extra test suggestions are only available for failed tests.")
 
-        explanation_exists = (
-            db.query(LLMRunInsight)
-            .filter(
-                LLMRunInsight.run_id == bundle["run_row"].id,
-                LLMRunInsight.user_id == current_user.id,
-                LLMRunInsight.test_id == test_id,
-                LLMRunInsight.mode == "explanation",
-            )
-            .first()
-        )
-        if not explanation_exists:
-            raise HTTPException(status_code=400, detail="Request an AI explanation for this failed test first.")
-
         settings = bundle["settings"]
         client = OllamaClient(
             base_url=str(settings["base_url"]),
@@ -697,27 +540,10 @@ def suggest_test_for_failure(run_id: int, test_id: str, current_user: User = Dep
             retry_invalid_output=int(settings["retry_invalid_output"]),
             ollama_options=settings.get("ollama_options") or {},
         )
-        row = _upsert_llm_insight(
-            db=db,
-            run_row=bundle["run_row"],
-            user_id=current_user.id,
-            test_id=test_id,
-            mode="suggest_test",
-            model=str(settings["model"]),
-            payload=payload,
-        )
-        report_file = _append_llm_report_entry(
-            test_case=_format_test_case_for_report(test_id, bundle["test_case"]),
-            model=str(settings["model"]),
-            response_text=_extract_report_response(payload),
-        )
         return {
             "run_id": run_id,
             "test_id": test_id,
             "mode": "suggest_test",
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-            "report_file": report_file,
             "payload": payload,
         }
     finally:

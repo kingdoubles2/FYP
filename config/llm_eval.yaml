@@ -1,5 +1,5 @@
 models:
-  - kimi-k2.5:cloud
+  - qwen3-coder:latest
 
 specs:
   - src/test_uploads/user1/api.github.com.2026-03-10.yaml

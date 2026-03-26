@@ -80,23 +80,29 @@ def load_backend_llm_settings(config_path: Optional[str] = None) -> Dict[str, An
         maximum=600,
     )
     word_target = _safe_int(
-        os.getenv("CONTRACTGUARD_LLM_WORD_TARGET", llm_cfg.get("output_word_target", 75)),
-        75,
-        minimum=70,
-        maximum=80,
+        os.getenv("CONTRACTGUARD_LLM_WORD_TARGET", llm_cfg.get("output_word_target", 65)),
+        65,
+        minimum=30,
+        maximum=220,
     )
+    default_word_max = max(55, _safe_int(llm_cfg.get("output_word_max", word_target + 20), word_target + 20))
     word_max = _safe_int(
-        os.getenv("CONTRACTGUARD_LLM_WORD_MAX", 80),
-        80,
-        minimum=70,
-        maximum=120,
+        os.getenv("CONTRACTGUARD_LLM_WORD_MAX", default_word_max),
+        default_word_max,
+        minimum=max(50, word_target),
+        maximum=320,
+    )
+    default_word_min = min(
+        word_max,
+        max(20, _safe_int(llm_cfg.get("output_word_min", max(35, word_target - 12)), max(35, word_target - 12))),
     )
     word_min = _safe_int(
-        os.getenv("CONTRACTGUARD_LLM_WORD_MIN", 70),
-        70,
-        minimum=70,
+        os.getenv("CONTRACTGUARD_LLM_WORD_MIN", default_word_min),
+        default_word_min,
+        minimum=20,
         maximum=word_max,
     )
+    word_target = min(max(word_target, word_min), word_max)
     retry_invalid_output = _safe_int(
         os.getenv("CONTRACTGUARD_LLM_RETRY_INVALID", llm_cfg.get("retry_invalid_output", 1)),
         1,
@@ -242,7 +248,38 @@ def build_assistant_prompt_bundle(
 
 def classify_failure_signal(evidence: Dict[str, Any]) -> str:
     signal_info = core.classify_failure_signal(evidence)
-    return str(signal_info.get("signal") or "status_mismatch")
+    signal = str(signal_info.get("signal") or "status_mismatch")
+    if signal in {"transport", "auth", "schema_type", "schema_value", "missing_required", "validation"}:
+        return signal
+
+    execution = evidence.get("execution") or {}
+    response = execution.get("response_received") or {}
+    assertion_failures = execution.get("assertion_failures") or []
+    status = response.get("status")
+    if status is None and assertion_failures:
+        first = assertion_failures[0] if isinstance(assertion_failures[0], dict) else {}
+        status = first.get("actual_status")
+    status_int = int(status) if str(status).isdigit() else None
+    reason = _extract_primary_response_reason(evidence).lower()
+    auth_tokens = (
+        "unauthorized",
+        "requires authentication",
+        "authentication required",
+        "bad credentials",
+        "invalid token",
+        "token",
+        "bearer",
+        "api key",
+        "forbidden",
+    )
+
+    if status_int in {401, 403}:
+        return "auth"
+    if any(token in reason for token in auth_tokens):
+        return "auth"
+    if status_int in {400, 422}:
+        return "validation"
+    return signal
 
 
 def is_external_failure(evidence: Dict[str, Any]) -> bool:
@@ -315,64 +352,184 @@ def _extract_input_tokens(evidence: Dict[str, Any]) -> List[str]:
     return tokens
 
 
+def _extract_primary_response_reason(evidence: Dict[str, Any]) -> str:
+    execution = evidence.get("execution") or {}
+    snippet = str((execution.get("response_received") or {}).get("body_snippet") or "").strip()
+    if snippet:
+        parsed = safe_json_loads(snippet)
+        if isinstance(parsed, dict):
+            for key in ("message", "detail", "error", "reason", "title", "description"):
+                value = parsed.get(key)
+                if isinstance(value, str) and value.strip():
+                    return core.truncate_chars(value.strip(), 170)
+        return core.truncate_chars(snippet, 170)
+
+    assertion_failures = execution.get("assertion_failures") or []
+    if assertion_failures:
+        first = assertion_failures[0] if isinstance(assertion_failures[0], dict) else {}
+        actual_error = str(first.get("actual_error") or "").strip()
+        if actual_error:
+            return core.truncate_chars(actual_error, 170)
+    return ""
+
+
+def _request_has_auth_material(evidence: Dict[str, Any]) -> bool:
+    execution = evidence.get("execution") or {}
+    request_sent = execution.get("request_sent") or {}
+    headers = request_sent.get("headers") or {}
+    if not isinstance(headers, dict):
+        return False
+    auth_keys = {"authorization", "x-api-key", "api-key", "x_auth_token", "x-auth-token"}
+    return any(str(key).strip().lower() in auth_keys for key in headers.keys())
+
+
+def _signal_keywords(signal: str) -> List[str]:
+    keyword_map = {
+        "transport": ["transport", "network", "tls", "ssl", "connection", "timeout"],
+        "auth": ["auth", "token", "bearer", "api key", "unauthorized", "forbidden"],
+        "schema_type": ["type", "schema", "invalid", "validation", "field"],
+        "schema_value": ["enum", "format", "invalid", "schema", "parameter"],
+        "missing_required": ["required", "missing", "parameter", "body", "field"],
+        "validation": ["validation", "schema", "invalid", "request", "constraint"],
+        "status_mismatch": ["status", "endpoint", "contract", "behavior"],
+    }
+    return keyword_map.get(str(signal), keyword_map["status_mismatch"])
+
+
+def _get_test_id(evidence: Dict[str, Any]) -> str:
+    return str((evidence.get("test_context") or {}).get("test_id") or "unknown")
+
+
+def _status_strings(evidence: Dict[str, Any]) -> Tuple[str, str]:
+    expected_tokens, actual_tokens = _extract_expected_actual_tokens(evidence)
+    expected_text = ", ".join(expected_tokens[:2]) if expected_tokens else "contract-defined status"
+    actual_text = actual_tokens[0] if actual_tokens else "no concrete status"
+    return expected_text, actual_text
+
+
+def _build_diagnostic_triplet(evidence: Dict[str, Any], signal: str) -> Tuple[str, str, str]:
+    operation = (evidence.get("spec") or {}).get("operation") or {}
+    method = str(operation.get("method") or "REQUEST").upper()
+    path = str(operation.get("path") or "/")
+    expected_text, actual_text = _status_strings(evidence)
+    reason = _extract_primary_response_reason(evidence)
+    reason_clause = f" The response reason was '{reason}'." if reason else ""
+    has_auth = _request_has_auth_material(evidence)
+
+    if signal == "auth":
+        if has_auth:
+            cause = "Authentication credentials were provided but rejected by the API."
+            why = (
+                f"{method} {path} expected {expected_text} but returned {actual_text}.{reason_clause} "
+                "This pattern usually means an invalid, expired, or insufficient-scope token."
+            )
+            check_next = (
+                "Verify token validity/scope for this endpoint and regenerate credentials if needed, then rerun the same case."
+            )
+        else:
+            cause = "The request was sent without required authentication credentials."
+            why = (
+                f"{method} {path} expected {expected_text} but returned {actual_text}.{reason_clause} "
+                "Request headers show no Authorization or API-key material."
+            )
+            check_next = (
+                "Add a valid Authorization bearer token (or required API-key header) in run auth settings and rerun this test."
+            )
+        return cause, re.sub(r"\s+", " ", why).strip(), check_next
+
+    if signal == "transport":
+        cause = "The request likely failed before endpoint business logic due to transport/connectivity issues."
+        why = f"{method} {path} did not complete a normal contract response path.{reason_clause}"
+        check_next = "Validate runner network/TLS reachability to the target host, then rerun the identical payload."
+        return cause, re.sub(r"\s+", " ", why).strip(), check_next
+
+    if signal in {"schema_type", "schema_value", "missing_required", "validation"}:
+        cause = "The request appears to violate endpoint validation constraints for this contract."
+        why = (
+            f"{method} {path} expected {expected_text} but observed {actual_text}.{reason_clause} "
+            "This aligns with request-shape/value validation handling."
+        )
+        check_next = "Compare the generated input against schema constraints and update either input generation or expected status accordingly."
+        return cause, re.sub(r"\s+", " ", why).strip(), check_next
+
+    cause = "The expected contract outcome does not match current endpoint behavior."
+    why = f"{method} {path} expected {expected_text} but observed {actual_text}.{reason_clause}"
+    check_next = "Confirm the endpoint's intended status behavior for this scenario and align test expectation with the authoritative contract."
+    return cause, re.sub(r"\s+", " ", why).strip(), check_next
+
+
+def _format_structured_explanation(*, test_id: str, cause: str, why_likely: str, check_next: str) -> str:
+    return (
+        f"{test_id} (fail): "
+        f"Likely cause: {str(cause).strip()} "
+        f"Why likely: {str(why_likely).strip()} "
+        f"Check next: {str(check_next).strip()}"
+    )
+
+
+def _build_grounding_tail(evidence: Dict[str, Any]) -> str:
+    expected_tokens, actual_tokens = _extract_expected_actual_tokens(evidence)
+    operation = (evidence.get("spec") or {}).get("operation") or {}
+    method = str(operation.get("method") or "REQUEST").upper()
+    path = str(operation.get("path") or "/")
+    expected_text = ", ".join(expected_tokens[:2]) if expected_tokens else "the contract status"
+    actual_text = actual_tokens[0] if actual_tokens else "an unknown status/error"
+    reason = _extract_primary_response_reason(evidence)
+    if reason:
+        return (
+            f"Observed {method} {path} expected {expected_text} but got {actual_text}, "
+            f"with runner evidence '{reason}'."
+        )
+    return f"Observed {method} {path} expected {expected_text} but got {actual_text}."
+
+
 def _contains_direct_reference(text: str, evidence: Dict[str, Any]) -> bool:
     lowered = str(text or "").lower()
     if not lowered:
         return False
+
     expected_tokens, actual_tokens = _extract_expected_actual_tokens(evidence)
     input_tokens = _extract_input_tokens(evidence)
     spec_op = (evidence.get("spec") or {}).get("operation") or {}
     method = str(spec_op.get("method") or "").lower()
     path = str(spec_op.get("path") or "").lower()
+    reason = _extract_primary_response_reason(evidence).lower()
+    signal_keywords = [str(keyword).strip().lower() for keyword in _signal_keywords(classify_failure_signal(evidence))]
 
-    status_hit = any(token.lower() in lowered for token in expected_tokens + actual_tokens if token)
-    input_hit = any(token.lower() in lowered for token in input_tokens if token)
-    op_hit = bool(method and method in lowered) or bool(path and path in lowered)
-    return sum([status_hit, input_hit, op_hit]) >= 2
+    status_hit = any(str(token).lower() in lowered for token in (expected_tokens + actual_tokens) if token)
+    input_hit = any(str(token).lower() in lowered for token in input_tokens if token)
+    op_hit = bool(method and re.search(rf"\b{re.escape(method)}\b", lowered)) or bool(path and path in lowered)
+
+    reason_hit = False
+    if reason:
+        reason_tokens = [part for part in re.split(r"[^a-z0-9]+", reason) if len(part) >= 5]
+        reason_hit = reason in lowered or any(token in lowered for token in reason_tokens[:6])
+
+    signal_hit = any(keyword in lowered for keyword in signal_keywords[:6])
+    grounding_hits = sum([status_hit, input_hit, op_hit, reason_hit, signal_hit])
+
+    if status_hit and (input_hit or op_hit or reason_hit or signal_hit):
+        return True
+    return grounding_hits >= 3
 
 
 def _build_default_explanation(evidence: Dict[str, Any], word_min: int, word_max: int) -> str:
     signal = classify_failure_signal(evidence)
-    test_context = evidence.get("test_context") or {}
-    operation = (evidence.get("spec") or {}).get("operation") or {}
-    test_id = str(test_context.get("test_id") or "unknown")
-    method = str(operation.get("method") or "REQUEST").upper()
-    path = str(operation.get("path") or "/")
-
-    expected_tokens, actual_tokens = _extract_expected_actual_tokens(evidence)
-    expected_text = ", ".join(expected_tokens[:2]) if expected_tokens else "contract-defined status"
-    actual_text = actual_tokens[0] if actual_tokens else "no concrete status"
-
-    input_tokens = _extract_input_tokens(evidence)
-    input_text = ", ".join(input_tokens[:2]) if input_tokens else "no explicit scalar input values"
-    response_text = actual_tokens[-1] if len(actual_tokens) > 1 else actual_text
-    response_text = core.truncate_chars(response_text, 130)
-
-    cause_map = {
-        "transport": "a transport/connectivity problem before normal API handling",
-        "auth": "an authentication rejection rather than core business logic",
-        "schema_type": "input type/shape validation mismatch against endpoint constraints",
-        "schema_value": "invalid input value handling for this endpoint contract",
-        "missing_required": "missing-required-field handling diverging from expected contract behavior",
-        "validation": "request validation behavior differing from declared constraints",
-    }
-    cause_text = cause_map.get(signal, "endpoint behavior that diverges from this test's expected contract outcome")
-
-    draft = (
-        f"Case {test_id} failed on {method} {path}: expected {expected_text}, but observed {actual_text}. "
-        f"The request used concrete input values {input_text}. "
-        f"Runner evidence shows \"{response_text}\". "
-        f"This pattern most likely indicates {cause_text}. "
-        "Re-run with the same payload and compare sibling endpoint results to confirm whether this is backend contract logic or an external dependency effect before changing assertions."
+    test_id = _get_test_id(evidence)
+    cause, why_likely, check_next = _build_diagnostic_triplet(evidence, signal)
+    draft = _format_structured_explanation(
+        test_id=test_id,
+        cause=cause,
+        why_likely=why_likely,
+        check_next=check_next,
     )
     text = re.sub(r"\s+", " ", draft).strip()
     if word_max > 0 and _word_count(text) > word_max:
         text = _truncate_words(text, word_max)
-    if word_min > 0 and _word_count(text) < word_min:
-        addendum = (
-            "Focus verification on the exact expected-versus-actual status pair and the cited input values."
-        )
-        text = f"{text.rstrip('.')} {addendum}"
+    structured = "likely cause:" in text.lower() and "why likely:" in text.lower() and "check next:" in text.lower()
+    if word_min > 0 and _word_count(text) < word_min and not structured:
+        grounding_tail = _build_grounding_tail(evidence)
+        text = f"{text.rstrip('.')} {grounding_tail}"
         if word_max > 0 and _word_count(text) > word_max:
             text = _truncate_words(text, word_max)
     return text
@@ -388,16 +545,29 @@ def _normalize_explanation_text(
     text = re.sub(r"\s+", " ", str(raw_text or "")).strip()
     if text.startswith('"') and text.endswith('"') and len(text) > 2:
         text = text[1:-1].strip()
+    if not text:
+        return _build_default_explanation(evidence, word_min=word_min, word_max=word_max)
+    structured = (
+        "likely cause:" in text.lower()
+        and "why likely:" in text.lower()
+        and "check next:" in text.lower()
+    )
+
     if word_max > 0 and _word_count(text) > word_max:
         text = _truncate_words(text, word_max)
-    if word_min > 0 and _word_count(text) < word_min:
-        fallback = _build_default_explanation(evidence, word_min=word_min, word_max=word_max)
-        if _word_count(text) >= max(40, int(word_min * 0.8)):
-            text = f"{text.rstrip('.')} {fallback}"
+
+    if word_min > 0 and _word_count(text) < word_min and not structured:
+        grounding_tail = _build_grounding_tail(evidence)
+        if grounding_tail and grounding_tail.lower() not in text.lower():
+            text = f"{text.rstrip('.')} {grounding_tail}"
             if word_max > 0 and _word_count(text) > word_max:
                 text = _truncate_words(text, word_max)
-        else:
-            text = fallback
+
+    if _word_count(text) < max(18, int(word_min * 0.55)) and not structured:
+        fallback = _build_default_explanation(evidence, word_min=word_min, word_max=word_max)
+        merged = f"{text.rstrip('.')} {fallback}".strip()
+        text = _truncate_words(merged, word_max) if word_max > 0 else merged
+
     return text
 
 
@@ -414,20 +584,27 @@ def generate_failure_explanation(
 ) -> Dict[str, Any]:
     signal = classify_failure_signal(evidence)
     external = signal in {"transport", "auth"}
+    min_words = max(18, int(word_min or 0))
+    max_words = max(min_words + 5, int(word_max or 0))
+    test_id = _get_test_id(evidence)
     system_prompt = (
         "You are the ContractGuard failure assistant. "
-        "Return strict JSON only with keys: explanation, confidence. "
-        f"explanation must be {word_min}-{word_max} words. "
-        "It must cite direct observed data (expected vs actual status/error and at least one concrete input value). "
-        "Do not define structures or provide generic debugging advice."
+        "Return strict JSON only with keys: cause, why_likely, check_next, confidence. "
+        f"The combined response should read naturally at about {min_words}-{max_words} words when rendered. "
+        "Ground every claim in supplied evidence. "
+        "In why_likely, explicitly mention the failing HTTP method/path and expected vs observed status or error reason. "
+        "Avoid generic placeholder debugging advice."
     )
     base_user_prompt = (
-        "Analyze this failed test and explain why it failed.\n"
+        "Analyze this failed test and diagnose the most likely failure cause.\n"
         "Output JSON:\n"
         "{\n"
-        '  "explanation": "70-80 word concise explanation",\n'
+        '  "cause": "one-sentence likely cause",\n'
+        '  "why_likely": "one or two evidence-grounded sentences",\n'
+        '  "check_next": "one concrete next action",\n'
         '  "confidence": "confirmed|likely"\n'
         "}\n\n"
+        "Do not output markdown.\n"
         "Evidence bundle:\n"
         f"{json.dumps(prompt_bundle, ensure_ascii=True, indent=2)}"
     )
@@ -461,10 +638,35 @@ def generate_failure_explanation(
             )
             continue
 
+        cause_raw = str(parsed.get("cause") or "").strip()
+        why_raw = str(parsed.get("why_likely") or parsed.get("why") or "").strip()
+        check_raw = str(parsed.get("check_next") or parsed.get("next_step") or "").strip()
         explanation_raw = str(parsed.get("explanation") or "").strip()
         confidence = str(parsed.get("confidence") or "likely").strip().lower()
         if confidence not in {"confirmed", "likely"}:
             confidence = "likely"
+
+        if cause_raw and why_raw and check_raw:
+            explanation_raw = _format_structured_explanation(
+                test_id=test_id,
+                cause=cause_raw,
+                why_likely=why_raw,
+                check_next=check_raw,
+            )
+        elif explanation_raw:
+            normalized_lower = explanation_raw.lower()
+            if not (
+                "likely cause:" in normalized_lower
+                and "why likely:" in normalized_lower
+                and "check next:" in normalized_lower
+            ):
+                det_cause, _, det_check = _build_diagnostic_triplet(evidence, signal)
+                explanation_raw = _format_structured_explanation(
+                    test_id=test_id,
+                    cause=det_cause,
+                    why_likely=explanation_raw,
+                    check_next=det_check,
+                )
 
         explanation = _normalize_explanation_text(
             explanation_raw,
@@ -472,8 +674,20 @@ def generate_failure_explanation(
             word_min=word_min,
             word_max=word_max,
         )
+
+        if explanation and not _contains_direct_reference(explanation, evidence):
+            explanation = _normalize_explanation_text(
+                f"{explanation.rstrip('.')} {_build_grounding_tail(evidence)}",
+                evidence=evidence,
+                word_min=word_min,
+                word_max=word_max,
+            )
+
         words = _word_count(explanation)
-        if word_min <= words <= word_max and _contains_direct_reference(explanation, evidence):
+        has_grounding = _contains_direct_reference(explanation, evidence)
+        strict_min = max(18, int(word_min or 0))
+        relaxed_min = max(18, int(strict_min * 0.7))
+        if has_grounding and words <= max_words and words >= strict_min:
             warning = (
                 "This failure pattern looks external (authentication/network/upstream). "
                 "Validate external dependencies before treating it as backend logic."
@@ -494,10 +708,31 @@ def generate_failure_explanation(
                 "llm_error": None,
             }
 
-        attempts.append("validation_error:word_or_grounding")
+        if has_grounding and words <= max_words and words >= relaxed_min:
+            warning = (
+                "This failure pattern looks external (authentication/network/upstream). "
+                "Validate external dependencies before treating it as backend logic."
+                if external
+                else ""
+            )
+            return {
+                "mode": "explanation",
+                "explanation": explanation,
+                "confidence": confidence,
+                "signal": signal,
+                "external_failure": external,
+                "warning_external": bool(warning),
+                "warning": warning,
+                "word_count": words,
+                "model": model,
+                "used_fallback": False,
+                "llm_error": None,
+            }
+
+        attempts.append(f"validation_error:word_or_grounding(words={words}, grounded={has_grounding})")
         user_prompt = (
             base_user_prompt
-            + "\n\nPrevious output did not satisfy grounding/length rules. Return corrected strict JSON only."
+            + "\n\nPrevious output failed grounding/length checks. Return corrected JSON with cause, why_likely, check_next and explicit method/path plus expected-vs-actual evidence."
         )
 
     fallback = _build_default_explanation(evidence, word_min=word_min, word_max=word_max)
