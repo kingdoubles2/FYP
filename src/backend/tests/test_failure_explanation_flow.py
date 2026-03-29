@@ -1,0 +1,162 @@
+import os
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from llm_eval.failure_assistant import generate_failure_explanation, load_backend_llm_settings
+
+
+def _sample_evidence() -> dict:
+    return {
+        "case_id": "api.example.com::TC-EX-001",
+        "spec": {
+            "operation": {
+                "method": "GET",
+                "path": "/user",
+                "operation_id": "users/get-user",
+                "summary": "Get user",
+                "description": "",
+            },
+            "security_requirements": ["bearerAuth"],
+            "request_constraints": {},
+            "response_contract": {
+                "declared_statuses": [200, 401, 404],
+                "primary_expected_for_test": [404],
+            },
+        },
+        "test_context": {
+            "test_id": "TC-EX-001",
+            "title": "GET /user negative path",
+            "category": "negative_invalid",
+            "intent": "negative",
+            "generator_rule": "negative._invalid_value_cases",
+            "expected_outcome": {"status_code": 404, "description": "Not found"},
+            "generated_input": {"path_params": {}, "query_params": {}, "headers": {}, "body": None},
+        },
+        "execution": {
+            "outcome": "FAIL",
+            "assertion_failures": [
+                {"type": "status_mismatch", "expected": 404, "actual_status": 200, "actual_error": ""}
+            ],
+            "request_sent": {
+                "final_url": "https://api.example.com/user",
+                "path_params": {},
+                "query_params": {},
+                "headers": {"Authorization": "<redacted>"},
+                "body": None,
+            },
+            "response_received": {
+                "status": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body_snippet": "{\"login\":\"demo-user\",\"id\":1001}",
+            },
+            "duration_ms": 42.5,
+        },
+        "related_context": {"same_endpoint_results_summary": {"pass": 0, "fail": 1, "skip": 0}, "similar_failures": []},
+        "ir_context": {"parser_warnings": [], "unsupported_spec_warnings": []},
+        "missing_evidence": ["server_logs"],
+    }
+
+
+def _valid_contract_json() -> str:
+    return (
+        "{"
+        "\"cause\":\"Request hit an existing user and returned 200 instead of the expected 404.\","
+        "\"why_likely\":\"Execution shows status 200 and a user payload body_snippet for GET /user.\","
+        "\"check_next\":\"Use a token tied to a non-existent account or adjust the expected status.\","
+        "\"confidence\":\"confirmed\","
+        "\"expected_negative_behavior\":false,"
+        "\"evidence_quotes\":[\"status\\\": 200\",\"body_snippet\\\": \\\"{\\\\\\\"login\\\\\\\"\\\"\"]"
+        "}"
+    )
+
+
+class _StubOllamaClient:
+    def __init__(self, responses: list[tuple[str | None, str | None]]) -> None:
+        self._responses = list(responses)
+
+    def generate(self, **_: object) -> tuple[str | None, str | None]:
+        if self._responses:
+            return self._responses.pop(0)
+        return None, "stub_exhausted"
+
+
+class FailureExplanationFlowTests(unittest.TestCase):
+    def test_generate_explanation_success_on_first_try_uses_sample_prompt_shape(self) -> None:
+        client = _StubOllamaClient([( _valid_contract_json(), None )])
+        output = generate_failure_explanation(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle={"case_evidence": {"x": 1}, "pipeline_context": {"ignored": True}},
+            word_target=55,
+            word_max=100,
+            retry_invalid_output=1,
+            max_items_per_section=12,
+            ollama_options={},
+        )
+
+        self.assertTrue(output["ok"])
+        self.assertFalse(output["used_fallback"])
+        self.assertEqual(output["llm_error"], None)
+        self.assertIn("contract", output)
+        self.assertIn("explanation", output)
+        self.assertEqual(len(output["attempts"]), 1)
+
+        prompt_text = str(output["attempts"][0]["prompt"])
+        self.assertIn("Case:", prompt_text)
+        self.assertIn("Evidence:", prompt_text)
+        self.assertIn("Task:", prompt_text)
+        self.assertIn("Return STRICT JSON", prompt_text)
+        self.assertNotIn("pipeline_context", prompt_text)
+
+    def test_generate_explanation_retries_after_invalid_json_then_succeeds(self) -> None:
+        client = _StubOllamaClient([("not json", None), (_valid_contract_json(), None)])
+        output = generate_failure_explanation(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle={},
+            word_target=55,
+            word_max=100,
+            retry_invalid_output=1,
+            max_items_per_section=12,
+            ollama_options={},
+        )
+
+        self.assertTrue(output["ok"])
+        self.assertEqual(len(output["attempts"]), 2)
+        self.assertIn("response is not valid JSON object", str(output["attempts"][0]["parse_error"]))
+        self.assertEqual(output["attempts"][1]["parse_error"], None)
+
+    def test_generate_explanation_returns_structured_failure_without_fallback(self) -> None:
+        client = _StubOllamaClient([("", None), ("", None)])
+        output = generate_failure_explanation(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle={},
+            word_target=55,
+            word_max=100,
+            retry_invalid_output=1,
+            max_items_per_section=12,
+            ollama_options={},
+        )
+
+        self.assertFalse(output["ok"])
+        self.assertFalse(output["used_fallback"])
+        self.assertEqual(output["explanation"], "")
+        self.assertIn("empty response", str(output["llm_error"]))
+        self.assertEqual(output["contract"], {})
+        self.assertEqual(len(output["attempts"]), 2)
+
+    def test_load_backend_settings_raises_if_missing_config_and_no_env_model(self) -> None:
+        missing = Path("src/backend/tests/_missing_llm_settings.yaml")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CONTRACTGUARD_LLM_MODEL", None)
+            with self.assertRaises(ValueError):
+                load_backend_llm_settings(config_path=str(missing))
+
+
+if __name__ == "__main__":
+    unittest.main()

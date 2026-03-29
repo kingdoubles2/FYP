@@ -100,7 +100,10 @@ def _load_run_case_bundle(
     test_id: str,
     selection_reason: str,
 ) -> dict[str, Any]:
-    settings = load_backend_llm_settings()
+    try:
+        settings = load_backend_llm_settings()
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"LLM settings error: {exc}") from exc
     run_row = _get_owned_run(db, user_id, run_id)
     spec_row = _get_owned_spec(db, user_id, run_row.spec_id)
     artifact_row = (
@@ -492,11 +495,35 @@ def explain_failed_case(run_id: int, test_id: str, current_user: User = Depends(
             model=str(settings["model"]),
             evidence=bundle["evidence"],
             prompt_bundle=bundle["prompt_bundle"],
-            word_min=int(settings["word_min"]),
+            word_target=int(settings["word_target"]),
             word_max=int(settings["word_max"]),
             retry_invalid_output=int(settings["retry_invalid_output"]),
+            max_items_per_section=int(settings["max_items_per_section"]),
             ollama_options=settings.get("ollama_options") or {},
         )
+
+        if not bool(payload.get("ok")):
+            attempts = payload.get("attempts") if isinstance(payload.get("attempts"), list) else []
+            diagnostics = []
+            for idx, attempt in enumerate(attempts, start=1):
+                if not isinstance(attempt, dict):
+                    continue
+                parse_error = str(attempt.get("parse_error") or "").strip()
+                llm_error = str(attempt.get("llm_error") or "").strip()
+                validation_errors = attempt.get("validation_errors") if isinstance(attempt.get("validation_errors"), list) else []
+                if parse_error:
+                    diagnostics.append(f"attempt {idx}: {parse_error}")
+                elif llm_error:
+                    diagnostics.append(f"attempt {idx}: {llm_error}")
+                elif validation_errors:
+                    diagnostics.append(f"attempt {idx}: {'; '.join(str(item) for item in validation_errors)}")
+            detail_payload = {
+                "message": "LLM explanation failed after retry attempts.",
+                "llm_error": payload.get("llm_error"),
+                "validation_errors": payload.get("validation_errors") or [],
+                "attempt_diagnostics": diagnostics,
+            }
+            raise HTTPException(status_code=502, detail=detail_payload)
 
         return {
             "run_id": run_id,

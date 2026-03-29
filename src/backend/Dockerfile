@@ -10,6 +10,7 @@ COPY src/backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY src /app/src
+COPY config /app/config
 
 EXPOSE 8000
 

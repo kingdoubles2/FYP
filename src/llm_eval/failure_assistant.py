@@ -60,6 +60,12 @@ def parse_spec_document(spec_text: str) -> Dict[str, Any]:
 def load_backend_llm_settings(config_path: Optional[str] = None) -> Dict[str, Any]:
     config_override = config_path or os.getenv("CONTRACTGUARD_LLM_CONFIG")
     path = Path(config_override or "config/llm_eval.yaml")
+    env_model = str(os.getenv("CONTRACTGUARD_LLM_MODEL") or "").strip()
+    if not path.exists() and not env_model:
+        raise ValueError(
+            f"LLM config file not found at '{path}'. Set CONTRACTGUARD_LLM_CONFIG or CONTRACTGUARD_LLM_MODEL."
+        )
+
     config = _load_yaml_mapping(path) if path.exists() else {}
 
     llm_cfg = config.get("llm") or {}
@@ -67,7 +73,11 @@ def load_backend_llm_settings(config_path: Optional[str] = None) -> Dict[str, An
     evidence_cfg = config.get("evidence") or {}
     models = config.get("models") if isinstance(config.get("models"), list) else []
 
-    model = os.getenv("CONTRACTGUARD_LLM_MODEL") or (str(models[0]) if models else "kimi-k2.5:cloud")
+    model = env_model or (str(models[0]).strip() if models else "")
+    if not model:
+        raise ValueError(
+            "No LLM model configured. Set CONTRACTGUARD_LLM_MODEL or provide a non-empty first entry in models."
+        )
     base_url = (
         os.getenv("CONTRACTGUARD_OLLAMA_BASE_URL")
         or os.getenv("OLLAMA_BASE_URL")
@@ -577,43 +587,67 @@ def generate_failure_explanation(
     model: str,
     evidence: Dict[str, Any],
     prompt_bundle: Dict[str, Any],
-    word_min: int,
+    word_target: int,
     word_max: int,
     retry_invalid_output: int,
+    max_items_per_section: int,
     ollama_options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    _ = prompt_bundle
     signal = classify_failure_signal(evidence)
     external = signal in {"transport", "auth"}
-    min_words = max(18, int(word_min or 0))
-    max_words = max(min_words + 5, int(word_max or 0))
-    test_id = _get_test_id(evidence)
-    system_prompt = (
-        "You are the ContractGuard failure assistant. "
-        "Return strict JSON only with keys: cause, why_likely, check_next, confidence. "
-        f"The combined response should read naturally at about {min_words}-{max_words} words when rendered. "
-        "Ground every claim in supplied evidence. "
-        "In why_likely, explicitly mention the failing HTTP method/path and expected vs observed status or error reason. "
-        "Avoid generic placeholder debugging advice."
+    warning = (
+        "This failure pattern looks external (authentication/network/upstream). "
+        "Validate external dependencies before treating it as backend logic."
+        if external
+        else ""
     )
-    base_user_prompt = (
-        "Analyze this failed test and diagnose the most likely failure cause.\n"
-        "Output JSON:\n"
-        "{\n"
-        '  "cause": "one-sentence likely cause",\n'
-        '  "why_likely": "one or two evidence-grounded sentences",\n'
-        '  "check_next": "one concrete next action",\n'
-        '  "confidence": "confirmed|likely"\n'
-        "}\n\n"
-        "Do not output markdown.\n"
-        "Evidence bundle:\n"
-        f"{json.dumps(prompt_bundle, ensure_ascii=True, indent=2)}"
-    )
+    evidence_view = core.build_prompt_evidence_view(evidence, max_items=max(2, int(max_items_per_section)))
+    prompt_evidence_text = json.dumps(evidence_view, ensure_ascii=True)
 
-    attempts: List[str] = []
+    def _failed_payload(
+        *,
+        llm_error: str,
+        attempts: List[Dict[str, Any]],
+        validation_errors: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "ok": False,
+            "mode": "explanation",
+            "case_id": str(evidence.get("case_id") or ""),
+            "model": model,
+            "llm_error": llm_error,
+            "used_fallback": False,
+            "validation_errors": list(validation_errors or []),
+            "contract": {},
+            "explanation": "",
+            "auto_scores": {},
+            "prompt_evidence": evidence_view,
+            "prompt_evidence_text": prompt_evidence_text,
+            "attempts": attempts,
+            "confidence": None,
+            "signal": signal,
+            "external_failure": external,
+            "warning_external": bool(warning),
+            "warning": warning,
+            "word_count": 0,
+        }
+
+    try:
+        system_prompt, user_template = core.load_prompt_templates()
+    except Exception as exc:
+        return _failed_payload(llm_error=f"prompt_template_error: {exc}", attempts=[], validation_errors=["prompt_template_error"])
+
+    base_user_prompt = core.build_user_prompt(user_template, evidence, evidence_view)
+    attempts: List[Dict[str, Any]] = []
     retries = max(0, int(retry_invalid_output))
+    remaining = retries + 1
     user_prompt = base_user_prompt
+    last_error = "internal_error"
+    last_validation_errors: List[str] = ["internal_error"]
 
-    for _ in range(retries + 1):
+    while remaining > 0:
+        remaining -= 1
         response, llm_error = client.generate(
             model=model,
             prompt=user_prompt,
@@ -621,140 +655,98 @@ def generate_failure_explanation(
             format_json=True,
             options=ollama_options or {},
         )
+
+        attempt_record: Dict[str, Any] = {
+            "prompt": user_prompt,
+            "raw_response": response or "",
+            "llm_error": llm_error,
+            "parse_error": None,
+            "validation_errors": [],
+        }
+
         if llm_error:
-            attempts.append(f"llm_error:{llm_error}")
-            user_prompt = (
-                base_user_prompt
-                + "\n\nPrevious attempt failed. Return strict JSON only with the required keys."
-            )
+            attempt_record["parse_error"] = llm_error
+            attempts.append(attempt_record)
+            last_error = str(llm_error)
+            last_validation_errors = ["llm_error"]
+            if remaining > 0:
+                user_prompt = (
+                    base_user_prompt
+                    + "\n\nPrevious attempt failed to execute. Return valid JSON only and keep it concise."
+                )
             continue
 
         parsed, parse_error = core.parse_llm_json_response(response or "")
         if parse_error or not isinstance(parsed, dict):
-            attempts.append(f"parse_error:{parse_error or 'invalid_json'}")
-            user_prompt = (
-                base_user_prompt
-                + "\n\nPrevious attempt was not valid JSON. Return strict JSON only."
-            )
+            attempt_record["parse_error"] = parse_error or "invalid_json"
+            attempts.append(attempt_record)
+            last_error = str(parse_error or "invalid_json")
+            last_validation_errors = ["parse_error"]
+            if remaining > 0:
+                user_prompt = (
+                    base_user_prompt
+                    + "\n\nPrevious output was not valid JSON. Return strict JSON only with the required keys."
+                )
             continue
 
-        cause_raw = str(parsed.get("cause") or "").strip()
-        why_raw = str(parsed.get("why_likely") or parsed.get("why") or "").strip()
-        check_raw = str(parsed.get("check_next") or parsed.get("next_step") or "").strip()
-        explanation_raw = str(parsed.get("explanation") or "").strip()
-        confidence = str(parsed.get("confidence") or "likely").strip().lower()
-        if confidence not in {"confirmed", "likely"}:
-            confidence = "likely"
+        contract, normalize_errors = core.normalize_contract(parsed or {})
+        explanation = core.render_explanation(contract, word_target=int(word_target), word_max=int(word_max))
+        validation_errors = normalize_errors + core.validate_contract_output(contract, explanation, word_max=int(word_max))
+        attempt_record["validation_errors"] = validation_errors
+        attempts.append(attempt_record)
 
-        if cause_raw and why_raw and check_raw:
-            explanation_raw = _format_structured_explanation(
-                test_id=test_id,
-                cause=cause_raw,
-                why_likely=why_raw,
-                check_next=check_raw,
-            )
-        elif explanation_raw:
-            normalized_lower = explanation_raw.lower()
-            if not (
-                "likely cause:" in normalized_lower
-                and "why likely:" in normalized_lower
-                and "check next:" in normalized_lower
-            ):
-                det_cause, _, det_check = _build_diagnostic_triplet(evidence, signal)
-                explanation_raw = _format_structured_explanation(
-                    test_id=test_id,
-                    cause=det_cause,
-                    why_likely=explanation_raw,
-                    check_next=det_check,
+        if validation_errors:
+            last_error = "; ".join(validation_errors)
+            last_validation_errors = validation_errors
+            if remaining > 0:
+                user_prompt = (
+                    base_user_prompt
+                    + "\n\nPrevious output had issues: "
+                    + "; ".join(validation_errors)
+                    + ". Return corrected JSON only."
                 )
+                continue
+            return _failed_payload(
+                llm_error=last_error,
+                attempts=attempts,
+                validation_errors=validation_errors,
+            )
 
-        explanation = _normalize_explanation_text(
-            explanation_raw,
+        auto_scores = core.compute_auto_scores(
             evidence=evidence,
-            word_min=word_min,
-            word_max=word_max,
+            prompt_evidence_text=prompt_evidence_text,
+            contract=contract,
+            explanation=explanation,
+            word_target=int(word_target),
+            word_max=int(word_max),
         )
+        return {
+            "ok": True,
+            "mode": "explanation",
+            "case_id": str(evidence.get("case_id") or ""),
+            "model": model,
+            "llm_error": None,
+            "used_fallback": False,
+            "validation_errors": [],
+            "contract": contract,
+            "explanation": explanation,
+            "auto_scores": auto_scores,
+            "prompt_evidence": evidence_view,
+            "prompt_evidence_text": prompt_evidence_text,
+            "attempts": attempts,
+            "confidence": contract.get("confidence"),
+            "signal": signal,
+            "external_failure": external,
+            "warning_external": bool(warning),
+            "warning": warning,
+            "word_count": core.count_words(explanation),
+        }
 
-        if explanation and not _contains_direct_reference(explanation, evidence):
-            explanation = _normalize_explanation_text(
-                f"{explanation.rstrip('.')} {_build_grounding_tail(evidence)}",
-                evidence=evidence,
-                word_min=word_min,
-                word_max=word_max,
-            )
-
-        words = _word_count(explanation)
-        has_grounding = _contains_direct_reference(explanation, evidence)
-        strict_min = max(18, int(word_min or 0))
-        relaxed_min = max(18, int(strict_min * 0.7))
-        if has_grounding and words <= max_words and words >= strict_min:
-            warning = (
-                "This failure pattern looks external (authentication/network/upstream). "
-                "Validate external dependencies before treating it as backend logic."
-                if external
-                else ""
-            )
-            return {
-                "mode": "explanation",
-                "explanation": explanation,
-                "confidence": confidence,
-                "signal": signal,
-                "external_failure": external,
-                "warning_external": bool(warning),
-                "warning": warning,
-                "word_count": words,
-                "model": model,
-                "used_fallback": False,
-                "llm_error": None,
-            }
-
-        if has_grounding and words <= max_words and words >= relaxed_min:
-            warning = (
-                "This failure pattern looks external (authentication/network/upstream). "
-                "Validate external dependencies before treating it as backend logic."
-                if external
-                else ""
-            )
-            return {
-                "mode": "explanation",
-                "explanation": explanation,
-                "confidence": confidence,
-                "signal": signal,
-                "external_failure": external,
-                "warning_external": bool(warning),
-                "warning": warning,
-                "word_count": words,
-                "model": model,
-                "used_fallback": False,
-                "llm_error": None,
-            }
-
-        attempts.append(f"validation_error:word_or_grounding(words={words}, grounded={has_grounding})")
-        user_prompt = (
-            base_user_prompt
-            + "\n\nPrevious output failed grounding/length checks. Return corrected JSON with cause, why_likely, check_next and explicit method/path plus expected-vs-actual evidence."
-        )
-
-    fallback = _build_default_explanation(evidence, word_min=word_min, word_max=word_max)
-    warning = (
-        "This failure pattern looks external (authentication/network/upstream). "
-        "Validate external dependencies before treating it as backend logic."
-        if external
-        else ""
+    return _failed_payload(
+        llm_error=last_error,
+        attempts=attempts,
+        validation_errors=last_validation_errors,
     )
-    return {
-        "mode": "explanation",
-        "explanation": fallback,
-        "confidence": "likely",
-        "signal": signal,
-        "external_failure": external,
-        "warning_external": bool(warning),
-        "warning": warning,
-        "word_count": _word_count(fallback),
-        "model": model,
-        "used_fallback": True,
-        "llm_error": "; ".join(attempts) if attempts else "fallback_used",
-    }
 
 
 def _next_unique_test_id(base_id: str, existing_test_ids: Sequence[str]) -> str:

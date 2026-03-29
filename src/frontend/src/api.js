@@ -15,10 +15,29 @@ async function request(path, options = {}) {
   const payload = await readResponse(response);
 
   if (!response.ok) {
-    const detail =
-      payload && typeof payload === "object" && payload.detail
-        ? payload.detail
-        : `Request failed with status ${response.status}`;
+    let detail = `Request failed with status ${response.status}`;
+    if (payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "detail")) {
+      const rawDetail = payload.detail;
+      if (typeof rawDetail === "string" && rawDetail.trim()) {
+        detail = rawDetail;
+      } else if (rawDetail && typeof rawDetail === "object") {
+        const message = typeof rawDetail.message === "string" ? rawDetail.message.trim() : "";
+        const llmError = typeof rawDetail.llm_error === "string" ? rawDetail.llm_error.trim() : "";
+        const diagnostics = Array.isArray(rawDetail.attempt_diagnostics)
+          ? rawDetail.attempt_diagnostics.map((item) => String(item || "").trim()).filter(Boolean)
+          : [];
+        const chunks = [message || "Request failed"];
+        if (llmError) {
+          chunks.push(`llm_error=${llmError}`);
+        }
+        if (diagnostics.length > 0) {
+          chunks.push(`diagnostics=${diagnostics.join(" | ")}`);
+        }
+        detail = chunks.join(" ");
+      } else if (rawDetail !== null && rawDetail !== undefined) {
+        detail = String(rawDetail);
+      }
+    }
     throw new Error(detail);
   }
 
