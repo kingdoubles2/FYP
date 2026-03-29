@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Optional, Any
 
 
@@ -26,6 +26,13 @@ class EndpointIR:
     header_params: List[ParamIR]
     request_schema: Optional[Dict[str, Any]]
     response_schemas: Dict[str, Optional[Dict[str, Any]]]
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    request_body_required: bool = False
+    request_examples: List[Any] = field(default_factory=list)
+    security: List[Dict[str, List[str]]] = field(default_factory=list)
+    response_descriptions: Dict[str, str] = field(default_factory=dict)
+    response_examples: Dict[str, List[Any]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         # dataclasses.asdict will also convert nested dataclasses
@@ -36,11 +43,18 @@ class EndpointIR:
 class ParsedSpecIR:
     title: str
     version: str
+    base_url: Optional[str]
     endpoints: List[EndpointIR]
+    security_schemes: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "title": self.title,
             "version": self.version,
-            "endpoints": [ep.to_dict() for ep in self.endpoints],
         }
+        if self.base_url:
+            d["base_url"] = self.base_url
+        if self.security_schemes:
+            d["security_schemes"] = self.security_schemes
+        d["endpoints"] = [ep.to_dict() for ep in self.endpoints]
+        return d
