@@ -74,6 +74,95 @@ def _first_example_value(examples: Dict[str, Any], spec: Dict[str, Any]) -> Any:
 _MISSING = object()  # sentinel – never appears in user data
 
 
+def _pick_json_media(content: Any) -> Optional[Dict[str, Any]]:
+    """Pick the best JSON-like media object from a content map."""
+    if not isinstance(content, dict):
+        return None
+
+    exact = content.get("application/json")
+    if isinstance(exact, dict):
+        return exact
+
+    for media_type, media_obj in content.items():
+        if isinstance(media_type, str) and "json" in media_type.lower() and isinstance(media_obj, dict):
+            return media_obj
+    return None
+
+
+def _extract_media_examples(media_obj: Any, spec: Dict[str, Any]) -> List[Any]:
+    """Collect example payloads from a media object.
+
+    Priority: explicit ``examples`` map first, then singular ``example``.
+    """
+    out: List[Any] = []
+    if not isinstance(media_obj, dict):
+        return out
+
+    examples = media_obj.get("examples")
+    if isinstance(examples, dict):
+        for _name, ex in examples.items():
+            if not isinstance(ex, dict):
+                continue
+            if "$ref" in ex:
+                ex = resolve_ref(ex["$ref"], spec)
+            if isinstance(ex, dict) and "value" in ex:
+                out.append(ex["value"])
+
+    if "example" in media_obj:
+        out.append(media_obj["example"])
+
+    return out
+
+
+def _normalize_security_requirements(raw: Any) -> List[Dict[str, List[str]]]:
+    """Normalize OpenAPI security requirements into a stable list format."""
+    normalized: List[Dict[str, List[str]]] = []
+    if not isinstance(raw, list):
+        return normalized
+
+    for req in raw:
+        if not isinstance(req, dict):
+            continue
+        item: Dict[str, List[str]] = {}
+        for scheme_name, scopes in req.items():
+            if isinstance(scopes, list):
+                item[str(scheme_name)] = [str(s) for s in scopes]
+            else:
+                item[str(scheme_name)] = []
+        normalized.append(item)
+    return normalized
+
+
+def extract_operation_security(
+    operation: Dict[str, Any],
+    path_item: Dict[str, Any],
+    spec: Dict[str, Any],
+) -> List[Dict[str, List[str]]]:
+    """Resolve effective security at operation/path/global level."""
+    if "security" in operation:
+        return _normalize_security_requirements(operation.get("security"))
+    if "security" in path_item:
+        return _normalize_security_requirements(path_item.get("security"))
+    return _normalize_security_requirements(spec.get("security"))
+
+
+def extract_security_schemes(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract and resolve components.securitySchemes for auth-aware test generation."""
+    components = spec.get("components")
+    if not isinstance(components, dict):
+        return {}
+
+    schemes = components.get("securitySchemes")
+    if not isinstance(schemes, dict):
+        return {}
+
+    out: Dict[str, Any] = {}
+    for name, scheme in schemes.items():
+        if isinstance(scheme, dict):
+            out[str(name)] = resolve_schema(scheme, spec)
+    return out
+
+
 def extract_parameters(
     parameters: List[Dict[str, Any]],
     spec: Dict[str, Any],
@@ -140,7 +229,7 @@ def extract_request_schema(operation: Dict[str, Any], spec: Dict[str, Any]) -> O
         return None
 
     content = request_body.get("content", {})
-    json_content = content.get("application/json")
+    json_content = _pick_json_media(content)
     if not isinstance(json_content, dict):
         return None
 
@@ -169,6 +258,38 @@ def extract_request_schema(operation: Dict[str, Any], spec: Dict[str, Any]) -> O
     return resolved
 
 
+def extract_request_body_required(operation: Dict[str, Any], spec: Dict[str, Any]) -> bool:
+    """Return whether requestBody is required for this operation."""
+    request_body = operation.get("requestBody")
+    if not request_body:
+        return False
+
+    if isinstance(request_body, dict) and "$ref" in request_body:
+        request_body = resolve_ref(request_body["$ref"], spec)
+
+    if not isinstance(request_body, dict):
+        return False
+
+    return bool(request_body.get("required", False))
+
+
+def extract_request_examples(operation: Dict[str, Any], spec: Dict[str, Any]) -> List[Any]:
+    """Extract requestBody examples from JSON media content."""
+    request_body = operation.get("requestBody")
+    if not request_body:
+        return []
+
+    if isinstance(request_body, dict) and "$ref" in request_body:
+        request_body = resolve_ref(request_body["$ref"], spec)
+
+    if not isinstance(request_body, dict):
+        return []
+
+    content = request_body.get("content", {})
+    media = _pick_json_media(content)
+    return _extract_media_examples(media, spec)
+
+
 def extract_response_schemas(operation: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, Optional[Dict[str, Any]]]:
     responses = operation.get("responses", {})
     response_schemas: Dict[str, Optional[Dict[str, Any]]] = {}
@@ -185,7 +306,7 @@ def extract_response_schemas(operation: Dict[str, Any], spec: Dict[str, Any]) ->
             continue
 
         content = response.get("content", {})
-        json_content = content.get("application/json")
+        json_content = _pick_json_media(content)
 
         if not isinstance(json_content, dict):
             response_schemas[str(status_code)] = None
@@ -202,6 +323,46 @@ def extract_response_schemas(operation: Dict[str, Any], spec: Dict[str, Any]) ->
     return response_schemas
 
 
+def extract_response_descriptions(operation: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, str]:
+    """Extract per-status response description text."""
+    responses = operation.get("responses", {})
+    descriptions: Dict[str, str] = {}
+    if not isinstance(responses, dict):
+        return descriptions
+
+    for status_code, response in responses.items():
+        if isinstance(response, dict) and "$ref" in response:
+            response = resolve_ref(response["$ref"], spec)
+        if not isinstance(response, dict):
+            continue
+        desc = response.get("description")
+        if isinstance(desc, str) and desc.strip():
+            descriptions[str(status_code)] = desc
+
+    return descriptions
+
+
+def extract_response_examples(operation: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, List[Any]]:
+    """Extract per-status response examples from JSON media content."""
+    responses = operation.get("responses", {})
+    examples_by_status: Dict[str, List[Any]] = {}
+    if not isinstance(responses, dict):
+        return examples_by_status
+
+    for status_code, response in responses.items():
+        if isinstance(response, dict) and "$ref" in response:
+            response = resolve_ref(response["$ref"], spec)
+        if not isinstance(response, dict):
+            continue
+
+        media = _pick_json_media(response.get("content", {}))
+        examples = _extract_media_examples(media, spec)
+        if examples:
+            examples_by_status[str(status_code)] = examples
+
+    return examples_by_status
+
+
 def _response_example_value(operation: Dict[str, Any], spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Try to extract a concrete example object from the 200/201 response.
 
@@ -215,7 +376,7 @@ def _response_example_value(operation: Dict[str, Any], spec: Dict[str, Any]) -> 
         if "$ref" in resp:
             resp = resolve_ref(resp["$ref"], spec)
         content = resp.get("content", {})
-        json_ct = content.get("application/json") or content.get("application\\json")
+        json_ct = _pick_json_media(content)
         if not isinstance(json_ct, dict):
             continue
         # Try examples map first, then singular example
@@ -281,6 +442,16 @@ def _backfill_param_examples(
             param_ir.schema["example"] = val
 
 
+def _extract_first_server_url(servers: Any) -> Optional[str]:
+    """Return the URL from the first valid entry in an OpenAPI servers list."""
+    if not isinstance(servers, list):
+        return None
+    for srv in servers:
+        if isinstance(srv, dict) and srv.get("url"):
+            return srv["url"]
+    return None
+
+
 def parse_openapi(spec_text: str) -> ParsedSpecIR:
     spec = load_spec(spec_text)
 
@@ -317,6 +488,8 @@ def parse_openapi(spec_text: str) -> ParsedSpecIR:
             method_upper = method.upper()
             endpoint_id = f"{method_upper} {path}"
             operation_id = operation.get("operationId")
+            summary = operation.get("summary") if isinstance(operation.get("summary"), str) else None
+            description = operation.get("description") if isinstance(operation.get("description"), str) else None
 
             op_params = operation.get("parameters", [])
             if not isinstance(op_params, list):
@@ -327,7 +500,12 @@ def parse_openapi(spec_text: str) -> ParsedSpecIR:
             path_params, query_params, header_params = extract_parameters(all_params, spec)
             _backfill_param_examples(path_params, query_params, operation, spec)
             request_schema = extract_request_schema(operation, spec)
+            request_body_required = extract_request_body_required(operation, spec)
+            request_examples = extract_request_examples(operation, spec)
+            security = extract_operation_security(operation, path_item, spec)
             response_schemas = extract_response_schemas(operation, spec)
+            response_descriptions = extract_response_descriptions(operation, spec)
+            response_examples = extract_response_examples(operation, spec)
 
             endpoint_ir = EndpointIR(
                 endpoint_id=endpoint_id,
@@ -339,7 +517,41 @@ def parse_openapi(spec_text: str) -> ParsedSpecIR:
                 header_params=header_params,
                 request_schema=request_schema,
                 response_schemas=response_schemas,
+                summary=summary,
+                description=description,
+                request_body_required=request_body_required,
+                request_examples=request_examples,
+                security=security,
+                response_descriptions=response_descriptions,
+                response_examples=response_examples,
             )
             endpoints.append(endpoint_ir)
 
-    return ParsedSpecIR(title=title, version=version, endpoints=endpoints)
+    # Extract base URL from OpenAPI servers field.
+    # OpenAPI 3 allows servers at global, path, and operation levels.
+    # We check global first, then fall back to the first path/operation server.
+    base_url: Optional[str] = _extract_first_server_url(spec.get("servers"))
+    if not base_url:
+        for _path, path_item in paths.items():
+            if not isinstance(path_item, dict):
+                continue
+            base_url = _extract_first_server_url(path_item.get("servers"))
+            if base_url:
+                break
+            for _method, op in path_item.items():
+                if isinstance(op, dict):
+                    base_url = _extract_first_server_url(op.get("servers"))
+                    if base_url:
+                        break
+            if base_url:
+                break
+
+    security_schemes = extract_security_schemes(spec)
+
+    return ParsedSpecIR(
+        title=title,
+        version=version,
+        base_url=base_url,
+        endpoints=endpoints,
+        security_schemes=security_schemes,
+    )
