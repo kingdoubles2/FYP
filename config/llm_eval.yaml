@@ -9,7 +9,7 @@ output_dir: build/llm_runs
 case_scope: fail
 
 llm:
-  timeout_seconds: 120
+  timeout_seconds: 150
   output_word_target: 55
   output_word_max: 100
   retry_invalid_output: 1

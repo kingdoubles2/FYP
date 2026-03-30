@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   API_BASE_URL,
   clearSpecs,
@@ -12,14 +12,23 @@ import {
   runGeneratedTests,
   uploadSpecFile,
 } from "./api.js";
+import { mockChatAdapter } from "./chatAdapter.js";
 import { buildSpecPreview } from "./testPreview.js";
 
 const SESSION_KEY = "contractguard.session.v1";
 const SPEC_CACHE_KEY = "contractguard.spec-cache.v1";
 const THEME_KEY = "contractguard.theme.v1";
+const CHAT_THREAD_KEY = "contractguard.chat-thread.v1";
+const CHAT_CONTEXT_GLOBAL = "global";
+const CHAT_CONTEXT_SPEC = "spec";
 const SPEC_FILE_EXTENSIONS = [".json", ".yaml", ".yml"];
 const JSON_EDITOR_INDENT = "  ";
 const FAILURE_REASON_KEYS = ["message", "detail", "error", "reason", "title", "description"];
+const CHAT_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
+const DEFAULT_CHAT_RUNTIME_CONFIG = Object.freeze({
+  modelId: "contractguard-mock-v1",
+  userInstruction: "",
+});
 
 function decodeJwtPayload(token) {
   if (!token) {
@@ -125,6 +134,146 @@ function saveTheme(theme) {
   } catch {
     // Ignore write errors (private mode, storage restrictions).
   }
+}
+
+function getDefaultChatContext() {
+  return {
+    mode: CHAT_CONTEXT_GLOBAL,
+    specId: null,
+  };
+}
+
+function createChatMessageId(prefix = "chat") {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeChatContext(context) {
+  if (!context || typeof context !== "object") {
+    return getDefaultChatContext();
+  }
+
+  const mode = context.mode === CHAT_CONTEXT_SPEC ? CHAT_CONTEXT_SPEC : CHAT_CONTEXT_GLOBAL;
+  if (mode !== CHAT_CONTEXT_SPEC) {
+    return getDefaultChatContext();
+  }
+
+  const specIdNumber = Number(context.specId);
+  if (!Number.isFinite(specIdNumber)) {
+    return getDefaultChatContext();
+  }
+
+  return {
+    mode: CHAT_CONTEXT_SPEC,
+    specId: specIdNumber,
+  };
+}
+
+function normalizeChatRuntimeConfig(runtimeConfig) {
+  return {
+    modelId: String(runtimeConfig?.modelId || DEFAULT_CHAT_RUNTIME_CONFIG.modelId),
+    userInstruction: String(runtimeConfig?.userInstruction || ""),
+  };
+}
+
+function normalizeChatMessage(message, index = 0) {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+
+  const content = String(message.content || "").trim();
+  if (!content) {
+    return null;
+  }
+
+  const role = CHAT_MESSAGE_ROLES.has(message.role) ? message.role : "system";
+  const timestampRaw = String(message.createdAt || "").trim();
+  const timestamp = Date.parse(timestampRaw);
+  const createdAt = Number.isNaN(timestamp) ? new Date().toISOString() : new Date(timestamp).toISOString();
+  const id = String(message.id || createChatMessageId(`msg-${role}-${index}`));
+
+  return {
+    id,
+    role,
+    content,
+    createdAt,
+    context: normalizeChatContext(message.context),
+    meta: message.meta && typeof message.meta === "object" ? message.meta : {},
+  };
+}
+
+function normalizeChatThread(thread) {
+  const normalizedMessages = Array.isArray(thread?.messages)
+    ? thread.messages
+      .map((message, index) => normalizeChatMessage(message, index))
+      .filter(Boolean)
+    : [];
+
+  return {
+    messages: normalizedMessages,
+    activeContext: normalizeChatContext(thread?.activeContext),
+    runtimeConfig: normalizeChatRuntimeConfig(thread?.runtimeConfig),
+  };
+}
+
+function loadChatThread(userId) {
+  if (!userId) {
+    return normalizeChatThread(null);
+  }
+
+  try {
+    const raw = localStorage.getItem(CHAT_THREAD_KEY);
+    if (!raw) {
+      return normalizeChatThread(null);
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return normalizeChatThread(null);
+    }
+
+    return normalizeChatThread(parsed[userId]);
+  } catch {
+    return normalizeChatThread(null);
+  }
+}
+
+function saveChatThread(userId, thread) {
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const normalizedThread = normalizeChatThread(thread);
+    const existingRaw = localStorage.getItem(CHAT_THREAD_KEY);
+    const existingParsed = existingRaw ? JSON.parse(existingRaw) : {};
+    const safeStore = existingParsed && typeof existingParsed === "object" ? existingParsed : {};
+    safeStore[userId] = {
+      ...normalizedThread,
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(CHAT_THREAD_KEY, JSON.stringify(safeStore));
+  } catch {
+    // Ignore storage write errors.
+  }
+}
+
+function createChatMessage({ role, content, context, meta }) {
+  return {
+    id: createChatMessageId(role || "chat"),
+    role: CHAT_MESSAGE_ROLES.has(role) ? role : "system",
+    content: String(content || "").trim(),
+    createdAt: new Date().toISOString(),
+    context: normalizeChatContext(context),
+    meta: meta && typeof meta === "object" ? meta : {},
+  };
+}
+
+function formatChatTime(value) {
+  const parsed = Date.parse(String(value || ""));
+  if (Number.isNaN(parsed)) {
+    return "";
+  }
+  return new Date(parsed).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatDate(value) {
@@ -399,6 +548,43 @@ function truncateText(text, maxLength = 220) {
     return text;
   }
   return `${text.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+const EXPLANATION_LEADING_LABEL_RE = /\b(?:Confirmed|Likely)\s+cause\s*:/gi;
+const EXPLANATION_SECTION_BREAK_RE = /\b(?:Why\s+likely|Check\s+next)\s*:/gi;
+const EXPLANATION_ANY_LABEL_RE = /\b(?:Confirmed|Likely)\s+cause\s*:|\b(?:Why\s+likely|Check\s+next)\s*:/i;
+
+function ensureSentenceTerminalPunctuation(text) {
+  const compact = String(text || "").replace(/\s+/g, " ").trim();
+  if (!compact) {
+    return "";
+  }
+  return /[.!?]$/.test(compact) ? compact : `${compact}.`;
+}
+
+function formatExplanationForDisplay(explanationText) {
+  const raw = String(explanationText || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  if (!EXPLANATION_ANY_LABEL_RE.test(normalized)) {
+    return normalized;
+  }
+
+  const withoutLeadingLabel = normalized.replace(EXPLANATION_LEADING_LABEL_RE, "");
+  const sectionParts = withoutLeadingLabel
+    .replace(EXPLANATION_SECTION_BREAK_RE, " ||| ")
+    .split("|||")
+    .map((part) => ensureSentenceTerminalPunctuation(part))
+    .filter(Boolean);
+
+  if (sectionParts.length > 0) {
+    return sectionParts.join(" ");
+  }
+
+  return withoutLeadingLabel;
 }
 
 function getEmptyRunState() {
@@ -728,6 +914,134 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
   );
 }
 
+function ChatPanel({
+  selectedEntry,
+  messages,
+  draft,
+  pending,
+  activeContext,
+  onContextChange,
+  onDraftChange,
+  onSend,
+}) {
+  const transcriptEndRef = useRef(null);
+  const contextValue = activeContext?.mode === CHAT_CONTEXT_SPEC ? CHAT_CONTEXT_SPEC : CHAT_CONTEXT_GLOBAL;
+  const selectedSpecLabel = selectedEntry
+    ? `${selectedEntry.title || selectedEntry.filename} (#${selectedEntry.id})`
+    : "No spec selected";
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, pending]);
+
+  return (
+    <aside className="chat-panel" aria-label="Assistant chat panel">
+      <div className="panel-header chat-panel-header">
+        <p className="eyebrow">Assistant</p>
+        <h2>Chat</h2>
+        <p className="muted">
+          Ask anything in global mode, or switch context to the selected spec.
+        </p>
+      </div>
+
+      <label className="chat-context-control" htmlFor="chat-context-select">
+        <span className="chat-context-label">Context</span>
+        <select
+          id="chat-context-select"
+          className="chat-context-select"
+          value={contextValue}
+          onChange={(event) => {
+            const mode = event.target.value;
+            if (mode === CHAT_CONTEXT_SPEC && selectedEntry?.id) {
+              onContextChange?.({
+                mode: CHAT_CONTEXT_SPEC,
+                specId: Number(selectedEntry.id),
+              });
+              return;
+            }
+
+            onContextChange?.(getDefaultChatContext());
+          }}
+        >
+          <option value={CHAT_CONTEXT_GLOBAL}>Global</option>
+          <option value={CHAT_CONTEXT_SPEC} disabled={!selectedEntry?.id}>
+            {selectedEntry?.id ? `Selected spec: ${selectedSpecLabel}` : "Selected spec unavailable"}
+          </option>
+        </select>
+      </label>
+
+      <div className="chat-thread" role="log" aria-live="polite" aria-label="Chat transcript">
+        {messages.length === 0 ? (
+          <div className="chat-empty-state">
+            <p>No messages yet.</p>
+            <span>
+              Chat currently uses a local mock adapter so we can finalize frontend behavior before backend wiring.
+            </span>
+          </div>
+        ) : null}
+
+        {messages.map((message) => {
+          const contextLabel = message?.context?.mode === CHAT_CONTEXT_SPEC && message?.context?.specId !== null
+            ? `Spec #${message.context.specId}`
+            : "Global";
+          const roleLabel = message.role === "user"
+            ? "You"
+            : message.role === "assistant"
+              ? "Assistant"
+              : "System";
+
+          return (
+            <article key={message.id} className={`chat-message chat-message-${message.role}`}>
+              <div className="chat-message-meta">
+                <span>{roleLabel}</span>
+                <span>{contextLabel}</span>
+                <time dateTime={message.createdAt}>{formatChatTime(message.createdAt)}</time>
+              </div>
+              <p className="chat-message-body">{message.content}</p>
+            </article>
+          );
+        })}
+
+        {pending ? (
+          <div className="chat-typing-indicator" role="status">
+            Assistant is thinking
+            <span className="chat-typing-dots" aria-hidden="true">...</span>
+          </div>
+        ) : null}
+
+        <div ref={transcriptEndRef} />
+      </div>
+
+      <form className="chat-composer" onSubmit={onSend}>
+        <label className="sr-only" htmlFor="chat-composer-input">Message</label>
+        <textarea
+          id="chat-composer-input"
+          className="chat-composer-input"
+          value={draft}
+          onChange={(event) => onDraftChange?.(event.target.value)}
+          rows={3}
+          placeholder="Ask about tests, specs, or anything else..."
+          disabled={pending}
+        />
+        <div className="chat-composer-footer">
+          <span className="chat-composer-hint">
+            {activeContext?.mode === CHAT_CONTEXT_SPEC && activeContext?.specId !== null
+              ? `Scoped to spec #${activeContext.specId}`
+              : "Global scope"}
+          </span>
+          <button
+            type="submit"
+            className="primary-button chat-send-button"
+            disabled={pending || draft.trim().length === 0}
+          >
+            {pending ? "Sending..." : "Send"}
+          </button>
+        </div>
+      </form>
+    </aside>
+  );
+}
+
 function SpecDetails({
   entry,
   runState,
@@ -755,6 +1069,14 @@ function SpecDetails({
   const runBearerToken = runConfigCurrent.bearerToken;
   const runApiKeyValue = runConfigCurrent.apiKeyValue;
   const runApiKeyHeader = runConfigCurrent.apiKeyHeader;
+  const llmByTestId = runState?.llmByTestId && typeof runState.llmByTestId === "object"
+    ? runState.llmByTestId
+    : {};
+  const [llmLoadingDotCount, setLlmLoadingDotCount] = useState(1);
+  const isAnyLlmActionRunning = Object.values(llmByTestId).some((caseState) => {
+    const action = String(caseState?.action || "");
+    return action === "explaining" || action === "suggesting";
+  });
 
   useEffect(() => {
     if (!entry) {
@@ -775,6 +1097,21 @@ function SpecDetails({
 
     setJsonDrafts(nextDrafts);
   }, [entry?.id]);
+
+  useEffect(() => {
+    if (!isAnyLlmActionRunning) {
+      setLlmLoadingDotCount(1);
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setLlmLoadingDotCount((current) => (current >= 3 ? 1 : current + 1));
+    }, 420);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isAnyLlmActionRunning]);
 
   function handleJsonEdit(testIndex, field, nextText) {
     const textKey = field === "input_data" ? "inputDataText" : "expectedResultText";
@@ -984,9 +1321,6 @@ function SpecDetails({
   const latestRunResults = Array.isArray(runState?.result?.results) ? runState.result.results : [];
   const hasLatestRun = Boolean(latestRunSummary || latestRunResults.length > 0);
   const latestRunId = runState?.runId || null;
-  const llmByTestId = runState?.llmByTestId && typeof runState.llmByTestId === "object"
-    ? runState.llmByTestId
-    : {};
   const runResultByTestId = latestRunResults.reduce((acc, result) => {
     const testId = String(result?.test_id || "");
     if (!testId) {
@@ -1341,6 +1675,9 @@ function SpecDetails({
                                     const testOutcome = runOutcomeByTestId[testCase?.test_id || ""];
                                     const llmState = llmByTestId[testCase?.test_id || ""] || {};
                                     const explanationPayload = llmState?.explanation || null;
+                                    const explanationDisplayText = formatExplanationForDisplay(
+                                      explanationPayload?.explanation || "",
+                                    );
                                     const suggestionPayload = llmState?.suggestion || null;
                                     const llmAction = String(llmState?.action || "");
                                     const llmError = String(llmState?.error || "");
@@ -1349,10 +1686,11 @@ function SpecDetails({
                                       suggestionPayload?.can_apply && suggestionPayload?.suggested_test_case,
                                     );
                                     const isLlmBusy = llmAction === "explaining" || llmAction === "suggesting";
+                                    const loadingDots = ".".repeat(llmLoadingDotCount);
                                     const explainButtonLabel = llmAction === "explaining"
-                                      ? "Explaining..."
+                                      ? "Generating Explanation"
                                       : llmAction === "suggesting"
-                                        ? "Generating..."
+                                        ? "Generating Test Cases"
                                         : "Explain with AI";
                                     const outcomeClass = testOutcome ? `testcase-outcome-${testOutcome.toLowerCase()}` : "";
                                     const expectedStatusLabel = formatExpectedStatusLabel(
@@ -1471,14 +1809,20 @@ function SpecDetails({
                                                   onClick={() => handleExplainFailureCase(testCase?.test_id || "")}
                                                   disabled={!latestRunId || isLlmBusy}
                                                 >
-                                                  {explainButtonLabel}
+                                                  {isLlmBusy ? (
+                                                    <>
+                                                      {explainButtonLabel}
+                                                      {" "}
+                                                      <span className="llm-loading-dots" aria-hidden="true">{loadingDots}</span>
+                                                    </>
+                                                  ) : explainButtonLabel}
                                                 </button>
                                               </div>
                                               {llmError ? <p className="json-error">{llmError}</p> : null}
-                                              {explanationPayload?.explanation ? (
+                                              {explanationDisplayText ? (
                                                 <div className="llm-response-block">
                                                   <p className="run-feedback-title">AI Explanation</p>
-                                                  <p className="run-feedback-line">{explanationPayload.explanation}</p>
+                                                  <p className="run-feedback-line">{explanationDisplayText}</p>
                                                   {explanationPayload?.warning ? (
                                                     <p className="run-feedback-line llm-warning">{explanationPayload.warning}</p>
                                                   ) : null}
@@ -1631,6 +1975,7 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [apiStatus, setApiStatus] = useState("Checking backend...");
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyHydrated, setHistoryHydrated] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [clearHistoryLoading, setClearHistoryLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -1640,6 +1985,11 @@ export default function App() {
   const [specCache, setSpecCache] = useState(() => loadSpecCache());
   const [selectedSpecId, setSelectedSpecId] = useState(null);
   const [testRunBySpecId, setTestRunBySpecId] = useState({});
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatActiveContext, setChatActiveContext] = useState(() => getDefaultChatContext());
+  const [chatPending, setChatPending] = useState(false);
+  const [chatRuntimeConfig, setChatRuntimeConfig] = useState(() => normalizeChatRuntimeConfig(DEFAULT_CHAT_RUNTIME_CONFIG));
   const isDarkTheme = theme === "dark";
 
   useEffect(() => {
@@ -1674,13 +2024,45 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (!session?.userId) {
+      setChatMessages([]);
+      setChatDraft("");
+      setChatActiveContext(getDefaultChatContext());
+      setChatPending(false);
+      setChatRuntimeConfig(normalizeChatRuntimeConfig(DEFAULT_CHAT_RUNTIME_CONFIG));
+      return;
+    }
+
+    const storedThread = loadChatThread(session.userId);
+    setChatMessages(storedThread.messages);
+    setChatDraft("");
+    setChatActiveContext(storedThread.activeContext);
+    setChatPending(false);
+    setChatRuntimeConfig(storedThread.runtimeConfig);
+  }, [session?.userId]);
+
+  useEffect(() => {
+    if (!session?.userId) {
+      return;
+    }
+
+    saveChatThread(session.userId, {
+      messages: chatMessages,
+      activeContext: chatActiveContext,
+      runtimeConfig: chatRuntimeConfig,
+    });
+  }, [chatActiveContext, chatMessages, chatRuntimeConfig, session?.userId]);
+
+  useEffect(() => {
     if (!session?.token) {
       setSpecHistory([]);
       setSelectedSpecId(null);
       setTestRunBySpecId({});
+      setHistoryHydrated(false);
       return;
     }
 
+    setHistoryHydrated(false);
     let cancelled = false;
 
     async function refreshHistory() {
@@ -1752,6 +2134,7 @@ export default function App() {
       } finally {
         if (!cancelled) {
           setHistoryLoading(false);
+          setHistoryHydrated(true);
         }
       }
     }
@@ -1773,6 +2156,33 @@ export default function App() {
     }
     return testRunBySpecId[selectedEntry.id] || getEmptyRunState();
   }, [selectedEntry, testRunBySpecId]);
+
+  useEffect(() => {
+    if (chatActiveContext.mode !== CHAT_CONTEXT_SPEC) {
+      return;
+    }
+
+    if (!selectedEntry?.id) {
+      if (!historyHydrated) {
+        return;
+      }
+      setChatActiveContext(getDefaultChatContext());
+      return;
+    }
+
+    const selectedId = Number(selectedEntry.id);
+    if (!Number.isFinite(selectedId)) {
+      setChatActiveContext(getDefaultChatContext());
+      return;
+    }
+
+    if (selectedId !== Number(chatActiveContext.specId)) {
+      setChatActiveContext({
+        mode: CHAT_CONTEXT_SPEC,
+        specId: selectedId,
+      });
+    }
+  }, [chatActiveContext.mode, chatActiveContext.specId, historyHydrated, selectedEntry?.id]);
 
   useEffect(() => {
     if (!session?.token || !selectedEntry?.id) {
@@ -2585,6 +2995,92 @@ export default function App() {
     }
   }
 
+  function handleChatContextChange(nextContext) {
+    const normalizedContext = normalizeChatContext(nextContext);
+    if (normalizedContext.mode !== CHAT_CONTEXT_SPEC) {
+      setChatActiveContext(getDefaultChatContext());
+      return;
+    }
+
+    if (!selectedEntry?.id) {
+      setChatActiveContext(getDefaultChatContext());
+      return;
+    }
+
+    setChatActiveContext({
+      mode: CHAT_CONTEXT_SPEC,
+      specId: Number(selectedEntry.id),
+    });
+  }
+
+  async function handleChatSend(event) {
+    event.preventDefault();
+
+    if (!session?.userId || chatPending) {
+      return;
+    }
+
+    const trimmedDraft = chatDraft.trim();
+    if (!trimmedDraft) {
+      return;
+    }
+
+    const resolvedContext = (
+      chatActiveContext.mode === CHAT_CONTEXT_SPEC
+      && selectedEntry?.id !== undefined
+      && selectedEntry?.id !== null
+    )
+      ? {
+          mode: CHAT_CONTEXT_SPEC,
+          specId: Number(selectedEntry.id),
+        }
+      : getDefaultChatContext();
+
+    if (resolvedContext.mode === CHAT_CONTEXT_SPEC) {
+      setChatActiveContext(resolvedContext);
+    }
+
+    const userMessage = createChatMessage({
+      role: "user",
+      content: trimmedDraft,
+      context: resolvedContext,
+      meta: {
+        source: "composer",
+      },
+    });
+    setChatMessages((current) => [...current, userMessage]);
+    setChatDraft("");
+    setChatPending(true);
+
+    try {
+      const response = await mockChatAdapter.send({
+        message: trimmedDraft,
+        context: resolvedContext,
+        runtimeConfig: chatRuntimeConfig,
+      });
+      const assistantMessage = normalizeChatMessage(response?.assistantMessage)
+        || createChatMessage({
+          role: "assistant",
+          content: "Mock adapter did not return a valid assistant response.",
+          context: resolvedContext,
+          meta: response?.meta || {},
+        });
+      setChatMessages((current) => [...current, assistantMessage]);
+    } catch (error) {
+      const errorMessage = createChatMessage({
+        role: "system",
+        content: error?.message || "Unable to send chat message.",
+        context: resolvedContext,
+        meta: {
+          level: "error",
+        },
+      });
+      setChatMessages((current) => [...current, errorMessage]);
+    } finally {
+      setChatPending(false);
+    }
+  }
+
   function handleThemeToggle() {
     setTheme((current) => (current === "dark" ? "light" : "dark"));
   }
@@ -2704,6 +3200,17 @@ export default function App() {
             onUpdateRunConfig={handleUpdateRunConfig}
             onResetRunConfig={handleResetRunConfig}
             onApplySuggestedTest={handleApplySuggestedTest}
+          />
+
+          <ChatPanel
+            selectedEntry={selectedEntry}
+            messages={chatMessages}
+            draft={chatDraft}
+            pending={chatPending}
+            activeContext={chatActiveContext}
+            onContextChange={handleChatContextChange}
+            onDraftChange={setChatDraft}
+            onSend={handleChatSend}
           />
         </main>
       )}

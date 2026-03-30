@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -904,6 +905,114 @@ def _default_suggested_case(
     }
 
 
+def _build_compact_suggestion_prompt_bundle(prompt_bundle: Dict[str, Any]) -> Dict[str, Any]:
+    bundle = prompt_bundle if isinstance(prompt_bundle, dict) else {}
+    case_evidence = bundle.get("case_evidence") if isinstance(bundle.get("case_evidence"), dict) else {}
+    pipeline_context = bundle.get("pipeline_context") if isinstance(bundle.get("pipeline_context"), dict) else {}
+
+    execution = pipeline_context.get("execution") if isinstance(pipeline_context.get("execution"), dict) else {}
+    result_full = execution.get("result_full") if isinstance(execution.get("result_full"), dict) else {}
+    same_endpoint_summary = (
+        execution.get("same_endpoint_summary")
+        if isinstance(execution.get("same_endpoint_summary"), dict)
+        else {}
+    )
+
+    ir_full = pipeline_context.get("ir_full") if isinstance(pipeline_context.get("ir_full"), dict) else {}
+    spec_full = pipeline_context.get("spec_full") if isinstance(pipeline_context.get("spec_full"), dict) else {}
+    tests_for_endpoint = (
+        pipeline_context.get("tests_for_endpoint")
+        if isinstance(pipeline_context.get("tests_for_endpoint"), list)
+        else []
+    )
+    results_for_endpoint = (
+        pipeline_context.get("results_for_endpoint")
+        if isinstance(pipeline_context.get("results_for_endpoint"), list)
+        else []
+    )
+
+    compact_execution = {
+        "result_summary": {
+            "test_id": str(result_full.get("test_id") or ""),
+            "outcome": str(result_full.get("outcome") or ""),
+            "expected_status": result_full.get("expected_status"),
+            "expected_status_any_of": result_full.get("expected_status_any_of"),
+            "actual_status": result_full.get("actual_status"),
+            "error_message": core.truncate_chars(result_full.get("error_message") or "", 220),
+            "response_snippet": core.truncate_chars(result_full.get("response_snippet") or "", 220),
+        },
+        "same_endpoint_summary": same_endpoint_summary,
+    }
+
+    return {
+        "case_evidence": case_evidence,
+        "pipeline_context": {
+            "test_case_full": pipeline_context.get("test_case_full") if isinstance(pipeline_context.get("test_case_full"), dict) else {},
+            "tests_for_endpoint": tests_for_endpoint,
+            "results_for_endpoint": results_for_endpoint,
+            "execution": compact_execution,
+            "ir_full": {
+                "endpoint_for_case": ir_full.get("endpoint_for_case") if isinstance(ir_full.get("endpoint_for_case"), dict) else {},
+                "api_title": ir_full.get("api_title"),
+                "api_version": ir_full.get("api_version"),
+                "base_url": ir_full.get("base_url"),
+            },
+            "spec_full": {
+                "operation": spec_full.get("operation") if isinstance(spec_full.get("operation"), dict) else {},
+                "path_item": spec_full.get("path_item") if isinstance(spec_full.get("path_item"), dict) else {},
+            },
+        },
+    }
+
+
+def _looks_like_test_case_object(candidate: Any) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    shape_keys = {"method", "path", "steps", "expected_result", "test_id", "title", "category"}
+    return any(key in candidate for key in shape_keys)
+
+
+def _extract_suggested_case_candidate(parsed: Dict[str, Any]) -> Any:
+    if not isinstance(parsed, dict):
+        return None
+    for key in ("suggested_test_case", "suggested_test", "test_case"):
+        candidate = parsed.get(key)
+        if isinstance(candidate, dict):
+            return candidate
+    if _looks_like_test_case_object(parsed):
+        return parsed
+    return None
+
+
+def _is_timeout_llm_error(error_text: str) -> bool:
+    lowered = str(error_text or "").lower()
+    return any(token in lowered for token in ("timeout", "timed out", "readtimeout", "connecttimeout"))
+
+
+def _classify_suggestion_failure_mode(attempts: Sequence[str]) -> str:
+    attempt_texts = [str(item or "") for item in attempts]
+    has_timeout = any(text.lower().startswith("llm_error:") and _is_timeout_llm_error(text) for text in attempt_texts)
+    has_invalid_schema = any(
+        text.lower().startswith("validation_error:invalid_test_case")
+        or text.lower().startswith("parse_error:")
+        for text in attempt_texts
+    )
+    if has_timeout and has_invalid_schema:
+        return "mixed"
+    if has_timeout:
+        return "timeout"
+    if has_invalid_schema:
+        return "invalid_schema"
+    return "mixed" if attempt_texts else "none"
+
+
+def _attempt_near_timeout(elapsed_seconds: float, timeout_seconds: int) -> bool:
+    if timeout_seconds <= 0:
+        return False
+    threshold = max(1.0, float(timeout_seconds) * 0.9)
+    return elapsed_seconds >= threshold
+
+
 def generate_suggested_test(
     *,
     client: OllamaClient,
@@ -935,8 +1044,10 @@ def generate_suggested_test(
             "model": model,
             "used_fallback": False,
             "llm_error": None,
+            "failure_mode": "none",
         }
 
+    compact_prompt_bundle = _build_compact_suggestion_prompt_bundle(prompt_bundle)
     system_prompt = (
         "You are the ContractGuard test assistant. "
         "Return strict JSON only with keys: reason, suggested_test_case. "
@@ -950,7 +1061,7 @@ def generate_suggested_test(
         "- Include concrete expected status.\n"
         "- Return JSON with keys reason and suggested_test_case.\n\n"
         "Evidence bundle:\n"
-        f"{json.dumps(prompt_bundle, ensure_ascii=True, indent=2)}"
+        f"{json.dumps(compact_prompt_bundle, ensure_ascii=True, indent=2)}"
     )
 
     retries = max(0, int(retry_invalid_output))
@@ -958,8 +1069,10 @@ def generate_suggested_test(
     user_prompt = base_user_prompt
     observed_status = case_result.get("actual_status")
     observed_status = int(observed_status) if str(observed_status).isdigit() else None
+    timeout_seconds = max(1, int(getattr(client, "timeout_seconds", 0) or 1))
 
-    for _ in range(retries + 1):
+    for attempt_index in range(retries + 1):
+        attempt_start = time.monotonic()
         response, llm_error = client.generate(
             model=model,
             prompt=user_prompt,
@@ -967,20 +1080,31 @@ def generate_suggested_test(
             format_json=True,
             options=ollama_options or {},
         )
+        attempt_elapsed = time.monotonic() - attempt_start
+        remaining = retries - attempt_index
+        near_timeout = _attempt_near_timeout(attempt_elapsed, timeout_seconds)
         if llm_error:
             attempts.append(f"llm_error:{llm_error}")
+            if _is_timeout_llm_error(llm_error):
+                break
+            if near_timeout and remaining > 0:
+                attempts.append("guardrail:near_timeout_abort_retries")
+                break
             user_prompt = base_user_prompt + "\n\nPrevious attempt failed. Return strict JSON only."
             continue
 
         parsed, parse_error = core.parse_llm_json_response(response or "")
         if parse_error or not isinstance(parsed, dict):
             attempts.append(f"parse_error:{parse_error or 'invalid_json'}")
+            if near_timeout and remaining > 0:
+                attempts.append("guardrail:near_timeout_abort_retries")
+                break
             user_prompt = base_user_prompt + "\n\nPrevious output was invalid. Return strict JSON only."
             continue
 
         reason = str(parsed.get("reason") or "").strip()
         suggested_case = _normalize_suggested_case(
-            parsed.get("suggested_test_case"),
+            _extract_suggested_case_candidate(parsed),
             original_test_case=original_test_case,
             observed_status=observed_status,
             existing_test_ids=existing_test_ids,
@@ -1004,9 +1128,13 @@ def generate_suggested_test(
                 "model": model,
                 "used_fallback": False,
                 "llm_error": None,
+                "failure_mode": "none",
             }
 
         attempts.append("validation_error:invalid_test_case")
+        if near_timeout and remaining > 0:
+            attempts.append("guardrail:near_timeout_abort_retries")
+            break
         user_prompt = (
             base_user_prompt
             + "\n\nPrevious output did not contain a valid ContractGuard test case object. Return corrected strict JSON."
@@ -1032,4 +1160,5 @@ def generate_suggested_test(
         "model": model,
         "used_fallback": True,
         "llm_error": "; ".join(attempts) if attempts else "fallback_used",
+        "failure_mode": _classify_suggestion_failure_mode(attempts),
     }
