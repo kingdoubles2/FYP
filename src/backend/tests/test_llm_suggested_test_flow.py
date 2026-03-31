@@ -1,12 +1,17 @@
 import json
 import unittest
 
-from llm_eval.failure_assistant import _build_compact_suggestion_prompt_bundle, generate_suggested_test
+from llm_eval.failure_assistant import (
+    _build_compact_suggestion_prompt_bundle,
+    build_deterministic_suggested_test_payload,
+    generate_suggested_test,
+)
 
 
 def _sample_evidence() -> dict:
     return {
         "spec": {"operation": {"method": "GET", "path": "/user"}},
+        "test_context": {"category": "negative_invalid"},
         "execution": {
             "response_received": {"status": 404, "body_snippet": '{"message":"Not Found"}'},
             "assertion_failures": [{"type": "status_mismatch", "expected": 404, "actual_status": 200}],
@@ -97,13 +102,13 @@ def _sample_prompt_bundle() -> dict:
 
 
 class _StubOllamaClient:
-    def __init__(self, responses: list[tuple[str | None, str | None]], timeout_seconds: int = 120) -> None:
+    def __init__(self, responses: list[tuple[str | None, object]], timeout_seconds: int = 120) -> None:
         self._responses = list(responses)
         self.timeout_seconds = int(timeout_seconds)
         self.calls = 0
         self.prompts: list[str] = []
 
-    def generate(self, **kwargs: object) -> tuple[str | None, str | None]:
+    def generate(self, **kwargs: object) -> tuple[str | None, object]:
         self.calls += 1
         self.prompts.append(str(kwargs.get("prompt") or ""))
         if self._responses:
@@ -135,11 +140,58 @@ def _valid_case_payload_json(*, key_name: str = "suggested_test_case") -> str:
 
 
 class SuggestedTestFlowTests(unittest.TestCase):
-    def test_invalid_schema_then_timeout_returns_mixed_failure_mode(self) -> None:
+    def test_deterministic_reason_describes_test_behavior_without_explanation_repetition(self) -> None:
+        output = build_deterministic_suggested_test_payload(
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            explanation_context={
+                "signal": "validation",
+                "likely_cause": "Input is malformed",
+                "why_likely": "Status mismatch indicates validation issue",
+                "check_next": "Verify input constraints",
+            },
+        )
+
+        reason = str(output.get("reason") or "")
+        self.assertIn("Adds a follow-up", reason)
+        self.assertIn("GET /user", reason)
+        self.assertNotIn("Likely cause:", reason)
+        self.assertNotIn("Why likely:", reason)
+        self.assertNotIn("Check next:", reason)
+
+    def test_non_input_signal_skips_without_llm_generation(self) -> None:
+        client = _StubOllamaClient(responses=[(_valid_case_payload_json(), None)], timeout_seconds=120)
+        non_input_evidence = {
+            "spec": {"operation": {"method": "GET", "path": "/user"}},
+            "execution": {
+                "response_received": {"status": 500, "body_snippet": '{"message":"Internal"}'},
+                "assertion_failures": [{"type": "status_mismatch", "expected": 404, "actual_status": 500}],
+            },
+        }
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=non_input_evidence,
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            retry_invalid_output=1,
+            ollama_options={},
+        )
+
+        self.assertEqual(client.calls, 0)
+        self.assertTrue(bool(output.get("skipped")))
+        self.assertFalse(bool(output.get("eligible_for_generation")))
+        self.assertFalse(output["can_apply"])
+
+    def test_invalid_schema_returns_fallback_with_single_attempt(self) -> None:
         client = _StubOllamaClient(
             responses=[
                 (json.dumps({"reason": "Bad shape output", "summary": "not a test case"}), None),
-                (None, "ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=120)"),
             ],
             timeout_seconds=120,
         )
@@ -155,11 +207,12 @@ class SuggestedTestFlowTests(unittest.TestCase):
             ollama_options={},
         )
 
+        self.assertEqual(client.calls, 1)
         self.assertTrue(output["used_fallback"])
         self.assertTrue(output["can_apply"])
-        self.assertEqual(output["failure_mode"], "mixed")
+        self.assertEqual(output["failure_mode"], "invalid_schema")
         self.assertIn("validation_error:invalid_test_case", str(output["llm_error"]))
-        self.assertIn("ReadTimeout", str(output["llm_error"]))
+        self.assertEqual(client.timeout_seconds, 60)
 
     def test_timeout_on_first_attempt_aborts_retries_and_returns_timeout_mode(self) -> None:
         client = _StubOllamaClient(
@@ -185,6 +238,73 @@ class SuggestedTestFlowTests(unittest.TestCase):
         self.assertTrue(output["used_fallback"])
         self.assertEqual(output["failure_mode"], "timeout")
         self.assertIn("ReadTimeout", str(output["llm_error"]))
+
+    def test_openai_rate_limit_returns_hard_fail_without_fallback(self) -> None:
+        client = _StubOllamaClient(
+            responses=[
+                (
+                    None,
+                    {
+                        "kind": "rate_limit",
+                        "message": "HTTPError: 429 Client Error: Too Many Requests",
+                        "status_code": 429,
+                        "provider_error_code": "rate_limit_exceeded",
+                        "provider_error_type": "rate_limit_error",
+                        "retryable": True,
+                    },
+                ),
+                (_valid_case_payload_json(), None),
+            ],
+            timeout_seconds=120,
+        )
+        output = generate_suggested_test(
+            client=client,
+            model="gpt-4.1-mini",
+            evidence=_sample_evidence(),
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            retry_invalid_output=3,
+            ollama_options={},
+        )
+
+        self.assertEqual(client.calls, 1)
+        self.assertFalse(output["used_fallback"])
+        self.assertFalse(output["can_apply"])
+        self.assertEqual(output["failure_kind"], "rate_limit")
+        self.assertEqual(output["status_code"], 429)
+        self.assertTrue(bool(output.get("eligible_for_generation")))
+
+    def test_explanation_context_signal_can_enable_generation(self) -> None:
+        client = _StubOllamaClient(
+            responses=[(_valid_case_payload_json(), None)],
+            timeout_seconds=120,
+        )
+        non_input_evidence = {
+            "spec": {"operation": {"method": "GET", "path": "/user"}},
+            "execution": {
+                "response_received": {"status": 500, "body_snippet": '{"message":"Internal"}'},
+                "assertion_failures": [{"type": "status_mismatch", "expected": 404, "actual_status": 500}],
+            },
+        }
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=non_input_evidence,
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            retry_invalid_output=0,
+            explanation_context={"signal": "validation", "likely_cause": "Input payload is malformed"},
+            ollama_options={},
+        )
+
+        self.assertEqual(client.calls, 1)
+        self.assertFalse(output["used_fallback"])
+        self.assertTrue(output["can_apply"])
+        self.assertFalse(bool(output.get("skipped")))
 
     def test_alias_and_root_object_parsing_produce_valid_suggestion(self) -> None:
         scenarios = [

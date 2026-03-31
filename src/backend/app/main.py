@@ -8,18 +8,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from llm_eval.failure_assistant import (
+    SUGGESTION_TIMEOUT_SECONDS_MAX,
+    build_deterministic_suggested_test_payload,
+    build_suggestion_skip_payload,
     build_assistant_prompt_bundle,
     build_case_evidence,
     build_pipeline_context,
+    classify_failure_signal,
     generate_failure_explanation,
     generate_suggested_test,
+    is_input_related_signal,
     load_backend_model_catalog,
     load_backend_llm_settings,
+    normalize_suggestion_explanation_context,
     parse_spec_document,
     safe_json_dumps,
     safe_json_loads,
     sha256_text,
 )
+from llm_eval.llm_client_types import is_rate_limit_or_quota_kind
 from llm_eval.ollama_client import OllamaClient
 from llm_eval.provider_clients import AnthropicClient, OpenAIClient
 from spec_parser.parser import parse_openapi
@@ -70,6 +77,10 @@ class UpdateLLMSettingsRequest(BaseModel):
 class DiscoverProviderModelsRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+
+
+class SuggestTestRequest(BaseModel):
+    explanation: Optional[dict[str, Any]] = None
 
 
 MODEL_SOURCE_BUILTIN = "builtin"
@@ -332,6 +343,114 @@ def _build_runtime_from_active_model(resolved: dict[str, Any]) -> dict[str, Any]
         "model": model_name,
         "client": AnthropicClient(api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds),
         "options": {},
+    }
+
+
+def _llm_failure_guidance(failure_kind: str) -> str:
+    kind = str(failure_kind or "").strip().lower()
+    if kind == "quota":
+        return "Provider quota is exhausted. Add credits or switch models in Settings."
+    if kind == "rate_limit":
+        return "Provider rate limit reached. Wait and retry, or switch models in Settings."
+    if kind == "timeout":
+        return "Provider timed out. Retry shortly, or switch to another model in Settings."
+    if kind == "transport":
+        return "Provider request failed due to a transport issue. Retry, or switch models in Settings."
+    if kind == "invalid_response":
+        return "Provider returned an invalid response shape. Retry, or switch models in Settings."
+    return "LLM request failed. Retry, or switch models in Settings."
+
+
+def _resolve_llm_failure_status(failure_kind: str, status_hint: Any) -> int:
+    if is_rate_limit_or_quota_kind(failure_kind):
+        return 429
+    try:
+        parsed = int(status_hint)
+    except Exception:
+        parsed = 0
+    if 400 <= parsed <= 599:
+        return parsed
+    return 502
+
+
+def _build_llm_failure_detail(
+    *,
+    message: str,
+    llm_error: Any,
+    validation_errors: Any,
+    attempt_diagnostics: list[str],
+    provider: str,
+    model: str,
+    failure_kind: str,
+    status_hint: Any,
+    error_meta: Any,
+) -> dict[str, Any]:
+    normalized_kind = str(failure_kind or "other").strip().lower() or "other"
+    resolved_status = _resolve_llm_failure_status(normalized_kind, status_hint)
+    return {
+        "message": str(message or "LLM request failed."),
+        "llm_error": str(llm_error or ""),
+        "validation_errors": validation_errors if isinstance(validation_errors, list) else [],
+        "attempt_diagnostics": attempt_diagnostics,
+        "provider": str(provider or ""),
+        "model": str(model or ""),
+        "failure_kind": normalized_kind,
+        "status": resolved_status,
+        "guidance": _llm_failure_guidance(normalized_kind),
+        "error_meta": error_meta if isinstance(error_meta, dict) else {},
+    }
+
+
+def _generate_failure_explanation_or_raise(
+    *,
+    bundle: dict[str, Any],
+    resolved_settings: dict[str, Any],
+) -> dict[str, Any]:
+    settings = bundle["settings"]
+    runtime = _build_runtime_from_active_model(resolved_settings)
+    payload = generate_failure_explanation(
+        client=runtime["client"],
+        model=str(runtime["model"]),
+        evidence=bundle["evidence"],
+        prompt_bundle=bundle["prompt_bundle"],
+        word_target=int(settings["word_target"]),
+        word_max=int(settings["word_max"]),
+        retry_invalid_output=int(settings["retry_invalid_output"]),
+        max_items_per_section=int(settings["max_items_per_section"]),
+        ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
+    )
+
+    if not bool(payload.get("ok")):
+        attempts = payload.get("attempts") if isinstance(payload.get("attempts"), list) else []
+        diagnostics: list[str] = []
+        for idx, attempt in enumerate(attempts, start=1):
+            if not isinstance(attempt, dict):
+                continue
+            parse_error = str(attempt.get("parse_error") or "").strip()
+            llm_error = str(attempt.get("llm_error") or "").strip()
+            validation_errors = attempt.get("validation_errors") if isinstance(attempt.get("validation_errors"), list) else []
+            if parse_error:
+                diagnostics.append(f"attempt {idx}: {parse_error}")
+            elif llm_error:
+                diagnostics.append(f"attempt {idx}: {llm_error}")
+            elif validation_errors:
+                diagnostics.append(f"attempt {idx}: {'; '.join(str(item) for item in validation_errors)}")
+        detail_payload = _build_llm_failure_detail(
+            message="LLM explanation failed after retry attempts.",
+            llm_error=payload.get("llm_error"),
+            validation_errors=payload.get("validation_errors"),
+            attempt_diagnostics=diagnostics,
+            provider=str(runtime.get("provider") or ""),
+            model=str(runtime.get("model") or ""),
+            failure_kind=str(payload.get("failure_kind") or "other"),
+            status_hint=payload.get("status_code"),
+            error_meta=payload.get("error_meta"),
+        )
+        raise HTTPException(status_code=int(detail_payload["status"]), detail=detail_payload)
+
+    return {
+        "runtime": runtime,
+        "payload": payload,
     }
 
 
@@ -929,41 +1048,11 @@ def explain_failed_case(run_id: int, test_id: str, current_user: User = Depends(
             current_user.id,
             base_settings=settings,
         )
-        runtime = _build_runtime_from_active_model(resolved_settings)
-        payload = generate_failure_explanation(
-            client=runtime["client"],
-            model=str(runtime["model"]),
-            evidence=bundle["evidence"],
-            prompt_bundle=bundle["prompt_bundle"],
-            word_target=int(settings["word_target"]),
-            word_max=int(settings["word_max"]),
-            retry_invalid_output=int(settings["retry_invalid_output"]),
-            max_items_per_section=int(settings["max_items_per_section"]),
-            ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
+        explanation_output = _generate_failure_explanation_or_raise(
+            bundle=bundle,
+            resolved_settings=resolved_settings,
         )
-
-        if not bool(payload.get("ok")):
-            attempts = payload.get("attempts") if isinstance(payload.get("attempts"), list) else []
-            diagnostics = []
-            for idx, attempt in enumerate(attempts, start=1):
-                if not isinstance(attempt, dict):
-                    continue
-                parse_error = str(attempt.get("parse_error") or "").strip()
-                llm_error = str(attempt.get("llm_error") or "").strip()
-                validation_errors = attempt.get("validation_errors") if isinstance(attempt.get("validation_errors"), list) else []
-                if parse_error:
-                    diagnostics.append(f"attempt {idx}: {parse_error}")
-                elif llm_error:
-                    diagnostics.append(f"attempt {idx}: {llm_error}")
-                elif validation_errors:
-                    diagnostics.append(f"attempt {idx}: {'; '.join(str(item) for item in validation_errors)}")
-            detail_payload = {
-                "message": "LLM explanation failed after retry attempts.",
-                "llm_error": payload.get("llm_error"),
-                "validation_errors": payload.get("validation_errors") or [],
-                "attempt_diagnostics": diagnostics,
-            }
-            raise HTTPException(status_code=502, detail=detail_payload)
+        payload = explanation_output["payload"]
 
         return {
             "run_id": run_id,
@@ -975,8 +1064,70 @@ def explain_failed_case(run_id: int, test_id: str, current_user: User = Depends(
         db.close()
 
 
+@app.post("/api/tests/{run_id}/cases/{test_id}/llm/analyze-failure")
+def analyze_failure_with_suggestion(
+    run_id: int,
+    test_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        bundle = _load_run_case_bundle(
+            db=db,
+            user_id=current_user.id,
+            run_id=run_id,
+            test_id=test_id,
+            selection_reason="user_requested_explanation",
+        )
+        case_result = bundle["case_result"]
+        if str(case_result.get("outcome") or "").upper() != "FAIL":
+            raise HTTPException(status_code=400, detail="LLM analysis is only available for failed tests.")
+
+        settings = bundle["settings"]
+        resolved_settings = _resolve_effective_llm_settings(
+            db,
+            current_user.id,
+            base_settings=settings,
+        )
+        explanation_output = _generate_failure_explanation_or_raise(
+            bundle=bundle,
+            resolved_settings=resolved_settings,
+        )
+        runtime = explanation_output["runtime"]
+        explanation_payload = explanation_output["payload"]
+        existing_ids = [str(case.get("test_id") or "") for case in (bundle["suite_data"].get("test_cases") or [])]
+        suggestion_payload = build_deterministic_suggested_test_payload(
+            model=str(runtime.get("model") or settings.get("model") or "qwen3-coder:latest"),
+            evidence=bundle["evidence"],
+            original_test_case=bundle["test_case"],
+            case_result=case_result,
+            existing_test_ids=existing_ids,
+            explanation_context={
+                "signal": explanation_payload.get("signal"),
+                "contract": explanation_payload.get("contract"),
+                "explanation": explanation_payload.get("explanation"),
+            },
+        )
+        return {
+            "run_id": run_id,
+            "test_id": test_id,
+            "mode": "analysis",
+            "payload": {
+                "explanation": explanation_payload,
+                "suggestion": suggestion_payload,
+            },
+        }
+    finally:
+        db.close()
+
+
 @app.post("/api/tests/{run_id}/cases/{test_id}/llm/suggest-test")
-def suggest_test_for_failure(run_id: int, test_id: str, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+def suggest_test_for_failure(
+    run_id: int,
+    test_id: str,
+    req: Optional[SuggestTestRequest] = None,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
     db = SessionLocal()
     try:
         bundle = _load_run_case_bundle(
@@ -996,6 +1147,31 @@ def suggest_test_for_failure(run_id: int, test_id: str, current_user: User = Dep
             current_user.id,
             base_settings=settings,
         )
+        active_model = resolved_settings.get("active_model") if isinstance(resolved_settings.get("active_model"), dict) else {}
+        resolved_model_name = str(active_model.get("model") or settings.get("model") or "").strip() or "qwen3-coder:latest"
+        classified_signal = classify_failure_signal(bundle["evidence"])
+        raw_explanation_context = req.explanation if req and isinstance(req.explanation, dict) else {}
+        normalized_explanation_context = normalize_suggestion_explanation_context(
+            raw_explanation_context,
+            fallback_signal=classified_signal,
+        )
+        signal = str(normalized_explanation_context.get("signal") or classified_signal or "status_mismatch").strip().lower()
+        if not is_input_related_signal(signal):
+            skip_payload = build_suggestion_skip_payload(
+                model=resolved_model_name,
+                signal=signal,
+                reason=(
+                    "No suggested test was generated because this failure is not input-related. "
+                    "Suggested tests are only generated for schema/validation input failures."
+                ),
+            )
+            return {
+                "run_id": run_id,
+                "test_id": test_id,
+                "mode": "suggest_test",
+                "payload": skip_payload,
+            }
+
         runtime = _build_runtime_from_active_model(resolved_settings)
         existing_ids = [str(case.get("test_id") or "") for case in (bundle["suite_data"].get("test_cases") or [])]
         payload = generate_suggested_test(
@@ -1006,9 +1182,27 @@ def suggest_test_for_failure(run_id: int, test_id: str, current_user: User = Dep
             original_test_case=bundle["test_case"],
             case_result=case_result,
             existing_test_ids=existing_ids,
-            retry_invalid_output=int(settings["retry_invalid_output"]),
+            retry_invalid_output=0,
+            explanation_context=normalized_explanation_context,
+            max_generation_seconds=SUGGESTION_TIMEOUT_SECONDS_MAX,
             ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
         )
+        suggestion_failure_kind = str(payload.get("failure_kind") or "").strip().lower()
+        if is_rate_limit_or_quota_kind(suggestion_failure_kind):
+            attempts = payload.get("attempts") if isinstance(payload.get("attempts"), list) else []
+            diagnostics = [str(item).strip() for item in attempts if str(item).strip()]
+            detail_payload = _build_llm_failure_detail(
+                message="LLM suggested-test generation failed.",
+                llm_error=payload.get("llm_error"),
+                validation_errors=[],
+                attempt_diagnostics=diagnostics,
+                provider=str(runtime.get("provider") or ""),
+                model=str(runtime.get("model") or ""),
+                failure_kind=suggestion_failure_kind,
+                status_hint=payload.get("status_code"),
+                error_meta=payload.get("error_meta"),
+            )
+            raise HTTPException(status_code=int(detail_payload["status"]), detail=detail_payload)
         return {
             "run_id": run_id,
             "test_id": test_id,

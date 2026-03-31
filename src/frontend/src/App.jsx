@@ -10,8 +10,7 @@ import {
   healthCheck,
   listSpecs,
   loginUser,
-  requestLlmExplanation,
-  requestLlmSuggestedTest,
+  requestLlmFailureAnalysis,
   registerUser,
   runGeneratedTests,
   updateLlmSettings,
@@ -3260,51 +3259,28 @@ export default function App() {
     }));
 
     try {
-      const explanationResponse = await requestLlmExplanation(session.token, runId, testId);
-      const explanationPayload = explanationResponse?.payload && typeof explanationResponse.payload === "object"
-        ? explanationResponse.payload
+      const analysisResponse = await requestLlmFailureAnalysis(session.token, runId, testId);
+      const analysisPayload = analysisResponse?.payload && typeof analysisResponse.payload === "object"
+        ? analysisResponse.payload
+        : null;
+      const explanationPayload = analysisPayload?.explanation && typeof analysisPayload.explanation === "object"
+        ? analysisPayload.explanation
+        : null;
+      const suggestionPayload = analysisPayload?.suggestion && typeof analysisPayload.suggestion === "object"
+        ? analysisPayload.suggestion
         : null;
       if (!explanationPayload) {
         throw new Error("Explanation payload missing from backend response.");
       }
-
       setLlmCaseState(specId, testId, (currentCase) => ({
         ...currentCase,
-        action: "suggesting",
+        action: "",
         error: "",
         explanation: explanationPayload,
-        suggestion: null,
+        suggestion: suggestionPayload,
         addedMessage: "",
         addedSuggestionFingerprint: "",
       }));
-
-      try {
-        const suggestionResponse = await requestLlmSuggestedTest(session.token, runId, testId);
-        const suggestionPayload = suggestionResponse?.payload && typeof suggestionResponse.payload === "object"
-          ? suggestionResponse.payload
-          : null;
-        if (!suggestionPayload) {
-          throw new Error("Suggestion payload missing from backend response.");
-        }
-
-        setLlmCaseState(specId, testId, (currentCase) => ({
-          ...currentCase,
-          action: "",
-          error: "",
-          suggestion: suggestionPayload,
-          addedMessage: "",
-          addedSuggestionFingerprint: "",
-        }));
-      } catch (error) {
-        setLlmCaseState(specId, testId, (currentCase) => ({
-          ...currentCase,
-          action: "",
-          error: error.message || "Unable to generate suggested test.",
-          suggestion: null,
-          addedMessage: "",
-          addedSuggestionFingerprint: "",
-        }));
-      }
     } catch (error) {
       setLlmCaseState(specId, testId, (currentCase) => ({
         ...currentCase,

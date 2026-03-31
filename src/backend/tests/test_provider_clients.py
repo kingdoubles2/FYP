@@ -13,7 +13,7 @@ class _FakeResponse:
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise requests.HTTPError(f"status={self.status_code}")
+            raise requests.HTTPError(f"status={self.status_code}", response=self)
 
     def json(self) -> dict:
         return self._payload
@@ -68,7 +68,44 @@ class ProviderClientTests(unittest.TestCase):
         client = OpenAIClient(api_key="")
         text, error = client.generate(model="gpt-4.1-mini", prompt="x")
         self.assertIsNone(text)
-        self.assertIn("missing", str(error).lower())
+        self.assertIsInstance(error, dict)
+        self.assertIn("missing", str(error.get("message", "")).lower())
+
+    def test_openai_generate_429_returns_structured_rate_limit_error(self) -> None:
+        response_payload = {
+            "error": {
+                "message": "Rate limit reached",
+                "type": "rate_limit_error",
+                "code": "rate_limit_exceeded",
+            }
+        }
+        with patch("llm_eval.provider_clients.requests.post", return_value=_FakeResponse(response_payload, status_code=429)):
+            client = OpenAIClient(api_key="sk-test")
+            text, error = client.generate(model="gpt-4.1-mini", prompt="x")
+
+        self.assertIsNone(text)
+        self.assertIsInstance(error, dict)
+        self.assertEqual(error.get("status_code"), 429)
+        self.assertEqual(error.get("kind"), "rate_limit")
+        self.assertEqual(error.get("provider_error_code"), "rate_limit_exceeded")
+
+    def test_anthropic_generate_429_quota_returns_structured_quota_error(self) -> None:
+        response_payload = {
+            "error": {
+                "message": "insufficient_quota: billing hard limit reached",
+                "type": "rate_limit_error",
+                "code": "insufficient_quota",
+            }
+        }
+        with patch("llm_eval.provider_clients.requests.post", return_value=_FakeResponse(response_payload, status_code=429)):
+            client = AnthropicClient(api_key="claude-test")
+            text, error = client.generate(model="claude-sonnet-4-5", prompt="x")
+
+        self.assertIsNone(text)
+        self.assertIsInstance(error, dict)
+        self.assertEqual(error.get("status_code"), 429)
+        self.assertEqual(error.get("kind"), "quota")
+        self.assertEqual(error.get("provider_error_code"), "insufficient_quota")
 
     def test_openai_list_models_parses_and_deduplicates(self) -> None:
         response_payload = {

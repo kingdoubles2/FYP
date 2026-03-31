@@ -11,7 +11,15 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import yaml
 
 from llm_eval import run_llm_eval as core
-from llm_eval.ollama_client import OllamaClient
+from llm_eval.llm_client_types import (
+    LLMGenerateClient,
+    build_llm_error_meta,
+    is_rate_limit_or_quota_kind,
+    normalize_llm_error_meta,
+)
+
+INPUT_RELATED_SIGNALS = frozenset({"schema_type", "schema_value", "missing_required", "validation"})
+SUGGESTION_TIMEOUT_SECONDS_MAX = 60
 
 
 def _safe_int(value: Any, default: int, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
@@ -336,6 +344,76 @@ def is_external_failure(evidence: Dict[str, Any]) -> bool:
     return classify_failure_signal(evidence) in {"transport", "auth"}
 
 
+def is_input_related_signal(signal: Any) -> bool:
+    return str(signal or "").strip().lower() in INPUT_RELATED_SIGNALS
+
+
+def normalize_suggestion_explanation_context(
+    raw: Any,
+    *,
+    fallback_signal: str = "",
+) -> Dict[str, Any]:
+    raw_context = raw if isinstance(raw, dict) else {}
+    contract = raw_context.get("contract") if isinstance(raw_context.get("contract"), dict) else {}
+
+    signal = str(raw_context.get("signal") or fallback_signal or "").strip().lower()
+    if not signal and fallback_signal:
+        signal = str(fallback_signal).strip().lower()
+
+    normalized: Dict[str, Any] = {"signal": signal}
+    field_map = (
+        ("likely_cause", ("likely_cause", "cause")),
+        ("why_likely", ("why_likely",)),
+        ("check_next", ("check_next",)),
+        ("explanation", ("explanation", "explanation_text")),
+    )
+    for target_field, source_fields in field_map:
+        value = ""
+        for source_field in source_fields:
+            candidate = raw_context.get(source_field)
+            if not isinstance(candidate, str) or not candidate.strip():
+                candidate = contract.get(source_field)
+            if isinstance(candidate, str) and candidate.strip():
+                value = candidate.strip()
+                break
+        if value:
+            normalized[target_field] = core.truncate_chars(value, 360)
+    return normalized
+
+
+def build_suggestion_skip_payload(
+    *,
+    model: str,
+    signal: str,
+    reason: str,
+) -> Dict[str, Any]:
+    normalized_signal = str(signal or "status_mismatch").strip().lower() or "status_mismatch"
+    external = normalized_signal in {"transport", "auth"}
+    warning = (
+        "This failure appears external (authentication/network/upstream). "
+        "No extra test is suggested until backend-contract ownership is confirmed."
+        if external
+        else ""
+    )
+    return {
+        "mode": "suggest_test",
+        "reason": str(reason or "No suggested test was generated."),
+        "signal": normalized_signal,
+        "external_failure": external,
+        "warning_external": bool(warning),
+        "warning": warning,
+        "can_apply": False,
+        "suggested_test_case": None,
+        "model": model,
+        "used_fallback": False,
+        "llm_error": None,
+        "failure_mode": "none",
+        "skipped": True,
+        "skip_reason": str(reason or "No suggested test was generated."),
+        "eligible_for_generation": False,
+    }
+
+
 def _truncate_words(text: str, max_words: int) -> str:
     return core.truncate_words(str(text or ""), max_words)
 
@@ -621,9 +699,24 @@ def _normalize_explanation_text(
     return text
 
 
+def _normalize_llm_error(raw_error: Any) -> dict[str, Any]:
+    meta = normalize_llm_error_meta(raw_error)
+    if meta:
+        return dict(meta)
+    fallback = build_llm_error_meta(message=str(raw_error or "LLM request failed."), raw_error=str(raw_error or ""))
+    return dict(fallback)
+
+
+def _llm_error_message(raw_error: Any) -> tuple[str, dict[str, Any]]:
+    meta = _normalize_llm_error(raw_error)
+    message = str(meta.get("message") or str(raw_error or "LLM request failed.")).strip() or "LLM request failed."
+    meta["message"] = message
+    return message, meta
+
+
 def generate_failure_explanation(
     *,
-    client: OllamaClient,
+    client: LLMGenerateClient,
     model: str,
     evidence: Dict[str, Any],
     prompt_bundle: Dict[str, Any],
@@ -650,6 +743,9 @@ def generate_failure_explanation(
         llm_error: str,
         attempts: List[Dict[str, Any]],
         validation_errors: Optional[List[str]] = None,
+        failure_kind: str = "other",
+        status_code: Optional[int] = None,
+        error_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         return {
             "ok": False,
@@ -671,6 +767,9 @@ def generate_failure_explanation(
             "warning_external": bool(warning),
             "warning": warning,
             "word_count": 0,
+            "failure_kind": str(failure_kind or "other"),
+            "status_code": status_code,
+            "error_meta": dict(error_meta or {}),
         }
 
     try:
@@ -685,6 +784,7 @@ def generate_failure_explanation(
     user_prompt = base_user_prompt
     last_error = "internal_error"
     last_validation_errors: List[str] = ["internal_error"]
+    last_error_meta: Optional[Dict[str, Any]] = None
 
     while remaining > 0:
         remaining -= 1
@@ -699,16 +799,30 @@ def generate_failure_explanation(
         attempt_record: Dict[str, Any] = {
             "prompt": user_prompt,
             "raw_response": response or "",
-            "llm_error": llm_error,
+            "llm_error": None,
             "parse_error": None,
             "validation_errors": [],
+            "error_meta": {},
         }
 
         if llm_error:
-            attempt_record["parse_error"] = llm_error
+            llm_error_text, error_meta = _llm_error_message(llm_error)
+            attempt_record["llm_error"] = llm_error_text
+            attempt_record["parse_error"] = llm_error_text
+            attempt_record["error_meta"] = error_meta
             attempts.append(attempt_record)
-            last_error = str(llm_error)
+            last_error = llm_error_text
             last_validation_errors = ["llm_error"]
+            last_error_meta = error_meta
+            if is_rate_limit_or_quota_kind(error_meta.get("kind")):
+                return _failed_payload(
+                    llm_error=llm_error_text,
+                    attempts=attempts,
+                    validation_errors=last_validation_errors,
+                    failure_kind=str(error_meta.get("kind") or "other"),
+                    status_code=error_meta.get("status_code"),
+                    error_meta=error_meta,
+                )
             if remaining > 0:
                 user_prompt = (
                     base_user_prompt
@@ -722,6 +836,15 @@ def generate_failure_explanation(
             attempts.append(attempt_record)
             last_error = str(parse_error or "invalid_json")
             last_validation_errors = ["parse_error"]
+            last_error_meta = {
+                "kind": "invalid_response",
+                "message": last_error,
+                "status_code": None,
+                "provider_error_code": "",
+                "provider_error_type": "",
+                "retryable": False,
+                "raw_error": last_error,
+            }
             if remaining > 0:
                 user_prompt = (
                     base_user_prompt
@@ -738,6 +861,15 @@ def generate_failure_explanation(
         if validation_errors:
             last_error = "; ".join(validation_errors)
             last_validation_errors = validation_errors
+            last_error_meta = {
+                "kind": "invalid_response",
+                "message": last_error,
+                "status_code": None,
+                "provider_error_code": "",
+                "provider_error_type": "",
+                "retryable": False,
+                "raw_error": last_error,
+            }
             if remaining > 0:
                 user_prompt = (
                     base_user_prompt
@@ -750,6 +882,9 @@ def generate_failure_explanation(
                 llm_error=last_error,
                 attempts=attempts,
                 validation_errors=validation_errors,
+                failure_kind="invalid_response",
+                status_code=None,
+                error_meta=last_error_meta,
             )
 
         auto_scores = core.compute_auto_scores(
@@ -786,6 +921,9 @@ def generate_failure_explanation(
         llm_error=last_error,
         attempts=attempts,
         validation_errors=last_validation_errors,
+        failure_kind=str((last_error_meta or {}).get("kind") or "other"),
+        status_code=(last_error_meta or {}).get("status_code"),
+        error_meta=last_error_meta,
     )
 
 
@@ -1052,9 +1190,81 @@ def _attempt_near_timeout(elapsed_seconds: float, timeout_seconds: int) -> bool:
     return elapsed_seconds >= threshold
 
 
+def build_deterministic_suggested_test_payload(
+    *,
+    model: str,
+    evidence: Dict[str, Any],
+    original_test_case: Dict[str, Any],
+    case_result: Dict[str, Any],
+    existing_test_ids: Sequence[str],
+    explanation_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    classified_signal = classify_failure_signal(evidence)
+    normalized_context = normalize_suggestion_explanation_context(
+        explanation_context,
+        fallback_signal=classified_signal,
+    )
+    signal = str(normalized_context.get("signal") or classified_signal or "status_mismatch").strip().lower()
+    if not is_input_related_signal(signal):
+        return build_suggestion_skip_payload(
+            model=model,
+            signal=signal,
+            reason=(
+                "No suggested test was generated because this failure is not input-related. "
+                "Suggested tests are only generated for schema/validation input failures."
+            ),
+        )
+
+    suggested_case = _default_suggested_case(
+        original_test_case=original_test_case,
+        case_result=case_result,
+        existing_test_ids=existing_test_ids,
+    )
+    method = str(suggested_case.get("method") or original_test_case.get("method") or "GET").upper()
+    path = str(suggested_case.get("path") or original_test_case.get("path") or "/")
+    expected_result = suggested_case.get("expected_result") if isinstance(suggested_case.get("expected_result"), dict) else {}
+    expected_status = expected_result.get("status_code")
+    expected_any = expected_result.get("status_code_any_of") if isinstance(expected_result.get("status_code_any_of"), list) else []
+    if isinstance(expected_status, int):
+        expected_status_text = str(expected_status)
+    elif expected_any:
+        expected_status_text = "/".join(str(item) for item in expected_any if str(item).strip()) or "expected status"
+    else:
+        expected_status_text = "expected status"
+    signal_hint = {
+        "schema_type": "input-type validation",
+        "schema_value": "input-value validation",
+        "missing_required": "missing-required input handling",
+        "validation": "input validation handling",
+    }.get(signal, "observed behavior")
+    reason = (
+        f"Adds a follow-up {method} {path} test that reuses the failing request shape "
+        f"and asserts {expected_status_text} to validate {signal_hint}."
+    )
+    reason = re.sub(r"\s+", " ", reason).strip()
+
+    return {
+        "mode": "suggest_test",
+        "reason": reason,
+        "signal": signal,
+        "external_failure": False,
+        "warning_external": False,
+        "warning": "",
+        "can_apply": True,
+        "suggested_test_case": suggested_case,
+        "model": model,
+        "used_fallback": False,
+        "llm_error": None,
+        "failure_mode": "none",
+        "skipped": False,
+        "skip_reason": "",
+        "eligible_for_generation": True,
+    }
+
+
 def generate_suggested_test(
     *,
-    client: OllamaClient,
+    client: LLMGenerateClient,
     model: str,
     evidence: Dict[str, Any],
     prompt_bundle: Dict[str, Any],
@@ -1062,30 +1272,38 @@ def generate_suggested_test(
     case_result: Dict[str, Any],
     existing_test_ids: Sequence[str],
     retry_invalid_output: int,
+    explanation_context: Optional[Dict[str, Any]] = None,
+    max_generation_seconds: int = SUGGESTION_TIMEOUT_SECONDS_MAX,
     ollama_options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    signal = classify_failure_signal(evidence)
-    external = signal in {"transport", "auth"}
-    if external:
-        warning = (
-            "This failure appears external (authentication/network/upstream). "
-            "No extra test is suggested until backend-contract ownership is confirmed."
+    _ = retry_invalid_output
+    classified_signal = classify_failure_signal(evidence)
+    normalized_context = normalize_suggestion_explanation_context(
+        explanation_context,
+        fallback_signal=classified_signal,
+    )
+    signal = str(normalized_context.get("signal") or classified_signal or "status_mismatch").strip().lower()
+    if not is_input_related_signal(signal):
+        return build_suggestion_skip_payload(
+            model=model,
+            signal=signal,
+            reason=(
+                "No suggested test was generated because this failure is not input-related. "
+                "Suggested tests are only generated for schema/validation input failures."
+            ),
         )
-        return {
-            "mode": "suggest_test",
-            "reason": warning,
-            "signal": signal,
-            "external_failure": True,
-            "warning_external": True,
-            "warning": warning,
-            "can_apply": False,
-            "suggested_test_case": None,
-            "model": model,
-            "used_fallback": False,
-            "llm_error": None,
-            "failure_mode": "none",
-        }
 
+    context_preview = {
+        key: value
+        for key, value in (
+            ("signal", signal),
+            ("likely_cause", normalized_context.get("likely_cause")),
+            ("why_likely", normalized_context.get("why_likely")),
+            ("check_next", normalized_context.get("check_next")),
+            ("explanation", normalized_context.get("explanation")),
+        )
+        if isinstance(value, str) and value.strip()
+    }
     compact_prompt_bundle = _build_compact_suggestion_prompt_bundle(prompt_bundle)
     system_prompt = (
         "You are the ContractGuard test assistant. "
@@ -1098,17 +1316,29 @@ def generate_suggested_test(
         "- Keep the suggestion grounded in the supplied evidence.\n"
         "- Prefer same endpoint unless evidence strongly indicates otherwise.\n"
         "- Include concrete expected status.\n"
+        "- Only suggest input-focused follow-up coverage aligned to the likely cause.\n"
         "- Return JSON with keys reason and suggested_test_case.\n\n"
+        "Explanation context:\n"
+        f"{json.dumps(context_preview, ensure_ascii=True, indent=2)}\n\n"
         "Evidence bundle:\n"
         f"{json.dumps(compact_prompt_bundle, ensure_ascii=True, indent=2)}"
     )
 
-    retries = max(0, int(retry_invalid_output))
+    retries = 0
     attempts: List[str] = []
     user_prompt = base_user_prompt
     observed_status = case_result.get("actual_status")
     observed_status = int(observed_status) if str(observed_status).isdigit() else None
-    timeout_seconds = max(1, int(getattr(client, "timeout_seconds", 0) or 1))
+    current_timeout = max(1, int(getattr(client, "timeout_seconds", 0) or 1))
+    timeout_seconds = min(
+        current_timeout,
+        max(1, int(max_generation_seconds)),
+    )
+    if hasattr(client, "timeout_seconds"):
+        try:
+            setattr(client, "timeout_seconds", timeout_seconds)
+        except Exception:
+            pass
 
     for attempt_index in range(retries + 1):
         attempt_start = time.monotonic()
@@ -1123,8 +1353,31 @@ def generate_suggested_test(
         remaining = retries - attempt_index
         near_timeout = _attempt_near_timeout(attempt_elapsed, timeout_seconds)
         if llm_error:
-            attempts.append(f"llm_error:{llm_error}")
-            if _is_timeout_llm_error(llm_error):
+            llm_error_text, error_meta = _llm_error_message(llm_error)
+            attempts.append(f"llm_error:{llm_error_text}")
+            if is_rate_limit_or_quota_kind(error_meta.get("kind")):
+                return {
+                    "mode": "suggest_test",
+                    "reason": "LLM suggested-test generation could not complete due to provider limits.",
+                    "signal": signal,
+                    "external_failure": False,
+                    "warning_external": False,
+                    "warning": "",
+                    "can_apply": False,
+                    "suggested_test_case": None,
+                    "model": model,
+                    "used_fallback": False,
+                    "llm_error": llm_error_text,
+                    "failure_mode": str(error_meta.get("kind") or "other"),
+                    "failure_kind": str(error_meta.get("kind") or "other"),
+                    "status_code": error_meta.get("status_code"),
+                    "error_meta": error_meta,
+                    "attempts": attempts,
+                    "skipped": False,
+                    "skip_reason": "",
+                    "eligible_for_generation": True,
+                }
+            if _is_timeout_llm_error(llm_error_text):
                 break
             if near_timeout and remaining > 0:
                 attempts.append("guardrail:near_timeout_abort_retries")
@@ -1154,7 +1407,7 @@ def generate_suggested_test(
                     "Follow-up suggestion generated from this failed case to verify whether the observed endpoint behavior "
                     "is intentional for the same request shape."
                 )
-            reason = _truncate_words(reason, 35)
+            reason = re.sub(r"\s+", " ", reason).strip()
             return {
                 "mode": "suggest_test",
                 "reason": reason,
@@ -1168,6 +1421,9 @@ def generate_suggested_test(
                 "used_fallback": False,
                 "llm_error": None,
                 "failure_mode": "none",
+                "skipped": False,
+                "skip_reason": "",
+                "eligible_for_generation": True,
             }
 
         attempts.append("validation_error:invalid_test_case")
@@ -1200,4 +1456,7 @@ def generate_suggested_test(
         "used_fallback": True,
         "llm_error": "; ".join(attempts) if attempts else "fallback_used",
         "failure_mode": _classify_suggestion_failure_mode(attempts),
+        "skipped": False,
+        "skip_reason": "",
+        "eligible_for_generation": True,
     }

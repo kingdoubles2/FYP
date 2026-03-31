@@ -23,15 +23,31 @@ async function request(path, options = {}) {
       } else if (rawDetail && typeof rawDetail === "object") {
         const message = typeof rawDetail.message === "string" ? rawDetail.message.trim() : "";
         const llmError = typeof rawDetail.llm_error === "string" ? rawDetail.llm_error.trim() : "";
+        const failureKind = typeof rawDetail.failure_kind === "string" ? rawDetail.failure_kind.trim() : "";
+        const provider = typeof rawDetail.provider === "string" ? rawDetail.provider.trim() : "";
+        const model = typeof rawDetail.model === "string" ? rawDetail.model.trim() : "";
+        const guidance = typeof rawDetail.guidance === "string" ? rawDetail.guidance.trim() : "";
         const diagnostics = Array.isArray(rawDetail.attempt_diagnostics)
           ? rawDetail.attempt_diagnostics.map((item) => String(item || "").trim()).filter(Boolean)
           : [];
         const chunks = [message || "Request failed"];
+        if (failureKind) {
+          chunks.push(`failure=${failureKind}`);
+        }
+        if (provider || model) {
+          const target = [provider, model].filter(Boolean).join("/");
+          if (target) {
+            chunks.push(`target=${target}`);
+          }
+        }
         if (llmError) {
           chunks.push(`llm_error=${llmError}`);
         }
         if (diagnostics.length > 0) {
           chunks.push(`diagnostics=${diagnostics.join(" | ")}`);
+        }
+        if (guidance) {
+          chunks.push(`guidance=${guidance}`);
         }
         detail = chunks.join(" ");
       } else if (rawDetail !== null && rawDetail !== undefined) {
@@ -121,17 +137,8 @@ export async function fetchLatestRunForSpec(token, specId) {
   });
 }
 
-export async function requestLlmExplanation(token, runId, testId) {
-  return request(`/api/tests/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testId)}/llm/explanation`, {
-    method: "POST",
-    headers: {
-      ...authHeaders(token),
-    },
-  });
-}
-
-export async function requestLlmSuggestedTest(token, runId, testId) {
-  return request(`/api/tests/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testId)}/llm/suggest-test`, {
+export async function requestLlmFailureAnalysis(token, runId, testId) {
+  return request(`/api/tests/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testId)}/llm/analyze-failure`, {
     method: "POST",
     headers: {
       ...authHeaders(token),

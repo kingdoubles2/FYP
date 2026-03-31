@@ -48,10 +48,12 @@ class LlmExplanationEndpointTests(unittest.TestCase):
             patch.object(main, "_resolve_effective_llm_settings", return_value={"active_model_id": "builtin:ollama:qwen3-coder:latest"}),
             patch.object(
                 main,
-                "_build_runtime_from_active_model",
-                return_value={"client": object(), "model": "qwen3-coder:latest", "options": {}},
+                "_generate_failure_explanation_or_raise",
+                return_value={
+                    "runtime": {"provider": "ollama", "model": "qwen3-coder:latest"},
+                    "payload": expected_payload,
+                },
             ),
-            patch.object(main, "generate_failure_explanation", return_value=expected_payload),
         ):
             response = main.explain_failed_case(run_id=10, test_id="TC-EX-001", current_user=SimpleNamespace(id=7))
 
@@ -60,43 +62,52 @@ class LlmExplanationEndpointTests(unittest.TestCase):
         self.assertEqual(response["payload"], expected_payload)
 
     def test_explain_failed_case_returns_502_with_diagnostics_when_llm_fails(self) -> None:
-        failed_payload = {
-            "ok": False,
-            "mode": "explanation",
-            "used_fallback": False,
-            "llm_error": "empty response",
-            "validation_errors": ["parse_error"],
-            "attempts": [
-                {
-                    "prompt": "Case:",
-                    "raw_response": "",
-                    "llm_error": None,
-                    "parse_error": "empty response",
-                    "validation_errors": [],
-                }
-            ],
-        }
-
+        expected_error = HTTPException(
+            status_code=502,
+            detail={"message": "LLM explanation failed after retry attempts.", "llm_error": "empty response"},
+        )
         with (
             patch.object(main, "SessionLocal", return_value=_DummySession()),
             patch.object(main, "_load_run_case_bundle", return_value=_bundle()),
             patch.object(main, "_resolve_effective_llm_settings", return_value={"active_model_id": "builtin:ollama:qwen3-coder:latest"}),
             patch.object(
                 main,
-                "_build_runtime_from_active_model",
-                return_value={"client": object(), "model": "qwen3-coder:latest", "options": {}},
+                "_generate_failure_explanation_or_raise",
+                side_effect=expected_error,
             ),
-            patch.object(main, "generate_failure_explanation", return_value=failed_payload),
         ):
             with self.assertRaises(HTTPException) as ctx:
                 main.explain_failed_case(run_id=10, test_id="TC-EX-001", current_user=SimpleNamespace(id=7))
 
         self.assertEqual(ctx.exception.status_code, 502)
-        self.assertIsInstance(ctx.exception.detail, dict)
-        self.assertIn("llm_error", ctx.exception.detail)
-        self.assertEqual(ctx.exception.detail["llm_error"], "empty response")
-        self.assertIn("attempt_diagnostics", ctx.exception.detail)
-        self.assertTrue(ctx.exception.detail["attempt_diagnostics"])
+        self.assertEqual(ctx.exception.detail, expected_error.detail)
+
+    def test_explain_failed_case_returns_429_with_provider_metadata_for_rate_limit(self) -> None:
+        expected_error = HTTPException(
+            status_code=429,
+            detail={
+                "message": "LLM explanation failed after retry attempts.",
+                "failure_kind": "rate_limit",
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "guidance": "Provider rate limit reached. Wait and retry, or switch models in Settings.",
+            },
+        )
+        with (
+            patch.object(main, "SessionLocal", return_value=_DummySession()),
+            patch.object(main, "_load_run_case_bundle", return_value=_bundle()),
+            patch.object(main, "_resolve_effective_llm_settings", return_value={"active_model_id": "user:model:1"}),
+            patch.object(
+                main,
+                "_generate_failure_explanation_or_raise",
+                side_effect=expected_error,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                main.explain_failed_case(run_id=10, test_id="TC-EX-001", current_user=SimpleNamespace(id=7))
+
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(ctx.exception.detail, expected_error.detail)
 
     def test_load_run_case_bundle_surfaces_settings_error(self) -> None:
         with patch.object(main, "load_backend_llm_settings", side_effect=ValueError("bad config")):

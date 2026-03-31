@@ -72,10 +72,12 @@ def _valid_contract_json() -> str:
 
 
 class _StubOllamaClient:
-    def __init__(self, responses: list[tuple[str | None, str | None]]) -> None:
+    def __init__(self, responses: list[tuple[str | None, object]]) -> None:
         self._responses = list(responses)
+        self.calls = 0
 
-    def generate(self, **_: object) -> tuple[str | None, str | None]:
+    def generate(self, **_: object) -> tuple[str | None, object]:
+        self.calls += 1
         if self._responses:
             return self._responses.pop(0)
         return None, "stub_exhausted"
@@ -149,6 +151,40 @@ class FailureExplanationFlowTests(unittest.TestCase):
         self.assertIn("empty response", str(output["llm_error"]))
         self.assertEqual(output["contract"], {})
         self.assertEqual(len(output["attempts"]), 2)
+
+    def test_generate_explanation_openai_rate_limit_hard_fails_without_retry_loop(self) -> None:
+        client = _StubOllamaClient([
+            (
+                None,
+                {
+                    "kind": "rate_limit",
+                    "message": "HTTPError: 429 Client Error: Too Many Requests",
+                    "status_code": 429,
+                    "provider_error_code": "rate_limit_exceeded",
+                    "provider_error_type": "rate_limit_error",
+                    "retryable": True,
+                },
+            ),
+            (_valid_contract_json(), None),
+        ])
+        output = generate_failure_explanation(
+            client=client,
+            model="gpt-4.1-mini",
+            evidence=_sample_evidence(),
+            prompt_bundle={},
+            word_target=55,
+            word_max=100,
+            retry_invalid_output=3,
+            max_items_per_section=12,
+            ollama_options={},
+        )
+
+        self.assertFalse(output["ok"])
+        self.assertFalse(output["used_fallback"])
+        self.assertEqual(output["failure_kind"], "rate_limit")
+        self.assertEqual(output["status_code"], 429)
+        self.assertEqual(len(output["attempts"]), 1)
+        self.assertEqual(client.calls, 1)
 
     def test_load_backend_settings_raises_if_missing_config_and_no_env_model(self) -> None:
         missing = Path("src/backend/tests/_missing_llm_settings.yaml")
