@@ -20,7 +20,7 @@ function normalizeContext(context) {
 
 function normalizeRuntimeConfig(runtimeConfig) {
   return {
-    modelId: String(runtimeConfig?.modelId || "contractguard-mock-v1"),
+    modelId: String(runtimeConfig?.modelId || "qwen3-coder:latest"),
     userInstruction: String(runtimeConfig?.userInstruction || ""),
   };
 }

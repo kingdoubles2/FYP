@@ -45,6 +45,12 @@ class LlmExplanationEndpointTests(unittest.TestCase):
         with (
             patch.object(main, "SessionLocal", return_value=_DummySession()),
             patch.object(main, "_load_run_case_bundle", return_value=_bundle()),
+            patch.object(main, "_resolve_effective_llm_settings", return_value={"active_model_id": "builtin:ollama:qwen3-coder:latest"}),
+            patch.object(
+                main,
+                "_build_runtime_from_active_model",
+                return_value={"client": object(), "model": "qwen3-coder:latest", "options": {}},
+            ),
             patch.object(main, "generate_failure_explanation", return_value=expected_payload),
         ):
             response = main.explain_failed_case(run_id=10, test_id="TC-EX-001", current_user=SimpleNamespace(id=7))
@@ -74,6 +80,12 @@ class LlmExplanationEndpointTests(unittest.TestCase):
         with (
             patch.object(main, "SessionLocal", return_value=_DummySession()),
             patch.object(main, "_load_run_case_bundle", return_value=_bundle()),
+            patch.object(main, "_resolve_effective_llm_settings", return_value={"active_model_id": "builtin:ollama:qwen3-coder:latest"}),
+            patch.object(
+                main,
+                "_build_runtime_from_active_model",
+                return_value={"client": object(), "model": "qwen3-coder:latest", "options": {}},
+            ),
             patch.object(main, "generate_failure_explanation", return_value=failed_payload),
         ):
             with self.assertRaises(HTTPException) as ctx:

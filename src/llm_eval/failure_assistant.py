@@ -58,6 +58,45 @@ def parse_spec_document(spec_text: str) -> Dict[str, Any]:
     return core.load_spec_document(spec_text)
 
 
+def load_backend_model_catalog(config_path: Optional[str] = None) -> Dict[str, Any]:
+    config_override = config_path or os.getenv("CONTRACTGUARD_LLM_CONFIG")
+    path = Path(config_override or "config/llm_eval.yaml")
+    config = _load_yaml_mapping(path) if path.exists() else {}
+    ollama_cfg = config.get("ollama") or {}
+    raw_models = config.get("models") if isinstance(config.get("models"), list) else []
+
+    model_candidates: List[str] = []
+    env_model = str(os.getenv("CONTRACTGUARD_LLM_MODEL") or "").strip()
+    if env_model:
+        model_candidates.append(env_model)
+    for item in raw_models:
+        model = str(item or "").strip()
+        if model:
+            model_candidates.append(model)
+
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for candidate in model_candidates:
+        if candidate in seen:
+            continue
+        deduped.append(candidate)
+        seen.add(candidate)
+
+    if not deduped:
+        deduped = ["qwen3-coder:latest"]
+
+    base_url = (
+        os.getenv("CONTRACTGUARD_OLLAMA_BASE_URL")
+        or os.getenv("OLLAMA_BASE_URL")
+        or str(ollama_cfg.get("base_url") or "http://localhost:11434")
+    )
+    return {
+        "default_model": deduped[0],
+        "models": deduped,
+        "ollama_base_url": str(base_url),
+    }
+
+
 def load_backend_llm_settings(config_path: Optional[str] = None) -> Dict[str, Any]:
     config_override = config_path or os.getenv("CONTRACTGUARD_LLM_CONFIG")
     path = Path(config_override or "config/llm_eval.yaml")

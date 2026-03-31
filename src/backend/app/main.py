@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from uuid import uuid4
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -12,6 +13,7 @@ from llm_eval.failure_assistant import (
     build_pipeline_context,
     generate_failure_explanation,
     generate_suggested_test,
+    load_backend_model_catalog,
     load_backend_llm_settings,
     parse_spec_document,
     safe_json_dumps,
@@ -19,6 +21,7 @@ from llm_eval.failure_assistant import (
     sha256_text,
 )
 from llm_eval.ollama_client import OllamaClient
+from llm_eval.provider_clients import AnthropicClient, OpenAIClient
 from spec_parser.parser import parse_openapi
 from test_generator.generator import generate_test_cases
 
@@ -26,7 +29,7 @@ from .auth import create_access_token, hash_password, verify_password
 from .db import SessionLocal
 from .deps import get_current_user
 from .init_db import init_db
-from .models_db import LLMRunInsight, Spec, SpecArtifact, TestRun, User
+from .models_db import LLMRunInsight, Spec, SpecArtifact, TestRun, User, UserLLMSettings
 
 
 class RegisterRequest(BaseModel):
@@ -51,6 +54,32 @@ class RunTestsRequest(BaseModel):
     api_key_header: Optional[str] = None
 
 
+class AddLLMModelRequest(BaseModel):
+    provider: str
+    model: str
+    label: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+
+
+class UpdateLLMSettingsRequest(BaseModel):
+    active_model_id: Optional[str] = None
+    custom_instruction: Optional[str] = None
+
+
+class DiscoverProviderModelsRequest(BaseModel):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+MODEL_SOURCE_BUILTIN = "builtin"
+MODEL_SOURCE_USER = "user"
+PROVIDER_OLLAMA = "ollama"
+PROVIDER_OPENAI = "openai"
+PROVIDER_ANTHROPIC = "anthropic"
+SUPPORTED_PROVIDERS = {PROVIDER_OLLAMA, PROVIDER_OPENAI, PROVIDER_ANTHROPIC}
+
+
 def _validate_credentials(req: RegisterRequest | LoginRequest) -> None:
     email = req.email.strip().lower()
     if "@" not in email or "." not in email.split("@")[-1]:
@@ -62,6 +91,248 @@ def _validate_credentials(req: RegisterRequest | LoginRequest) -> None:
 def _json_load_or_default(raw: Optional[str], default: Any) -> Any:
     parsed = safe_json_loads(raw)
     return parsed if parsed is not None else default
+
+
+def _is_field_provided(model: BaseModel, field_name: str) -> bool:
+    fields_set = getattr(model, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(model, "__fields_set__", set())
+    return field_name in fields_set
+
+
+def _coerce_provider(provider: Any) -> str:
+    normalized = str(provider or "").strip().lower()
+    if normalized == "claude":
+        return PROVIDER_ANTHROPIC
+    return normalized
+
+
+def _mask_api_key(api_key: str) -> str:
+    raw = str(api_key or "").strip()
+    if not raw:
+        return ""
+    if len(raw) <= 8:
+        return "*" * len(raw)
+    return f"{raw[:4]}...{raw[-4:]}"
+
+
+def _builtin_model_id(provider: str, model: str) -> str:
+    return f"builtin:{provider}:{model}"
+
+
+def _normalize_base_url(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _normalize_user_model_entry(raw: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    provider = _coerce_provider(raw.get("provider"))
+    model = str(raw.get("model") or "").strip()
+    if provider not in SUPPORTED_PROVIDERS or not model:
+        return None
+
+    entry_id = str(raw.get("id") or f"user:{uuid4().hex}").strip()
+    if not entry_id:
+        entry_id = f"user:{uuid4().hex}"
+    label = str(raw.get("label") or "").strip() or model
+    base_url = _normalize_base_url(raw.get("base_url"))
+    api_key = str(raw.get("api_key") or "").strip()
+    return {
+        "id": entry_id,
+        "provider": provider,
+        "model": model,
+        "label": label,
+        "source": MODEL_SOURCE_USER,
+        "base_url": base_url,
+        "api_key": api_key,
+    }
+
+
+def _serialize_model_for_response(entry: dict[str, Any]) -> dict[str, Any]:
+    api_key = str(entry.get("api_key") or "").strip()
+    return {
+        "id": str(entry.get("id") or ""),
+        "provider": str(entry.get("provider") or ""),
+        "model": str(entry.get("model") or ""),
+        "label": str(entry.get("label") or ""),
+        "source": str(entry.get("source") or MODEL_SOURCE_USER),
+        "base_url": _normalize_base_url(entry.get("base_url")),
+        "has_api_key": bool(api_key),
+        "api_key_masked": _mask_api_key(api_key) if api_key else "",
+    }
+
+
+def _get_user_llm_settings_row(db: Any, user_id: int) -> Optional[UserLLMSettings]:
+    return db.query(UserLLMSettings).filter(UserLLMSettings.user_id == user_id).first()
+
+
+def _ensure_user_llm_settings_row(
+    db: Any,
+    user_id: int,
+    *,
+    default_active_model_id: Optional[str] = None,
+) -> UserLLMSettings:
+    row = _get_user_llm_settings_row(db, user_id)
+    if row:
+        return row
+    row = UserLLMSettings(
+        user_id=user_id,
+        active_model_id=default_active_model_id,
+        custom_instruction="",
+        saved_models_json="[]",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _load_saved_user_models(row: Optional[UserLLMSettings]) -> list[dict[str, Any]]:
+    if not row:
+        return []
+    parsed = _json_load_or_default(row.saved_models_json, [])
+    if not isinstance(parsed, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for raw in parsed:
+        item = _normalize_user_model_entry(raw)
+        if not item:
+            continue
+        if item["id"] in seen_ids:
+            item["id"] = f"user:{uuid4().hex}"
+        seen_ids.add(item["id"])
+        normalized.append(item)
+    return normalized
+
+
+def _save_user_models(row: UserLLMSettings, models: list[dict[str, Any]]) -> None:
+    row.saved_models_json = safe_json_dumps(models)
+
+
+def _build_builtin_model_entries(settings: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    catalog = load_backend_model_catalog()
+    default_model = str(settings.get("model") or catalog.get("default_model") or "qwen3-coder:latest").strip()
+    configured_models = catalog.get("models") if isinstance(catalog.get("models"), list) else []
+    candidate_models = [default_model, *[str(item).strip() for item in configured_models]]
+
+    deduped_models: list[str] = []
+    seen: set[str] = set()
+    for model_name in candidate_models:
+        if not model_name or model_name in seen:
+            continue
+        deduped_models.append(model_name)
+        seen.add(model_name)
+    if not deduped_models:
+        deduped_models = ["qwen3-coder:latest"]
+
+    base_url = str(settings.get("base_url") or catalog.get("ollama_base_url") or "http://localhost:11434").strip()
+    entries: list[dict[str, Any]] = []
+    for model_name in deduped_models:
+        entries.append(
+            {
+                "id": _builtin_model_id(PROVIDER_OLLAMA, model_name),
+                "provider": PROVIDER_OLLAMA,
+                "model": model_name,
+                "label": model_name,
+                "source": MODEL_SOURCE_BUILTIN,
+                "base_url": base_url,
+                "api_key": "",
+            }
+        )
+    return entries, _builtin_model_id(PROVIDER_OLLAMA, deduped_models[0])
+
+
+def _resolve_effective_llm_settings(
+    db: Any,
+    user_id: int,
+    *,
+    base_settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    if base_settings:
+        settings = base_settings
+    else:
+        try:
+            settings = load_backend_llm_settings()
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=f"LLM settings error: {exc}") from exc
+    builtin_models, default_model_id = _build_builtin_model_entries(settings)
+    row = _get_user_llm_settings_row(db, user_id)
+    user_models = _load_saved_user_models(row)
+    all_models = [*builtin_models, *user_models]
+    by_id = {str(model.get("id") or ""): model for model in all_models}
+
+    active_model_id = str(row.active_model_id or "").strip() if row else ""
+    if not active_model_id or active_model_id not in by_id:
+        active_model_id = default_model_id
+    active_model = by_id.get(active_model_id) or by_id.get(default_model_id) or (all_models[0] if all_models else None)
+
+    custom_instruction = str(row.custom_instruction or "") if row else ""
+    return {
+        "settings": settings,
+        "row": row,
+        "models": all_models,
+        "models_by_id": by_id,
+        "default_model_id": default_model_id,
+        "active_model_id": active_model_id,
+        "active_model": active_model,
+        "custom_instruction": custom_instruction,
+    }
+
+
+def _settings_response_payload(resolved: dict[str, Any]) -> dict[str, Any]:
+    models = resolved.get("models") if isinstance(resolved.get("models"), list) else []
+    return {
+        "active_model_id": str(resolved.get("active_model_id") or ""),
+        "default_model_id": str(resolved.get("default_model_id") or ""),
+        "custom_instruction": str(resolved.get("custom_instruction") or ""),
+        "models": [_serialize_model_for_response(model) for model in models if isinstance(model, dict)],
+    }
+
+
+def _build_runtime_from_active_model(resolved: dict[str, Any]) -> dict[str, Any]:
+    active_model = resolved.get("active_model") if isinstance(resolved.get("active_model"), dict) else None
+    if not active_model:
+        raise HTTPException(status_code=500, detail="No active model available for LLM execution.")
+
+    settings = resolved.get("settings") if isinstance(resolved.get("settings"), dict) else {}
+    provider = str(active_model.get("provider") or "").strip().lower()
+    model_name = str(active_model.get("model") or "").strip()
+    if provider not in SUPPORTED_PROVIDERS or not model_name:
+        raise HTTPException(status_code=400, detail="Selected model configuration is invalid.")
+
+    timeout_seconds = int(settings.get("timeout_seconds") or 120)
+    if provider == PROVIDER_OLLAMA:
+        base_url = str(active_model.get("base_url") or settings.get("base_url") or "http://localhost:11434").strip()
+        return {
+            "provider": provider,
+            "model": model_name,
+            "client": OllamaClient(base_url=base_url, timeout_seconds=timeout_seconds),
+            "options": settings.get("ollama_options") if isinstance(settings.get("ollama_options"), dict) else {},
+        }
+    if provider == PROVIDER_OPENAI:
+        api_key = str(active_model.get("api_key") or "").strip()
+        if not api_key:
+            raise HTTPException(status_code=400, detail="Selected OpenAI model is missing an API key.")
+        base_url = str(active_model.get("base_url") or "https://api.openai.com/v1").strip()
+        return {
+            "provider": provider,
+            "model": model_name,
+            "client": OpenAIClient(api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds),
+            "options": {},
+        }
+    api_key = str(active_model.get("api_key") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Selected Anthropic model is missing an API key.")
+    base_url = str(active_model.get("base_url") or "https://api.anthropic.com/v1").strip()
+    return {
+        "provider": provider,
+        "model": model_name,
+        "client": AnthropicClient(api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds),
+        "options": {},
+    }
 
 
 def _get_owned_spec(db: Any, user_id: int, spec_id: int) -> Spec:
@@ -209,6 +480,173 @@ def _startup() -> None:
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     return {"ok": True}
+
+
+@app.get("/api/llm/settings")
+def get_llm_settings(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        resolved = _resolve_effective_llm_settings(db, current_user.id)
+        return _settings_response_payload(resolved)
+    finally:
+        db.close()
+
+
+@app.post("/api/llm/settings/providers/{provider}/models")
+def discover_provider_models(
+    provider: str,
+    req: DiscoverProviderModelsRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _ = current_user
+    normalized_provider = _coerce_provider(provider)
+    if normalized_provider not in {PROVIDER_OPENAI, PROVIDER_ANTHROPIC}:
+        raise HTTPException(status_code=400, detail="Unsupported provider. Use openai or anthropic for discovery.")
+
+    api_key = str(req.api_key or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="An API key is required to list provider models.")
+
+    timeout_seconds = 120
+    try:
+        settings = load_backend_llm_settings()
+        timeout_seconds = max(1, int(settings.get("timeout_seconds") or 120))
+    except Exception:
+        timeout_seconds = 120
+
+    base_url = _normalize_base_url(req.base_url)
+    if normalized_provider == PROVIDER_OPENAI:
+        client = OpenAIClient(
+            api_key=api_key,
+            base_url=str(base_url or "https://api.openai.com/v1"),
+            timeout_seconds=timeout_seconds,
+        )
+    else:
+        client = AnthropicClient(
+            api_key=api_key,
+            base_url=str(base_url or "https://api.anthropic.com/v1"),
+            timeout_seconds=timeout_seconds,
+        )
+
+    models, error = client.list_models()
+    if error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to load models from provider '{normalized_provider}': {error}",
+        )
+    return {
+        "provider": normalized_provider,
+        "models": models or [],
+    }
+
+
+@app.post("/api/llm/settings/models")
+def add_llm_model(req: AddLLMModelRequest, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    provider = _coerce_provider(req.provider)
+    model_name = str(req.model or "").strip()
+    if provider not in SUPPORTED_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported provider. Use ollama, openai, or anthropic.")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="Model name is required.")
+
+    label = str(req.label or "").strip() or model_name
+    base_url = _normalize_base_url(req.base_url)
+    api_key = str(req.api_key or "").strip()
+    if provider in {PROVIDER_OPENAI, PROVIDER_ANTHROPIC} and not api_key:
+        raise HTTPException(status_code=400, detail=f"An API key is required for provider '{provider}'.")
+
+    db = SessionLocal()
+    try:
+        resolved_before = _resolve_effective_llm_settings(db, current_user.id)
+        row = _ensure_user_llm_settings_row(
+            db,
+            current_user.id,
+            default_active_model_id=str(resolved_before.get("default_model_id") or ""),
+        )
+        saved_models = _load_saved_user_models(row)
+        new_entry = {
+            "id": f"user:{uuid4().hex}",
+            "provider": provider,
+            "model": model_name,
+            "label": label,
+            "source": MODEL_SOURCE_USER,
+            "base_url": base_url,
+            "api_key": api_key,
+        }
+        saved_models.append(new_entry)
+        _save_user_models(row, saved_models)
+        db.commit()
+        db.refresh(row)
+
+        resolved_after = _resolve_effective_llm_settings(db, current_user.id)
+        return _settings_response_payload(resolved_after)
+    finally:
+        db.close()
+
+
+@app.patch("/api/llm/settings")
+def update_llm_settings(req: UpdateLLMSettingsRequest, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        resolved_before = _resolve_effective_llm_settings(db, current_user.id)
+        row = _ensure_user_llm_settings_row(
+            db,
+            current_user.id,
+            default_active_model_id=str(resolved_before.get("default_model_id") or ""),
+        )
+
+        if _is_field_provided(req, "active_model_id"):
+            requested_model_id = str(req.active_model_id or "").strip()
+            if requested_model_id:
+                if requested_model_id not in resolved_before.get("models_by_id", {}):
+                    raise HTTPException(status_code=400, detail="Selected model does not exist.")
+                row.active_model_id = requested_model_id
+            else:
+                row.active_model_id = str(resolved_before.get("default_model_id") or "")
+
+        if _is_field_provided(req, "custom_instruction"):
+            instruction = str(req.custom_instruction or "")
+            if len(instruction) > 12000:
+                raise HTTPException(status_code=400, detail="Custom instruction must be 12000 characters or fewer.")
+            row.custom_instruction = instruction
+
+        db.commit()
+        db.refresh(row)
+        resolved_after = _resolve_effective_llm_settings(db, current_user.id)
+        return _settings_response_payload(resolved_after)
+    finally:
+        db.close()
+
+
+@app.delete("/api/llm/settings/models/{model_id}")
+def delete_llm_model(model_id: str, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    target_model_id = str(model_id or "").strip()
+    if not target_model_id:
+        raise HTTPException(status_code=400, detail="Model id is required.")
+
+    db = SessionLocal()
+    try:
+        resolved_before = _resolve_effective_llm_settings(db, current_user.id)
+        row = _ensure_user_llm_settings_row(
+            db,
+            current_user.id,
+            default_active_model_id=str(resolved_before.get("default_model_id") or ""),
+        )
+        saved_models = _load_saved_user_models(row)
+        next_models = [entry for entry in saved_models if str(entry.get("id") or "") != target_model_id]
+        if len(next_models) == len(saved_models):
+            raise HTTPException(status_code=404, detail="Model not found in user settings.")
+
+        _save_user_models(row, next_models)
+        if str(row.active_model_id or "").strip() == target_model_id:
+            row.active_model_id = str(resolved_before.get("default_model_id") or "")
+        db.commit()
+        db.refresh(row)
+
+        resolved_after = _resolve_effective_llm_settings(db, current_user.id)
+        return _settings_response_payload(resolved_after)
+    finally:
+        db.close()
 
 
 @app.post("/api/auth/register")
@@ -486,20 +924,22 @@ def explain_failed_case(run_id: int, test_id: str, current_user: User = Depends(
             raise HTTPException(status_code=400, detail="LLM explanation is only available for failed tests.")
 
         settings = bundle["settings"]
-        client = OllamaClient(
-            base_url=str(settings["base_url"]),
-            timeout_seconds=int(settings["timeout_seconds"]),
+        resolved_settings = _resolve_effective_llm_settings(
+            db,
+            current_user.id,
+            base_settings=settings,
         )
+        runtime = _build_runtime_from_active_model(resolved_settings)
         payload = generate_failure_explanation(
-            client=client,
-            model=str(settings["model"]),
+            client=runtime["client"],
+            model=str(runtime["model"]),
             evidence=bundle["evidence"],
             prompt_bundle=bundle["prompt_bundle"],
             word_target=int(settings["word_target"]),
             word_max=int(settings["word_max"]),
             retry_invalid_output=int(settings["retry_invalid_output"]),
             max_items_per_section=int(settings["max_items_per_section"]),
-            ollama_options=settings.get("ollama_options") or {},
+            ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
         )
 
         if not bool(payload.get("ok")):
@@ -551,21 +991,23 @@ def suggest_test_for_failure(run_id: int, test_id: str, current_user: User = Dep
             raise HTTPException(status_code=400, detail="Extra test suggestions are only available for failed tests.")
 
         settings = bundle["settings"]
-        client = OllamaClient(
-            base_url=str(settings["base_url"]),
-            timeout_seconds=int(settings["timeout_seconds"]),
+        resolved_settings = _resolve_effective_llm_settings(
+            db,
+            current_user.id,
+            base_settings=settings,
         )
+        runtime = _build_runtime_from_active_model(resolved_settings)
         existing_ids = [str(case.get("test_id") or "") for case in (bundle["suite_data"].get("test_cases") or [])]
         payload = generate_suggested_test(
-            client=client,
-            model=str(settings["model"]),
+            client=runtime["client"],
+            model=str(runtime["model"]),
             evidence=bundle["evidence"],
             prompt_bundle=bundle["prompt_bundle"],
             original_test_case=bundle["test_case"],
             case_result=case_result,
             existing_test_ids=existing_ids,
             retry_invalid_output=int(settings["retry_invalid_output"]),
-            ollama_options=settings.get("ollama_options") or {},
+            ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
         )
         return {
             "run_id": run_id,

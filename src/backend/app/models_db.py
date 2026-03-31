@@ -61,6 +61,19 @@ class LLMRunInsight(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class UserLLMSettings(Base):
+    __tablename__ = "user_llm_settings"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_user_llm_settings_user_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    active_model_id = Column(String, nullable=True)
+    custom_instruction = Column(Text, nullable=False, default="")
+    saved_models_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)

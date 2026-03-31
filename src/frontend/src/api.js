@@ -139,4 +139,54 @@ export async function requestLlmSuggestedTest(token, runId, testId) {
   });
 }
 
+export async function fetchLlmSettings(token) {
+  return request("/api/llm/settings", {
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
+export async function updateLlmSettings(token, payload) {
+  return request("/api/llm/settings", {
+    method: "PATCH",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function addLlmModel(token, payload) {
+  return request("/api/llm/settings/models", {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function fetchLlmProviderModels(token, provider, payload) {
+  return request(`/api/llm/settings/providers/${encodeURIComponent(provider)}/models`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function deleteLlmModel(token, modelId) {
+  return request(`/api/llm/settings/models/${encodeURIComponent(modelId)}`, {
+    method: "DELETE",
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
 export { API_BASE_URL };

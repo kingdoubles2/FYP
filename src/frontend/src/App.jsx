@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  addLlmModel,
   API_BASE_URL,
   clearSpecs,
+  deleteLlmModel,
   fetchLatestRunForSpec,
+  fetchLlmProviderModels,
+  fetchLlmSettings,
   healthCheck,
   listSpecs,
   loginUser,
@@ -10,6 +14,7 @@ import {
   requestLlmSuggestedTest,
   registerUser,
   runGeneratedTests,
+  updateLlmSettings,
   uploadSpecFile,
 } from "./api.js";
 import { mockChatAdapter } from "./chatAdapter.js";
@@ -21,13 +26,33 @@ const THEME_KEY = "contractguard.theme.v1";
 const CHAT_THREAD_KEY = "contractguard.chat-thread.v1";
 const CHAT_CONTEXT_GLOBAL = "global";
 const CHAT_CONTEXT_SPEC = "spec";
+const SETTINGS_TAB_MODEL = "model";
+const SETTINGS_TAB_CUSTOM = "custom";
+const SETTINGS_MODEL_PROVIDERS = Object.freeze([
+  { value: "ollama", label: "Ollama" },
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic (Claude)" },
+]);
 const SPEC_FILE_EXTENSIONS = [".json", ".yaml", ".yml"];
 const JSON_EDITOR_INDENT = "  ";
 const FAILURE_REASON_KEYS = ["message", "detail", "error", "reason", "title", "description"];
 const CHAT_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
 const DEFAULT_CHAT_RUNTIME_CONFIG = Object.freeze({
-  modelId: "contractguard-mock-v1",
+  modelId: "qwen3-coder:latest",
   userInstruction: "",
+});
+const DEFAULT_LLM_SETTINGS = Object.freeze({
+  active_model_id: "",
+  default_model_id: "",
+  custom_instruction: "",
+  models: [],
+});
+const DEFAULT_ADD_MODEL_FORM = Object.freeze({
+  provider: "openai",
+  model: "",
+  label: "",
+  base_url: "",
+  api_key: "",
 });
 
 function decodeJwtPayload(token) {
@@ -173,6 +198,78 @@ function normalizeChatRuntimeConfig(runtimeConfig) {
     modelId: String(runtimeConfig?.modelId || DEFAULT_CHAT_RUNTIME_CONFIG.modelId),
     userInstruction: String(runtimeConfig?.userInstruction || ""),
   };
+}
+
+function normalizeLlmModelEntry(entry, index = 0) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const id = String(entry.id || `model-${index}`);
+  const provider = String(entry.provider || "").trim().toLowerCase();
+  const model = String(entry.model || "").trim();
+  if (!id || !provider || !model) {
+    return null;
+  }
+  const label = String(entry.label || "").trim() || model;
+  const source = String(entry.source || "user").trim().toLowerCase();
+  const baseUrl = typeof entry.base_url === "string" ? entry.base_url : null;
+  const hasApiKey = Boolean(entry.has_api_key);
+  const apiKeyMasked = String(entry.api_key_masked || "");
+  return {
+    id,
+    provider,
+    model,
+    label,
+    source,
+    base_url: baseUrl,
+    has_api_key: hasApiKey,
+    api_key_masked: apiKeyMasked,
+  };
+}
+
+function normalizeProviderModelEntry(entry, index = 0) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const id = String(entry.id || `provider-model-${index}`).trim();
+  if (!id) {
+    return null;
+  }
+  const label = String(entry.label || "").trim() || id;
+  return { id, label };
+}
+
+function normalizeProviderModelCatalog(models) {
+  return Array.isArray(models)
+    ? models
+      .map((entry, index) => normalizeProviderModelEntry(entry, index))
+      .filter(Boolean)
+    : [];
+}
+
+function normalizeLlmSettings(settings) {
+  const models = Array.isArray(settings?.models)
+    ? settings.models
+      .map((entry, index) => normalizeLlmModelEntry(entry, index))
+      .filter(Boolean)
+    : [];
+  const activeModelId = String(settings?.active_model_id || "");
+  const defaultModelId = String(settings?.default_model_id || "");
+  const activeExists = models.some((entry) => entry.id === activeModelId);
+  const defaultExists = models.some((entry) => entry.id === defaultModelId);
+  const fallbackId = defaultExists ? defaultModelId : (models[0]?.id || "");
+  return {
+    active_model_id: activeExists ? activeModelId : fallbackId,
+    default_model_id: defaultExists ? defaultModelId : fallbackId,
+    custom_instruction: String(settings?.custom_instruction || ""),
+    models,
+  };
+}
+
+function getActiveLlmModelEntry(settings) {
+  const activeModelId = String(settings?.active_model_id || "");
+  const models = Array.isArray(settings?.models) ? settings.models : [];
+  return models.find((entry) => String(entry?.id || "") === activeModelId) || models[0] || null;
 }
 
 function normalizeChatMessage(message, index = 0) {
@@ -1039,6 +1136,378 @@ function ChatPanel({
         </div>
       </form>
     </aside>
+  );
+}
+
+function SettingsModal({
+  open,
+  tab,
+  loading,
+  busy,
+  error,
+  settings,
+  isAddModelFormOpen,
+  addModelForm,
+  providerModels,
+  providerModelsLoading,
+  providerModelsError,
+  customInstructionDraft,
+  onClose,
+  onTabChange,
+  onToggleAddModelForm,
+  onAddModelFieldChange,
+  onAddModelSubmit,
+  onSelectModel,
+  onDeleteModel,
+  onCustomInstructionDraftChange,
+  onSaveCustomInstruction,
+  onResetCustomInstruction,
+}) {
+  const [isModelListOpen, setIsModelListOpen] = useState(false);
+  const modelListRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        onClose?.();
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open || tab !== SETTINGS_TAB_MODEL) {
+      setIsModelListOpen(false);
+    }
+  }, [open, tab]);
+
+  useEffect(() => {
+    if (!isModelListOpen) {
+      return undefined;
+    }
+    function handleOutsideClick(event) {
+      if (modelListRef.current && !modelListRef.current.contains(event.target)) {
+        setIsModelListOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", handleOutsideClick);
+    return () => {
+      window.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [isModelListOpen]);
+
+  if (!open) {
+    return null;
+  }
+
+  const models = Array.isArray(settings?.models) ? settings.models : [];
+  const selectedModelId = String(settings?.active_model_id || "");
+  const selectedModel = models.find((entry) => String(entry?.id || "") === selectedModelId) || models[0] || null;
+  const modelNameCounts = models.reduce((counts, entry) => {
+    const key = String(entry?.model || "").trim().toLowerCase();
+    if (!key) {
+      return counts;
+    }
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+
+  function getModelOptionLabel(entry) {
+    const modelName = String(entry?.model || entry?.label || "").trim() || "Unnamed model";
+    const key = modelName.toLowerCase();
+    if ((modelNameCounts[key] || 0) <= 1) {
+      return modelName;
+    }
+    const provider = String(entry?.provider || "").trim().toUpperCase();
+    return provider ? `${modelName} (${provider})` : modelName;
+  }
+
+  const selectedModelLabel = selectedModel ? getModelOptionLabel(selectedModel) : "No models available";
+  const addProvider = String(addModelForm?.provider || "").trim().toLowerCase();
+  const isExternalProvider = addProvider === "openai" || addProvider === "anthropic";
+  const providerModelCatalog = Array.isArray(providerModels) ? providerModels : [];
+  const selectedProviderModelExists = providerModelCatalog.some((entry) => entry.id === addModelForm.model);
+  const providerModelValue = selectedProviderModelExists ? addModelForm.model : "";
+
+  return (
+    <div
+      className="settings-modal-backdrop"
+      onClick={() => onClose?.()}
+      role="presentation"
+    >
+      <section
+        className="panel settings-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-modal-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="panel-header settings-modal-header">
+          <div>
+            <p className="eyebrow">Assistant</p>
+            <h2 id="settings-modal-title">LLM Settings</h2>
+            <p className="muted">Pick your model target and save optional custom instructions.</p>
+          </div>
+          <button
+            type="button"
+            className="secondary-button settings-close-button"
+            onClick={() => onClose?.()}
+            disabled={busy}
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="tab-row" role="tablist" aria-label="Settings sections">
+          <button
+            type="button"
+            className={`tab-button ${tab === SETTINGS_TAB_MODEL ? "active" : ""}`}
+            onClick={() => onTabChange?.(SETTINGS_TAB_MODEL)}
+          >
+            Model
+          </button>
+          <button
+            type="button"
+            className={`tab-button ${tab === SETTINGS_TAB_CUSTOM ? "active" : ""}`}
+            onClick={() => onTabChange?.(SETTINGS_TAB_CUSTOM)}
+          >
+            Custom Instructions
+          </button>
+        </div>
+
+        {error ? <p className="message error settings-inline-message">{error}</p> : null}
+
+        {tab === SETTINGS_TAB_MODEL ? (
+          <div className="settings-modal-section">
+            {loading ? (
+              <p className="muted">Loading settings...</p>
+            ) : (
+              <>
+                <div className="settings-model-picker">
+                  <label className="field settings-model-field">
+                    <span>Choose your model</span>
+                    <div className="settings-model-dropdown" ref={modelListRef}>
+                      <button
+                        id="settings-model-select"
+                        type="button"
+                        className="settings-model-select settings-model-trigger"
+                        onClick={() => setIsModelListOpen((current) => !current)}
+                        aria-haspopup="listbox"
+                        aria-expanded={isModelListOpen}
+                        disabled={busy || models.length === 0}
+                      >
+                        <span>{selectedModelLabel}</span>
+                        <span className={`settings-model-caret ${isModelListOpen ? "open" : ""}`} aria-hidden="true">
+                          v
+                        </span>
+                      </button>
+                      {isModelListOpen ? (
+                        <div className="settings-model-list" role="listbox" aria-labelledby="settings-model-select">
+                          {models.map((entry) => {
+                            const optionLabel = getModelOptionLabel(entry);
+                            const isSelected = String(entry.id) === selectedModelId;
+                            const canDelete = String(entry?.source || "").trim().toLowerCase() === "user";
+                            return (
+                              <div
+                                key={entry.id}
+                                className={`settings-model-list-item ${isSelected ? "active" : ""}`}
+                              >
+                                <button
+                                  type="button"
+                                  className="settings-model-option"
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  onClick={() => {
+                                    setIsModelListOpen(false);
+                                    onSelectModel?.(entry.id);
+                                  }}
+                                  disabled={busy}
+                                >
+                                  {optionLabel}
+                                </button>
+                                {canDelete ? (
+                                  <button
+                                    type="button"
+                                    className="settings-model-delete-button"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      onDeleteModel?.(entry.id, optionLabel);
+                                    }}
+                                    aria-label={`Delete ${optionLabel}`}
+                                    disabled={busy}
+                                  >
+                                    <svg viewBox="0 0 24 24" role="presentation" focusable="false" aria-hidden="true">
+                                      <path d="M8.5 5.5h7l-.6-1.4a1 1 0 0 0-.9-.6h-4a1 1 0 0 0-.9.6z" />
+                                      <path d="M6 7h12l-.7 12a1.5 1.5 0 0 1-1.5 1.4h-7.6a1.5 1.5 0 0 1-1.5-1.4z" />
+                                      <path d="M4.5 7h15" />
+                                    </svg>
+                                  </button>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary-button settings-add-model-button"
+                    onClick={() => onToggleAddModelForm?.()}
+                    disabled={busy}
+                  >
+                    {isAddModelFormOpen ? "Cancel" : "Add model"}
+                  </button>
+                </div>
+
+                {isAddModelFormOpen ? (
+                  <form className="settings-model-form" onSubmit={onAddModelSubmit}>
+                    <h3>Add Model</h3>
+                    <label className="field">
+                      <span>Provider</span>
+                      <select
+                        value={addModelForm.provider}
+                        onChange={(event) => onAddModelFieldChange?.("provider", event.target.value)}
+                        disabled={busy}
+                      >
+                        {SETTINGS_MODEL_PROVIDERS.map((provider) => (
+                          <option key={provider.value} value={provider.value}>{provider.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>API key</span>
+                      <input
+                        type="password"
+                        value={addModelForm.api_key}
+                        onChange={(event) => onAddModelFieldChange?.("api_key", event.target.value)}
+                        placeholder={isExternalProvider ? "Required to load provider models" : "Optional"}
+                        disabled={busy}
+                      />
+                    </label>
+                    {isExternalProvider ? (
+                      <label className="field">
+                        <span>Model</span>
+                        <select
+                          value={providerModelValue}
+                          onChange={(event) => onAddModelFieldChange?.("model", event.target.value)}
+                          disabled={busy || providerModelsLoading || providerModelCatalog.length === 0}
+                          required
+                        >
+                          {providerModelsLoading ? <option value="">Loading models...</option> : null}
+                          {!providerModelsLoading && providerModelCatalog.length === 0 ? (
+                            <option value="">
+                              {providerModelsError ? "No models available" : "Enter API key to load models"}
+                            </option>
+                          ) : null}
+                          {!providerModelsLoading
+                            ? providerModelCatalog.map((entry) => (
+                              <option key={entry.id} value={entry.id}>{entry.label}</option>
+                            ))
+                            : null}
+                        </select>
+                      </label>
+                    ) : (
+                      <label className="field">
+                        <span className="settings-model-label-inline">
+                          <span>Model</span>
+                          <a href="https://ollama.com/library" target="_blank" rel="noreferrer">
+                            ollama.com/library
+                          </a>
+                        </span>
+                        <input
+                          type="text"
+                          value={addModelForm.model}
+                          onChange={(event) => onAddModelFieldChange?.("model", event.target.value)}
+                          placeholder="e.g. qwen3-coder:latest"
+                          disabled={busy}
+                          required
+                        />
+                      </label>
+                    )}
+                    {providerModelsError ? (
+                      <p className="message error settings-inline-message">{providerModelsError}</p>
+                    ) : null}
+                    <label className="field">
+                      <span>Label (optional)</span>
+                      <input
+                        type="text"
+                        value={addModelForm.label}
+                        onChange={(event) => onAddModelFieldChange?.("label", event.target.value)}
+                        placeholder="Friendly display name"
+                        disabled={busy}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Base URL (optional)</span>
+                      <input
+                        type="text"
+                        value={addModelForm.base_url}
+                        onChange={(event) => onAddModelFieldChange?.("base_url", event.target.value)}
+                        placeholder="Leave blank for provider default"
+                        disabled={busy}
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      className="primary-button"
+                      disabled={busy || (isExternalProvider && providerModelCatalog.length === 0)}
+                    >
+                      {busy ? "Saving..." : "Add Model"}
+                    </button>
+                  </form>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="settings-modal-section">
+            <div className="settings-custom-block">
+              <label className="field" htmlFor="settings-custom-instruction">
+                <span>What should the assistant know about your preferences?</span>
+                <textarea
+                  id="settings-custom-instruction"
+                  className="settings-custom-textarea"
+                  value={customInstructionDraft}
+                  onChange={(event) => onCustomInstructionDraftChange?.(event.target.value)}
+                  placeholder="Add your own custom instructions..."
+                  rows={7}
+                  disabled={busy}
+                />
+              </label>
+              <p className="muted">
+                This stores your instruction profile only. It is not injected into backend prompts yet.
+              </p>
+              <div className="settings-custom-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => onSaveCustomInstruction?.()}
+                  disabled={busy}
+                >
+                  {busy ? "Saving..." : "Save Instructions"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onResetCustomInstruction?.()}
+                  disabled={busy}
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -1990,6 +2459,19 @@ export default function App() {
   const [chatActiveContext, setChatActiveContext] = useState(() => getDefaultChatContext());
   const [chatPending, setChatPending] = useState(false);
   const [chatRuntimeConfig, setChatRuntimeConfig] = useState(() => normalizeChatRuntimeConfig(DEFAULT_CHAT_RUNTIME_CONFIG));
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState(SETTINGS_TAB_MODEL);
+  const [llmSettings, setLlmSettings] = useState(() => normalizeLlmSettings(DEFAULT_LLM_SETTINGS));
+  const [llmSettingsLoading, setLlmSettingsLoading] = useState(false);
+  const [llmSettingsBusy, setLlmSettingsBusy] = useState(false);
+  const [llmSettingsError, setLlmSettingsError] = useState("");
+  const [customInstructionDraft, setCustomInstructionDraft] = useState("");
+  const [isAddModelFormOpen, setIsAddModelFormOpen] = useState(false);
+  const [addModelForm, setAddModelForm] = useState({ ...DEFAULT_ADD_MODEL_FORM });
+  const [providerModels, setProviderModels] = useState([]);
+  const [providerModelsLoading, setProviderModelsLoading] = useState(false);
+  const [providerModelsError, setProviderModelsError] = useState("");
+  const providerModelsRequestRef = useRef(0);
   const isDarkTheme = theme === "dark";
 
   useEffect(() => {
@@ -2030,6 +2512,19 @@ export default function App() {
       setChatActiveContext(getDefaultChatContext());
       setChatPending(false);
       setChatRuntimeConfig(normalizeChatRuntimeConfig(DEFAULT_CHAT_RUNTIME_CONFIG));
+      setIsSettingsOpen(false);
+      setSettingsTab(SETTINGS_TAB_MODEL);
+      setLlmSettings(normalizeLlmSettings(DEFAULT_LLM_SETTINGS));
+      setLlmSettingsLoading(false);
+      setLlmSettingsBusy(false);
+      setLlmSettingsError("");
+      setCustomInstructionDraft("");
+      setIsAddModelFormOpen(false);
+      setAddModelForm({ ...DEFAULT_ADD_MODEL_FORM });
+      setProviderModels([]);
+      setProviderModelsLoading(false);
+      setProviderModelsError("");
+      providerModelsRequestRef.current = 0;
       return;
     }
 
@@ -2052,6 +2547,127 @@ export default function App() {
       runtimeConfig: chatRuntimeConfig,
     });
   }, [chatActiveContext, chatMessages, chatRuntimeConfig, session?.userId]);
+
+  useEffect(() => {
+    if (!session?.token) {
+      return undefined;
+    }
+    let cancelled = false;
+
+    async function hydrateLlmSettings() {
+      setLlmSettingsLoading(true);
+      setLlmSettingsError("");
+      try {
+        const payload = await fetchLlmSettings(session.token);
+        if (cancelled) {
+          return;
+        }
+        const normalized = normalizeLlmSettings(payload);
+        const activeModel = getActiveLlmModelEntry(normalized);
+        setLlmSettings(normalized);
+        setCustomInstructionDraft(normalized.custom_instruction);
+        setChatRuntimeConfig((current) => normalizeChatRuntimeConfig({
+          ...current,
+          modelId: String(activeModel?.model || current?.modelId || DEFAULT_CHAT_RUNTIME_CONFIG.modelId),
+          userInstruction: normalized.custom_instruction,
+        }));
+      } catch (error) {
+        if (!cancelled) {
+          setLlmSettingsError(error.message || "Unable to load LLM settings.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLlmSettingsLoading(false);
+        }
+      }
+    }
+
+    hydrateLlmSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.token]);
+
+  useEffect(() => {
+    if (!isAddModelFormOpen) {
+      setProviderModels([]);
+      setProviderModelsLoading(false);
+      setProviderModelsError("");
+      return undefined;
+    }
+
+    const provider = String(addModelForm.provider || "").trim().toLowerCase();
+    const isSupportedDiscoveryProvider = provider === "openai" || provider === "anthropic";
+    if (!isSupportedDiscoveryProvider) {
+      setProviderModels([]);
+      setProviderModelsLoading(false);
+      setProviderModelsError("");
+      return undefined;
+    }
+
+    const apiKey = String(addModelForm.api_key || "").trim();
+    if (!apiKey || !session?.token) {
+      setProviderModels([]);
+      setProviderModelsLoading(false);
+      setProviderModelsError("");
+      return undefined;
+    }
+
+    const baseUrl = String(addModelForm.base_url || "").trim();
+    const requestId = providerModelsRequestRef.current + 1;
+    providerModelsRequestRef.current = requestId;
+    const timeoutId = window.setTimeout(async () => {
+      setProviderModelsLoading(true);
+      setProviderModelsError("");
+      try {
+        const payload = await fetchLlmProviderModels(session.token, provider, {
+          api_key: apiKey,
+          base_url: baseUrl || undefined,
+        });
+        if (providerModelsRequestRef.current !== requestId) {
+          return;
+        }
+        const normalizedModels = normalizeProviderModelCatalog(payload?.models);
+        setProviderModels(normalizedModels);
+        setProviderModelsError(normalizedModels.length > 0 ? "" : "No models were returned for this provider.");
+        setAddModelForm((current) => {
+          const currentProvider = String(current.provider || "").trim().toLowerCase();
+          if (currentProvider !== provider) {
+            return current;
+          }
+          const currentModel = String(current.model || "").trim();
+          const currentModelExists = normalizedModels.some((entry) => entry.id === currentModel);
+          if (currentModelExists) {
+            return current;
+          }
+          return {
+            ...current,
+            model: normalizedModels[0]?.id || "",
+          };
+        });
+      } catch (error) {
+        if (providerModelsRequestRef.current !== requestId) {
+          return;
+        }
+        setProviderModels([]);
+        setProviderModelsError(error.message || "Unable to load provider models.");
+      } finally {
+        if (providerModelsRequestRef.current === requestId) {
+          setProviderModelsLoading(false);
+        }
+      }
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    addModelForm.api_key,
+    addModelForm.base_url,
+    addModelForm.provider,
+    isAddModelFormOpen,
+    session?.token,
+  ]);
 
   useEffect(() => {
     if (!session?.token) {
@@ -2995,6 +3611,126 @@ export default function App() {
     }
   }
 
+  function applyLlmSettingsSnapshot(payload) {
+    const normalized = normalizeLlmSettings(payload);
+    const activeModel = getActiveLlmModelEntry(normalized);
+    setLlmSettings(normalized);
+    setCustomInstructionDraft(normalized.custom_instruction);
+    setChatRuntimeConfig((current) => normalizeChatRuntimeConfig({
+      ...current,
+      modelId: String(activeModel?.model || current?.modelId || DEFAULT_CHAT_RUNTIME_CONFIG.modelId),
+      userInstruction: normalized.custom_instruction,
+    }));
+  }
+
+  async function mutateLlmSettings(action) {
+    if (!session?.token) {
+      return false;
+    }
+    setLlmSettingsBusy(true);
+    setLlmSettingsError("");
+    try {
+      const payload = await action(session.token);
+      applyLlmSettingsSnapshot(payload);
+      return true;
+    } catch (error) {
+      setLlmSettingsError(error.message || "Unable to update settings.");
+      return false;
+    } finally {
+      setLlmSettingsBusy(false);
+    }
+  }
+
+  function handleAddModelFieldChange(field, value) {
+    setAddModelForm((current) => {
+      const next = {
+        ...current,
+        [field]: value,
+      };
+      if (field === "provider") {
+        next.model = "";
+      }
+      return next;
+    });
+    if (field === "provider") {
+      providerModelsRequestRef.current += 1;
+      setProviderModels([]);
+      setProviderModelsLoading(false);
+      setProviderModelsError("");
+    } else if (field === "api_key" || field === "base_url") {
+      setProviderModelsError("");
+    }
+  }
+
+  async function handleAddModelSubmit(event) {
+    event.preventDefault();
+    if (!session?.token) {
+      return;
+    }
+
+    const provider = String(addModelForm.provider || "").trim().toLowerCase();
+    const model = String(addModelForm.model || "").trim();
+    const label = String(addModelForm.label || "").trim();
+    const baseUrl = String(addModelForm.base_url || "").trim();
+    const apiKey = String(addModelForm.api_key || "").trim();
+    if (!provider || !model) {
+      setLlmSettingsError("Provider and model are required.");
+      return;
+    }
+    if ((provider === "openai" || provider === "anthropic") && !apiKey) {
+      setLlmSettingsError("An API key is required for OpenAI and Anthropic models.");
+      return;
+    }
+
+    const added = await mutateLlmSettings((token) => addLlmModel(token, {
+      provider,
+      model,
+      label,
+      base_url: baseUrl,
+      api_key: apiKey,
+    }));
+    if (added) {
+      setAddModelForm({ ...DEFAULT_ADD_MODEL_FORM });
+      setIsAddModelFormOpen(false);
+      setProviderModels([]);
+      setProviderModelsLoading(false);
+      setProviderModelsError("");
+      providerModelsRequestRef.current += 1;
+    }
+  }
+
+  async function handleDeleteModel(modelId, modelLabel = "") {
+    const targetModelId = String(modelId || "").trim();
+    if (!targetModelId || !session?.token) {
+      return;
+    }
+    const label = String(modelLabel || "").trim() || "this model";
+    const shouldDelete = window.confirm(`Delete ${label}?`);
+    if (!shouldDelete) {
+      return;
+    }
+    await mutateLlmSettings((token) => deleteLlmModel(token, targetModelId));
+  }
+
+  async function handleSelectModel(modelId) {
+    const nextModelId = String(modelId || "").trim();
+    if (!nextModelId || !session?.token) {
+      return;
+    }
+    await mutateLlmSettings((token) => updateLlmSettings(token, { active_model_id: nextModelId }));
+  }
+
+  async function handleSaveCustomInstruction() {
+    if (!session?.token) {
+      return;
+    }
+    await mutateLlmSettings((token) => updateLlmSettings(token, { custom_instruction: customInstructionDraft }));
+  }
+
+  function handleResetCustomInstruction() {
+    setCustomInstructionDraft(String(llmSettings?.custom_instruction || ""));
+  }
+
   function handleChatContextChange(nextContext) {
     const normalizedContext = normalizeChatContext(nextContext);
     if (normalizedContext.mode !== CHAT_CONTEXT_SPEC) {
@@ -3099,34 +3835,56 @@ export default function App() {
           </p>
         </div>
         <div className="hero-aside">
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={handleThemeToggle}
-            aria-pressed={isDarkTheme}
-            aria-label={isDarkTheme ? "Switch to light mode" : "Switch to dark mode"}
-          >
-            <span className="theme-toggle-icon" aria-hidden="true">
-              {isDarkTheme ? (
-                <svg viewBox="0 0 24 24" role="presentation" focusable="false">
-                  <circle cx="12" cy="12" r="4.2" />
-                  <line x1="12" y1="1.6" x2="12" y2="5.1" />
-                  <line x1="12" y1="18.9" x2="12" y2="22.4" />
-                  <line x1="1.6" y1="12" x2="5.1" y2="12" />
-                  <line x1="18.9" y1="12" x2="22.4" y2="12" />
-                  <line x1="4.2" y1="4.2" x2="6.8" y2="6.8" />
-                  <line x1="17.2" y1="17.2" x2="19.8" y2="19.8" />
-                  <line x1="17.2" y1="6.8" x2="19.8" y2="4.2" />
-                  <line x1="4.2" y1="19.8" x2="6.8" y2="17.2" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" role="presentation" focusable="false">
-                  <path d="M15.8 2.9a9.6 9.6 0 1 0 5.3 16.9 9.2 9.2 0 1 1-5.3-16.9z" />
-                </svg>
-              )}
-            </span>
-            <span className="sr-only">{isDarkTheme ? "Switch to light mode" : "Switch to dark mode"}</span>
-          </button>
+          <div className="hero-controls">
+            {session ? (
+              <button
+                type="button"
+                className="settings-trigger-button"
+                onClick={() => {
+                  setSettingsTab(SETTINGS_TAB_MODEL);
+                  setLlmSettingsError("");
+                  setIsAddModelFormOpen(false);
+                  setAddModelForm({ ...DEFAULT_ADD_MODEL_FORM });
+                  setProviderModels([]);
+                  setProviderModelsLoading(false);
+                  setProviderModelsError("");
+                  providerModelsRequestRef.current += 1;
+                  setIsSettingsOpen(true);
+                }}
+                aria-label="Open settings"
+              >
+                Settings
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={handleThemeToggle}
+              aria-pressed={isDarkTheme}
+              aria-label={isDarkTheme ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              <span className="theme-toggle-icon" aria-hidden="true">
+                {isDarkTheme ? (
+                  <svg viewBox="0 0 24 24" role="presentation" focusable="false">
+                    <circle cx="12" cy="12" r="4.2" />
+                    <line x1="12" y1="1.6" x2="12" y2="5.1" />
+                    <line x1="12" y1="18.9" x2="12" y2="22.4" />
+                    <line x1="1.6" y1="12" x2="5.1" y2="12" />
+                    <line x1="18.9" y1="12" x2="22.4" y2="12" />
+                    <line x1="4.2" y1="4.2" x2="6.8" y2="6.8" />
+                    <line x1="17.2" y1="17.2" x2="19.8" y2="19.8" />
+                    <line x1="17.2" y1="6.8" x2="19.8" y2="4.2" />
+                    <line x1="4.2" y1="19.8" x2="6.8" y2="17.2" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" role="presentation" focusable="false">
+                    <path d="M15.8 2.9a9.6 9.6 0 1 0 5.3 16.9 9.2 9.2 0 1 1-5.3-16.9z" />
+                  </svg>
+                )}
+              </span>
+              <span className="sr-only">{isDarkTheme ? "Switch to light mode" : "Switch to dark mode"}</span>
+            </button>
+          </div>
           {session ? (
             <div className="session-card">
               <span>Signed in as</span>
@@ -3214,6 +3972,50 @@ export default function App() {
           />
         </main>
       )}
+      <SettingsModal
+        open={Boolean(session) && isSettingsOpen}
+        tab={settingsTab}
+        loading={llmSettingsLoading}
+        busy={llmSettingsBusy}
+        error={llmSettingsError}
+        settings={llmSettings}
+        isAddModelFormOpen={isAddModelFormOpen}
+        addModelForm={addModelForm}
+        providerModels={providerModels}
+        providerModelsLoading={providerModelsLoading}
+        providerModelsError={providerModelsError}
+        customInstructionDraft={customInstructionDraft}
+        onClose={() => {
+          setIsSettingsOpen(false);
+          setIsAddModelFormOpen(false);
+          setAddModelForm({ ...DEFAULT_ADD_MODEL_FORM });
+          setProviderModels([]);
+          setProviderModelsLoading(false);
+          setProviderModelsError("");
+          providerModelsRequestRef.current += 1;
+        }}
+        onTabChange={setSettingsTab}
+        onToggleAddModelForm={() => {
+          setIsAddModelFormOpen((current) => {
+            const next = !current;
+            if (!next) {
+              setAddModelForm({ ...DEFAULT_ADD_MODEL_FORM });
+              setProviderModels([]);
+              setProviderModelsLoading(false);
+              setProviderModelsError("");
+              providerModelsRequestRef.current += 1;
+            }
+            return next;
+          });
+        }}
+        onAddModelFieldChange={handleAddModelFieldChange}
+        onAddModelSubmit={handleAddModelSubmit}
+        onSelectModel={handleSelectModel}
+        onDeleteModel={handleDeleteModel}
+        onCustomInstructionDraftChange={setCustomInstructionDraft}
+        onSaveCustomInstruction={handleSaveCustomInstruction}
+        onResetCustomInstruction={handleResetCustomInstruction}
+      />
     </div>
   );
 }
