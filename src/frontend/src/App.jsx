@@ -121,14 +121,22 @@ function loadSpecCache() {
     }
 
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
+    return parsed && typeof parsed === "object" ? compactSpecCache(parsed) : {};
   } catch {
     return {};
   }
 }
 
 function saveSpecCache(cache) {
-  localStorage.setItem(SPEC_CACHE_KEY, JSON.stringify(cache));
+  try {
+    localStorage.setItem(SPEC_CACHE_KEY, JSON.stringify(compactSpecCache(cache)));
+  } catch {
+    try {
+      localStorage.removeItem(SPEC_CACHE_KEY);
+    } catch {
+      // Ignore storage write/remove failures.
+    }
+  }
 }
 
 function getPreferredTheme() {
@@ -846,8 +854,76 @@ function resolveUploadDefaultTests(entry, cachedEntry = null) {
   if (cachedOriginal && cachedOriginal.length > 0) {
     return cloneJsonValue(cachedOriginal) || [];
   }
+  const cachedGenerated = Array.isArray(cachedEntry?.generatedTests) ? cachedEntry.generatedTests : null;
+  if (cachedGenerated && cachedGenerated.length > 0) {
+    return cloneJsonValue(cachedGenerated) || [];
+  }
   const suiteCases = Array.isArray(entry?.generatedSuite?.test_cases) ? entry.generatedSuite.test_cases : [];
   return cloneJsonValue(suiteCases) || [];
+}
+
+function buildSpecCacheEntry(entry, fallbackEntry = null) {
+  const source = entry && typeof entry === "object" ? entry : {};
+  const fallback = fallbackEntry && typeof fallbackEntry === "object" ? fallbackEntry : {};
+
+  const generatedTests = Array.isArray(source.generatedTests)
+    ? source.generatedTests
+    : (Array.isArray(fallback.generatedTests) ? fallback.generatedTests : []);
+  const uploadDefaultTests = Array.isArray(source.uploadDefaultTests)
+    ? source.uploadDefaultTests
+    : (
+        Array.isArray(source.originalGeneratedTests)
+          ? source.originalGeneratedTests
+          : (
+              Array.isArray(fallback.uploadDefaultTests)
+                ? fallback.uploadDefaultTests
+                : generatedTests
+            )
+      );
+  const runConfigDefault = normalizeRunConfig(
+    source.runConfigDefault ?? fallback.runConfigDefault,
+    buildDefaultRunConfig(source),
+  );
+  const runConfigCurrent = normalizeRunConfig(
+    source.runConfigCurrent ?? fallback.runConfigCurrent,
+    runConfigDefault,
+  );
+
+  return {
+    filename: String(source.filename ?? fallback.filename ?? ""),
+    uploadedAt: source.uploadedAt ?? source.created_at ?? source.createdAt ?? fallback.uploadedAt ?? fallback.createdAt ?? null,
+    createdAt: source.createdAt ?? source.created_at ?? source.uploadedAt ?? fallback.createdAt ?? fallback.uploadedAt ?? null,
+    preview: source.preview && typeof source.preview === "object"
+      ? source.preview
+      : (fallback.preview && typeof fallback.preview === "object" ? fallback.preview : null),
+    generatedTests: Array.isArray(generatedTests) ? generatedTests : [],
+    uploadDefaultTests: Array.isArray(uploadDefaultTests) ? uploadDefaultTests : [],
+    runConfigDefault,
+    runConfigCurrent,
+  };
+}
+
+function compactSpecCache(cache) {
+  if (!cache || typeof cache !== "object") {
+    return {};
+  }
+
+  const next = {};
+  for (const [userId, value] of Object.entries(cache)) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const nextUserCache = {};
+    for (const [specId, entry] of Object.entries(value)) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      nextUserCache[specId] = buildSpecCacheEntry(entry);
+    }
+    next[userId] = nextUserCache;
+  }
+
+  return next;
 }
 
 function StatCard({ label, value, accent }) {
@@ -2698,7 +2774,7 @@ export default function App() {
               const generatedTests = Array.isArray(cached?.generatedTests) ? cached.generatedTests : suiteTestCases;
               const originalGeneratedTests = Array.isArray(cached?.originalGeneratedTests)
                 ? cached.originalGeneratedTests
-                : generatedTests;
+                : (Array.isArray(cached?.uploadDefaultTests) ? cached.uploadDefaultTests : generatedTests);
               const uploadDefaultTests = resolveUploadDefaultTests(
                 { generatedSuite },
                 cached || null,
@@ -2964,11 +3040,10 @@ export default function App() {
 
       const nextTests = cloneJsonValue(normalizedTests) || [];
       userCache[specId] = {
-        ...existing,
-        generatedTests: nextTests,
-        generatedSuite: existing.generatedSuite
-          ? { ...existing.generatedSuite, test_cases: nextTests }
-          : existing.generatedSuite,
+        ...buildSpecCacheEntry({
+          ...existing,
+          generatedTests: nextTests,
+        }, existing),
       };
 
       return {
@@ -3010,11 +3085,10 @@ export default function App() {
       const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
       const updatedTests = applyGeneratedTestEdit(currentTests, testIndex, field, value);
       userCache[specId] = {
-        ...existing,
-        generatedTests: updatedTests,
-        generatedSuite: existing.generatedSuite
-          ? { ...existing.generatedSuite, test_cases: updatedTests }
-          : existing.generatedSuite,
+        ...buildSpecCacheEntry({
+          ...existing,
+          generatedTests: updatedTests,
+        }, existing),
       };
 
       return {
@@ -3063,15 +3137,18 @@ export default function App() {
       const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
       const originalTests = Array.isArray(runBaseline) && runBaseline.length > 0
         ? runBaseline
-        : (Array.isArray(existing.originalGeneratedTests) ? existing.originalGeneratedTests : currentTests);
+        : (
+            Array.isArray(existing.originalGeneratedTests)
+              ? existing.originalGeneratedTests
+              : (Array.isArray(existing.uploadDefaultTests) ? existing.uploadDefaultTests : currentTests)
+          );
       const resetTests = applyGeneratedTestReset(currentTests, originalTests, testIndex);
 
       userCache[specId] = {
-        ...existing,
-        generatedTests: resetTests,
-        generatedSuite: existing.generatedSuite
-          ? { ...existing.generatedSuite, test_cases: resetTests }
-          : existing.generatedSuite,
+        ...buildSpecCacheEntry({
+          ...existing,
+          generatedTests: resetTests,
+        }, existing),
       };
 
       return {
@@ -3120,9 +3197,11 @@ export default function App() {
             createdAt: sourceEntry?.created_at || null,
           };
       userCache[specId] = {
-        ...seed,
-        runConfigDefault: normalizeRunConfig(seed.runConfigDefault, resolvedConfigs.runConfigDefault),
-        runConfigCurrent: nextCurrent,
+        ...buildSpecCacheEntry({
+          ...seed,
+          runConfigDefault: normalizeRunConfig(seed.runConfigDefault, resolvedConfigs.runConfigDefault),
+          runConfigCurrent: nextCurrent,
+        }, seed),
       };
       return {
         ...current,
@@ -3175,13 +3254,12 @@ export default function App() {
       }
       const resetTests = cloneJsonValue(defaultTests) || [];
       userCache[specId] = {
-        ...existing,
-        runConfigDefault: normalizeRunConfig(existing.runConfigDefault, resolvedConfigs.runConfigDefault),
-        runConfigCurrent: resolvedConfigs.runConfigDefault,
-        generatedTests: resetTests,
-        generatedSuite: existing.generatedSuite
-          ? { ...existing.generatedSuite, test_cases: resetTests }
-          : existing.generatedSuite,
+        ...buildSpecCacheEntry({
+          ...existing,
+          runConfigDefault: normalizeRunConfig(existing.runConfigDefault, resolvedConfigs.runConfigDefault),
+          runConfigCurrent: resolvedConfigs.runConfigDefault,
+          generatedTests: resetTests,
+        }, existing),
       };
       return {
         ...current,
@@ -3378,11 +3456,10 @@ export default function App() {
         const currentTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
         const nextTests = [...currentTests, normalizedCaseCopy];
         userCache[specId] = {
-          ...existing,
-          generatedTests: nextTests,
-          generatedSuite: existing.generatedSuite
-            ? { ...existing.generatedSuite, test_cases: nextTests }
-            : existing.generatedSuite,
+          ...buildSpecCacheEntry({
+            ...existing,
+            generatedTests: nextTests,
+          }, existing),
         };
         return {
           ...current,
@@ -3551,19 +3628,16 @@ export default function App() {
         const next = { ...current };
         const nextUserCache = { ...(next[session.userId] || {}) };
         for (const entry of uploadedEntries) {
-          nextUserCache[entry.id] = {
+          nextUserCache[entry.id] = buildSpecCacheEntry({
             filename: entry.filename,
             uploadedAt: entry.created_at,
             createdAt: entry.created_at,
-            parsed: entry.parsed,
             preview: entry.preview,
-            generatedSuite: entry.generatedSuite,
             generatedTests: entry.generatedTests,
-            originalGeneratedTests: entry.originalGeneratedTests,
             uploadDefaultTests: entry.uploadDefaultTests,
             runConfigDefault: entry.runConfigDefault,
             runConfigCurrent: entry.runConfigCurrent,
-          };
+          });
         }
         next[session.userId] = nextUserCache;
         return next;

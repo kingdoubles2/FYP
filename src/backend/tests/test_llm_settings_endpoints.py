@@ -90,6 +90,7 @@ class LlmSettingsEndpointTests(unittest.TestCase):
             self.assertIsNotNone(added_entry)
             self.assertTrue(bool(added_entry["has_api_key"]))
             self.assertNotIn("sk-test-1234567890", str(added_entry["api_key_masked"]))
+            self.assertEqual(str(added_payload["active_model_id"]), str(added_entry["id"]))
 
             selected_payload = main.update_llm_settings(
                 req=main.UpdateLLMSettingsRequest(active_model_id=str(added_entry["id"])),

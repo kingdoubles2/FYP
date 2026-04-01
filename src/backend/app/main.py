@@ -1085,6 +1085,8 @@ def add_llm_model(req: AddLLMModelRequest, current_user: User = Depends(get_curr
             "api_key": api_key,
         }
         saved_models.append(new_entry)
+        # Newly added models become active immediately to reduce extra UI clicks.
+        row.active_model_id = str(new_entry["id"])
         _save_user_models(row, saved_models)
         db.commit()
         db.refresh(row)
