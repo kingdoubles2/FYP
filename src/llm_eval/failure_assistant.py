@@ -17,9 +17,31 @@ from llm_eval.llm_client_types import (
     is_rate_limit_or_quota_kind,
     normalize_llm_error_meta,
 )
+from test_generator.sample_data import generate_valid_value, generate_wrong_type_value
 
 INPUT_RELATED_SIGNALS = frozenset({"schema_type", "schema_value", "missing_required", "validation"})
 SUGGESTION_TIMEOUT_SECONDS_MAX = 60
+FOLLOWUP_MODE_REPAIR_VALID = "repair_valid"
+FOLLOWUP_MODE_PRESERVE_NEGATIVE = "preserve_negative"
+GENERIC_FOLLOWUP_CATEGORIES = frozenset(
+    {
+        "llm_followup",
+        "llm_follow_up",
+        "followup",
+        "follow_up",
+        "assistant_followup",
+        "auto_followup",
+    }
+)
+EXPLICIT_STATUS_CHANGE_PHRASES = (
+    "change expected status",
+    "change the expected status",
+    "expected status should be changed",
+    "set expected status to",
+    "switch expected status",
+    "update expected status to",
+    "expectation/status should be changed",
+)
 
 
 def _safe_int(value: Any, default: int, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
@@ -535,6 +557,226 @@ def _status_strings(evidence: Dict[str, Any]) -> Tuple[str, str]:
     return expected_text, actual_text
 
 
+def _is_numeric_like_string(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return False
+    return bool(re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?", text, flags=re.IGNORECASE))
+
+
+def _build_executed_input_snapshot(evidence: Dict[str, Any]) -> Dict[str, Any]:
+    execution = evidence.get("execution") if isinstance(evidence.get("execution"), dict) else {}
+    request_sent = execution.get("request_sent") if isinstance(execution.get("request_sent"), dict) else {}
+    test_context = evidence.get("test_context") if isinstance(evidence.get("test_context"), dict) else {}
+    generated_input = test_context.get("generated_input") if isinstance(test_context.get("generated_input"), dict) else {}
+
+    path_params = _coerce_mapping(request_sent.get("path_params"))
+    if not path_params:
+        path_params = _coerce_mapping(generated_input.get("path_params"))
+
+    query_params = _coerce_mapping(request_sent.get("query_params"))
+    if not query_params:
+        query_params = _coerce_mapping(generated_input.get("query_params"))
+
+    headers = _coerce_mapping(request_sent.get("headers"))
+    if not headers:
+        headers = _coerce_mapping(generated_input.get("headers"))
+
+    body = deepcopy(request_sent.get("body"))
+    if body is None:
+        body = deepcopy(generated_input.get("body"))
+
+    return {
+        "path_params": path_params,
+        "query_params": query_params,
+        "headers": headers,
+        "body": body,
+    }
+
+
+def _extract_negative_type_hint_from_title(title: str) -> tuple[str, Any]:
+    text = str(title or "").strip()
+    if not text:
+        return "", None
+
+    patterns = (
+        r"negative\s+type:\s*(?:query|path|header|body(?:\s+field)?)\s+([A-Za-z0-9_\-]+)\s*=\s*['\"]([^'\"]+)['\"]",
+        r"negative\s+type:\s*(?:query|path|header|body(?:\s+field)?)\s+([A-Za-z0-9_\-]+)\s*=\s*([^\s,;]+)",
+        r"negative\s+type:\s*([A-Za-z0-9_\-]+)\s*=\s*['\"]([^'\"]+)['\"]",
+        r"negative\s+type:\s*([A-Za-z0-9_\-]+)\s*=\s*([^\s,;]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        field = str(match.group(1) or "").strip()
+        raw_value = str(match.group(2) or "").strip()
+        if field and raw_value:
+            return field, _parse_reason_scalar(raw_value)
+    return "", None
+
+
+def _extract_negative_intent_context(
+    evidence: Dict[str, Any],
+    *,
+    original_test_case: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    test_context = evidence.get("test_context") if isinstance(evidence.get("test_context"), dict) else {}
+    original_case = original_test_case if isinstance(original_test_case, dict) else {}
+    category = str(test_context.get("category") or original_case.get("category") or "").strip()
+    title = str(test_context.get("title") or original_case.get("title") or "").strip()
+    raw_intent = str(test_context.get("intent") or "").strip().lower()
+    intent = raw_intent or core.determine_intent(category)
+    normalized_intent = str(intent or "").strip().lower()
+    category_lower = category.lower()
+    title_lower = title.lower()
+    is_negative_intent = normalized_intent in {"negative", "auth", "fail-path"} or any(
+        token in category_lower for token in ("negative", "auth", "fail")
+    )
+    is_negative_type = "negative_type" in category_lower or "negative type" in title_lower
+    return {
+        "category": category,
+        "intent": normalized_intent,
+        "title": title,
+        "is_negative_intent": bool(is_negative_intent),
+        "is_negative_type": bool(is_negative_type),
+    }
+
+
+def _values_differ_loose(left: Any, right: Any) -> bool:
+    if left is None and right is None:
+        return False
+    if left is None or right is None:
+        return True
+    return str(left).strip() != str(right).strip()
+
+
+def _find_negative_type_target_field(
+    *,
+    evidence: Dict[str, Any],
+    executed_input: Dict[str, Any],
+    hint_field: str,
+) -> tuple[str, Any]:
+    if hint_field:
+        found, value, key = _lookup_field_value(executed_input, hint_field)
+        if found:
+            return key or hint_field, value
+
+    for section_name in ("query_params", "path_params", "body"):
+        section = executed_input.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for key, value in section.items():
+            schema = _resolve_field_schema(evidence, str(key))
+            schema_type = str((schema or {}).get("type") or "").strip().lower()
+            if schema_type in {"number", "integer"} and isinstance(value, str):
+                return str(key), value
+    return "", None
+
+
+def analyze_negative_setup_drift(
+    evidence: Dict[str, Any],
+    *,
+    original_test_case: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    context = _extract_negative_intent_context(evidence, original_test_case=original_test_case)
+    executed_input = _build_executed_input_snapshot(evidence)
+    hint_field, hint_value = _extract_negative_type_hint_from_title(str(context.get("title") or ""))
+
+    target_field, executed_value = _find_negative_type_target_field(
+        evidence=evidence,
+        executed_input=executed_input,
+        hint_field=hint_field,
+    )
+    schema = _resolve_field_schema(evidence, target_field) if target_field else {}
+    schema_type = str((schema or {}).get("type") or "").strip().lower()
+    is_numeric_schema = schema_type in {"number", "integer"}
+    numeric_like_string = bool(is_numeric_schema and _is_numeric_like_string(executed_value))
+
+    rule_numeric_string = bool(context.get("is_negative_type") and numeric_like_string)
+    rule_title_hint_mismatch = bool(
+        context.get("is_negative_intent")
+        and hint_field
+        and target_field
+        and _field_names_match(hint_field, target_field)
+        and _values_differ_loose(executed_value, hint_value)
+    )
+    drift_detected = bool(rule_numeric_string or rule_title_hint_mismatch)
+
+    return {
+        "executed_input": executed_input,
+        "negative_intent_context": context,
+        "drift_detected": drift_detected,
+        "target_field": str(target_field or ""),
+        "executed_value": deepcopy(executed_value),
+        "expected_invalid_hint": deepcopy(hint_value),
+        "numeric_like_string": numeric_like_string,
+        "schema_type": schema_type,
+        "drift_reasons": {
+            "numeric_string_for_numeric_schema": rule_numeric_string,
+            "title_invalid_hint_mismatch": rule_title_hint_mismatch,
+        },
+    }
+
+
+def _drift_prompt_context(drift_analysis: Dict[str, Any]) -> Dict[str, Any]:
+    context = drift_analysis.get("negative_intent_context") if isinstance(drift_analysis.get("negative_intent_context"), dict) else {}
+    return {
+        "drift_detected": bool(drift_analysis.get("drift_detected")),
+        "target_field": str(drift_analysis.get("target_field") or ""),
+        "executed_value": drift_analysis.get("executed_value"),
+        "expected_invalid_hint": drift_analysis.get("expected_invalid_hint"),
+        "is_negative_intent": bool(context.get("is_negative_intent")),
+        "is_negative_type": bool(context.get("is_negative_type")),
+    }
+
+
+def _build_negative_drift_override_contract(evidence: Dict[str, Any], drift_analysis: Dict[str, Any]) -> Dict[str, Any]:
+    field = str(drift_analysis.get("target_field") or "input field")
+    executed_value = drift_analysis.get("executed_value")
+    expected_hint = drift_analysis.get("expected_invalid_hint")
+    expected_text, actual_text = _status_strings(evidence)
+    value_text = _format_inline_value(executed_value)
+    expected_hint_text = _format_inline_value(expected_hint) if expected_hint is not None else "an intentionally invalid value"
+    cause = (
+        f"Negative-case setup drift: {field} was executed as {value_text}, which is effectively valid for this negative-type check."
+    )
+    why_likely = (
+        f"The case expected {expected_text} but observed {actual_text}; title intent indicates invalid {field}={expected_hint_text}, "
+        f"while executed request sent {field}={value_text}."
+    )
+    check_next = (
+        f"Restore intentionally invalid {field} (for example {expected_hint_text}) or update test expectation/category if valid input is intended."
+    )
+    evidence_quotes = [
+        f"{field}={value_text}",
+        f"expected={expected_text}",
+        f"actual={actual_text}",
+    ]
+    return {
+        "cause": re.sub(r"\s+", " ", cause).strip(),
+        "why_likely": re.sub(r"\s+", " ", why_likely).strip(),
+        "check_next": re.sub(r"\s+", " ", check_next).strip(),
+        "confidence": "confirmed",
+        "expected_negative_behavior": False,
+        "evidence_quotes": evidence_quotes,
+    }
+
+
+def _apply_negative_drift_override_to_contract(
+    contract: Dict[str, Any],
+    *,
+    evidence: Dict[str, Any],
+    drift_analysis: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not bool(drift_analysis.get("drift_detected")):
+        return contract
+    override_contract = _build_negative_drift_override_contract(evidence, drift_analysis)
+    return override_contract
+
+
 def _build_diagnostic_triplet(evidence: Dict[str, Any], signal: str) -> Tuple[str, str, str]:
     operation = (evidence.get("spec") or {}).get("operation") or {}
     method = str(operation.get("method") or "REQUEST").upper()
@@ -728,6 +970,7 @@ def generate_failure_explanation(
 ) -> Dict[str, Any]:
     _ = prompt_bundle
     signal = classify_failure_signal(evidence)
+    drift_analysis = analyze_negative_setup_drift(evidence)
     external = signal in {"transport", "auth"}
     warning = (
         "This failure pattern looks external (authentication/network/upstream). "
@@ -778,6 +1021,15 @@ def generate_failure_explanation(
         return _failed_payload(llm_error=f"prompt_template_error: {exc}", attempts=[], validation_errors=["prompt_template_error"])
 
     base_user_prompt = core.build_user_prompt(user_template, evidence, evidence_view)
+    drift_context_preview = _drift_prompt_context(drift_analysis)
+    base_user_prompt = (
+        base_user_prompt
+        + "\n\nGrounding policy:\n"
+        + "- Treat execution.request_sent as the authoritative executed input when it conflicts with title/category intent.\n"
+        + "- If a negative case appears manually edited away from its intended invalid input, diagnose setup drift before backend-defect hypotheses.\n"
+        + "Drift context:\n"
+        + f"{json.dumps(drift_context_preview, ensure_ascii=True)}"
+    )
     attempts: List[Dict[str, Any]] = []
     retries = max(0, int(retry_invalid_output))
     remaining = retries + 1
@@ -853,6 +1105,11 @@ def generate_failure_explanation(
             continue
 
         contract, normalize_errors = core.normalize_contract(parsed or {})
+        contract = _apply_negative_drift_override_to_contract(
+            contract,
+            evidence=evidence,
+            drift_analysis=drift_analysis,
+        )
         explanation = core.render_explanation(contract, word_target=int(word_target), word_max=int(word_max))
         validation_errors = normalize_errors + core.validate_contract_output(contract, explanation, word_max=int(word_max))
         attempt_record["validation_errors"] = validation_errors
@@ -940,49 +1197,170 @@ def _next_unique_test_id(base_id: str, existing_test_ids: Sequence[str]) -> str:
         index += 1
 
 
+def _coerce_status_code(value: Any) -> Optional[int]:
+    if isinstance(value, int):
+        return int(value)
+    if str(value).isdigit():
+        return int(str(value))
+    return None
+
+
+def _collect_expected_status_codes(expected_result: Any) -> List[int]:
+    if not isinstance(expected_result, dict):
+        return []
+    status_any = expected_result.get("status_code_any_of")
+    if isinstance(status_any, list):
+        return [int(item) for item in status_any if str(item).isdigit()]
+    status_single = _coerce_status_code(expected_result.get("status_code"))
+    return [status_single] if status_single is not None else []
+
+
+def _resolve_followup_mode(
+    *,
+    evidence: Dict[str, Any],
+    original_test_case: Dict[str, Any],
+) -> str:
+    test_context = evidence.get("test_context") if isinstance(evidence.get("test_context"), dict) else {}
+    raw_intent = str(test_context.get("intent") or "").strip().lower()
+    category = str(
+        original_test_case.get("category")
+        or test_context.get("category")
+        or ""
+    ).strip()
+    intent = raw_intent or core.determine_intent(category)
+    normalized_intent = str(intent).strip().lower()
+    negative_like_intent = normalized_intent in {"negative", "auth", "fail-path"}
+
+    expected_codes = _collect_expected_status_codes(original_test_case.get("expected_result"))
+    has_success_expectation = any(200 <= code <= 299 for code in expected_codes)
+    has_error_expectation = any(code >= 400 for code in expected_codes)
+
+    if has_success_expectation and not has_error_expectation and not negative_like_intent:
+        return FOLLOWUP_MODE_REPAIR_VALID
+    return FOLLOWUP_MODE_PRESERVE_NEGATIVE
+
+
+def _collect_explanation_context_text(explanation_context: Optional[Dict[str, Any]]) -> str:
+    context = explanation_context if isinstance(explanation_context, dict) else {}
+    chunks: List[str] = []
+    for key in ("likely_cause", "why_likely", "check_next", "explanation"):
+        value = context.get(key)
+        if isinstance(value, str) and value.strip():
+            chunks.append(value.strip())
+    return re.sub(r"\s+", " ", " ".join(chunks)).strip()
+
+
+def _contains_explicit_status_change_request(explanation_context: Optional[Dict[str, Any]]) -> bool:
+    lowered = _collect_explanation_context_text(explanation_context).lower()
+    if not lowered:
+        return False
+    return any(phrase in lowered for phrase in EXPLICIT_STATUS_CHANGE_PHRASES)
+
+
+def _extract_status_code_from_explicit_request(explanation_context: Optional[Dict[str, Any]]) -> Optional[int]:
+    text = _collect_explanation_context_text(explanation_context)
+    if not text:
+        return None
+    patterns = (
+        r"(?:change|set|switch|update)\s+(?:the\s+)?expected status(?:\s*code)?(?:\s+to|\s+as|\s*=)\s*(\d{3})\b",
+        r"expected status should be\s*(\d{3})\b",
+        r"expectation/status should be changed(?:\s+to)?\s*(\d{3})\b",
+    )
+    lowered = text.lower()
+    for pattern in patterns:
+        match = re.search(pattern, lowered, flags=re.IGNORECASE)
+        if not match:
+            continue
+        code = _coerce_status_code(match.group(1))
+        if code is not None:
+            return code
+    return None
+
+
+def _resolve_expected_status_override(
+    *,
+    explanation_context: Optional[Dict[str, Any]],
+    case_result: Dict[str, Any],
+) -> Optional[int]:
+    if not _contains_explicit_status_change_request(explanation_context):
+        return None
+    explicit_status = _extract_status_code_from_explicit_request(explanation_context)
+    if explicit_status is not None:
+        return explicit_status
+    return _coerce_status_code(case_result.get("actual_status"))
+
+
+def _normalize_category_slug(category: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(category or "").strip().lower()).strip("_")
+
+
+def _resolve_suggested_category(candidate_category: Any, original_category: Any) -> str:
+    candidate = str(candidate_category or "").strip()
+    original = str(original_category or "").strip()
+    if candidate and _normalize_category_slug(candidate) not in GENERIC_FOLLOWUP_CATEGORIES:
+        return candidate
+    if original:
+        return original
+    return candidate or "llm_followup"
+
+
+def _expected_status_text(expected_result: Dict[str, Any]) -> str:
+    expected_status = expected_result.get("status_code")
+    expected_any = expected_result.get("status_code_any_of") if isinstance(expected_result.get("status_code_any_of"), list) else []
+    if isinstance(expected_status, int):
+        return str(expected_status)
+    if expected_any:
+        tokens = [str(item) for item in expected_any if str(item).strip()]
+        if tokens:
+            return "/".join(tokens)
+    return "expected status"
+
+
 def _normalize_expected_result(
     expected: Any,
     *,
     original_expected: Dict[str, Any],
-    observed_status: Optional[int],
+    status_override: Optional[int],
 ) -> Dict[str, Any]:
-    default_expected: Dict[str, Any] = {}
-    if isinstance(original_expected, dict):
-        default_expected = deepcopy(original_expected)
-    if observed_status is not None:
-        default_expected["status_code"] = int(observed_status)
-        default_expected.pop("status_code_any_of", None)
-    if "description" not in default_expected:
-        default_expected["description"] = "Follow-up case suggested by LLM assistant."
+    original = deepcopy(original_expected) if isinstance(original_expected, dict) else {}
+    candidate = deepcopy(expected) if isinstance(expected, dict) else {}
+    normalized: Dict[str, Any] = {}
 
-    if not isinstance(expected, dict):
-        return default_expected
+    if status_override is not None:
+        normalized["status_code"] = int(status_override)
+    else:
+        original_any = original.get("status_code_any_of")
+        original_single = _coerce_status_code(original.get("status_code"))
+        if isinstance(original_any, list):
+            parsed_any = [int(item) for item in original_any if str(item).isdigit()]
+            if parsed_any:
+                normalized["status_code_any_of"] = parsed_any
+        elif original_single is not None:
+            normalized["status_code"] = original_single
+        else:
+            candidate_any = candidate.get("status_code_any_of")
+            candidate_single = _coerce_status_code(candidate.get("status_code"))
+            if isinstance(candidate_any, list):
+                parsed_any = [int(item) for item in candidate_any if str(item).isdigit()]
+                if parsed_any:
+                    normalized["status_code_any_of"] = parsed_any
+            elif candidate_single is not None:
+                normalized["status_code"] = candidate_single
 
-    normalized = deepcopy(expected)
-    status_any = normalized.get("status_code_any_of")
-    status_single = normalized.get("status_code")
-    if isinstance(status_any, list):
-        normalized["status_code_any_of"] = [int(item) for item in status_any if str(item).isdigit()]
-        if not normalized["status_code_any_of"] and observed_status is not None:
-            normalized["status_code"] = int(observed_status)
-            normalized.pop("status_code_any_of", None)
-    elif status_single is not None and str(status_single).isdigit():
-        normalized["status_code"] = int(status_single)
-    elif observed_status is not None:
-        normalized["status_code"] = int(observed_status)
-        normalized.pop("status_code_any_of", None)
-    elif isinstance(default_expected.get("status_code_any_of"), list):
-        normalized["status_code_any_of"] = default_expected["status_code_any_of"]
-    elif default_expected.get("status_code") is not None:
-        normalized["status_code"] = default_expected["status_code"]
+    description = candidate.get("description") if isinstance(candidate.get("description"), str) else ""
+    if not description:
+        fallback_description = original.get("description")
+        if isinstance(fallback_description, str) and fallback_description.strip():
+            description = fallback_description.strip()
+    if not description:
+        description = "Follow-up case suggested by LLM assistant."
+    normalized["description"] = description
 
-    if "description" not in normalized:
-        normalized["description"] = str(default_expected.get("description") or "Follow-up case suggested by LLM assistant.")
-    if (
-        "response_body_contains" not in normalized
-        and isinstance(default_expected.get("response_body_contains"), dict)
-    ):
-        normalized["response_body_contains"] = default_expected["response_body_contains"]
+    response_body_contains = candidate.get("response_body_contains")
+    if isinstance(response_body_contains, dict):
+        normalized["response_body_contains"] = deepcopy(response_body_contains)
+    elif isinstance(original.get("response_body_contains"), dict):
+        normalized["response_body_contains"] = deepcopy(original["response_body_contains"])
     return normalized
 
 
@@ -1009,7 +1387,7 @@ def _normalize_suggested_case(
     candidate: Any,
     *,
     original_test_case: Dict[str, Any],
-    observed_status: Optional[int],
+    status_override: Optional[int],
     existing_test_ids: Sequence[str],
 ) -> Optional[Dict[str, Any]]:
     if not isinstance(candidate, dict):
@@ -1025,7 +1403,7 @@ def _normalize_suggested_case(
     return {
         "test_id": test_id,
         "title": str(candidate.get("title") or f"LLM follow-up for {original_test_case.get('test_id', 'failed case')}"),
-        "category": str(candidate.get("category") or "llm_followup"),
+        "category": _resolve_suggested_category(candidate.get("category"), original_test_case.get("category")),
         "requirement_ref": str(candidate.get("requirement_ref") or original_test_case.get("requirement_ref") or "llm_assistant"),
         "method": str(candidate.get("method") or original_test_case.get("method") or "GET").upper(),
         "path": str(candidate.get("path") or original_test_case.get("path") or "/"),
@@ -1038,7 +1416,7 @@ def _normalize_suggested_case(
         "expected_result": _normalize_expected_result(
             candidate.get("expected_result"),
             original_expected=original_test_case.get("expected_result") or {},
-            observed_status=observed_status,
+            status_override=status_override,
         ),
     }
 
@@ -1046,12 +1424,10 @@ def _normalize_suggested_case(
 def _default_suggested_case(
     *,
     original_test_case: Dict[str, Any],
-    case_result: Dict[str, Any],
+    status_override: Optional[int],
+    followup_mode: str,
     existing_test_ids: Sequence[str],
 ) -> Dict[str, Any]:
-    observed_status = case_result.get("actual_status")
-    if not isinstance(observed_status, int):
-        observed_status = None
     base_id = f"{original_test_case.get('test_id', 'TC-CASE')}-FOLLOWUP"
     test_id = _next_unique_test_id(base_id, existing_test_ids)
     original_steps = list(original_test_case.get("steps") or [])
@@ -1059,25 +1435,30 @@ def _default_suggested_case(
     expected_result = _normalize_expected_result(
         None,
         original_expected=original_test_case.get("expected_result") or {},
-        observed_status=observed_status,
+        status_override=status_override,
     )
-    expected_status_text = expected_result.get("status_code") or expected_result.get("status_code_any_of")
+    expected_status_text = _expected_status_text(expected_result)
+    mode_hint = (
+        "repair the failing field with a valid value"
+        if followup_mode == FOLLOWUP_MODE_REPAIR_VALID
+        else "preserve the negative-invalid focus on the failing field"
+    )
     return {
         "test_id": test_id,
         "title": f"LLM follow-up for {original_test_case.get('test_id', 'failed case')}",
-        "category": "llm_followup",
+        "category": _resolve_suggested_category(None, original_test_case.get("category")),
         "requirement_ref": str(original_test_case.get("requirement_ref") or "llm_assistant"),
         "method": str(original_test_case.get("method") or "GET").upper(),
         "path": str(original_test_case.get("path") or "/"),
         "priority": "medium",
         "preconditions": [
             *[str(item) for item in (original_test_case.get("preconditions") or [])],
-            "Generated from failed-case evidence to verify the observed behavior path.",
+            f"Generated from failed-case evidence to {mode_hint}.",
         ],
         "steps": [_normalize_step(None, fallback_step)],
         "expected_result": {
             **expected_result,
-            "description": f"Validate the observed behavior path currently returning {expected_status_text}.",
+            "description": f"Validate root-cause handling while keeping expected outcome {expected_status_text}.",
         },
     }
 
@@ -1190,6 +1571,575 @@ def _attempt_near_timeout(elapsed_seconds: float, timeout_seconds: int) -> bool:
     return elapsed_seconds >= threshold
 
 
+def _coerce_mapping(value: Any) -> Dict[str, Any]:
+    return deepcopy(value) if isinstance(value, dict) else {}
+
+
+def _normalize_field_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _parse_reason_scalar(value: str) -> Any:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    trimmed = text.rstrip(".,;:)")
+    if (
+        (trimmed.startswith('"') and trimmed.endswith('"'))
+        or (trimmed.startswith("'") and trimmed.endswith("'"))
+    ) and len(trimmed) >= 2:
+        trimmed = trimmed[1:-1].strip()
+    lowered = trimmed.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered in {"none", "null"}:
+        return None
+    if re.fullmatch(r"[+-]?\d+", trimmed):
+        try:
+            return int(trimmed)
+        except Exception:
+            return trimmed
+    if re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?", trimmed, flags=re.IGNORECASE):
+        try:
+            parsed = float(trimmed)
+            if parsed.is_integer():
+                return int(parsed)
+            return parsed
+        except Exception:
+            return trimmed
+    return trimmed
+
+
+def _extract_reason_field_value(
+    evidence: Dict[str, Any],
+    explanation_context: Dict[str, Any],
+) -> tuple[str, Any]:
+    reason_candidates: List[str] = []
+    primary_reason = _extract_primary_response_reason(evidence)
+    if isinstance(primary_reason, str) and primary_reason.strip():
+        reason_candidates.append(primary_reason.strip())
+    for key in ("likely_cause", "why_likely", "check_next", "explanation"):
+        value = explanation_context.get(key)
+        if isinstance(value, str) and value.strip():
+            reason_candidates.append(value.strip())
+
+    pattern = re.compile(
+        r"\b([A-Za-z][A-Za-z0-9_\- ]{0,48})\s+must\b.*?\bGiven:\s*([^\s,;]+)",
+        flags=re.IGNORECASE,
+    )
+    for reason_text in reason_candidates:
+        match = pattern.search(reason_text)
+        if not match:
+            continue
+        raw_field = str(match.group(1) or "").strip()
+        if not raw_field:
+            continue
+        field_tokens = [part for part in re.split(r"[^A-Za-z0-9_]+", raw_field) if part]
+        if not field_tokens:
+            continue
+        field_name = field_tokens[-1]
+        raw_value = str(match.group(2) or "").strip()
+        return field_name, _parse_reason_scalar(raw_value)
+    return "", None
+
+
+def _apply_reason_field_override(
+    input_data: Dict[str, Any],
+    field_name: str,
+    field_value: Any,
+) -> tuple[str, Any]:
+    normalized_field = _normalize_field_key(field_name)
+    if not normalized_field:
+        return "", None
+
+    section_order: List[Dict[str, Any]] = []
+    for section_name in ("query_params", "path_params", "body"):
+        section_obj = input_data.get(section_name)
+        if isinstance(section_obj, dict):
+            section_order.append(section_obj)
+
+    for section_obj in section_order:
+        for existing_key in list(section_obj.keys()):
+            normalized_existing = _normalize_field_key(existing_key)
+            if (
+                normalized_existing == normalized_field
+                or normalized_field in normalized_existing
+                or normalized_existing in normalized_field
+            ):
+                section_obj[existing_key] = deepcopy(field_value)
+                return str(existing_key), field_value
+
+    query_params = input_data.get("query_params")
+    if isinstance(query_params, dict):
+        fallback_key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(field_name).strip().lower()).strip("_")
+        fallback_key = fallback_key or str(field_name).strip() or "input_field"
+        query_params[fallback_key] = deepcopy(field_value)
+        input_data["query_params"] = query_params
+        return fallback_key, field_value
+    return "", None
+
+
+def _format_inline_value(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=True, sort_keys=True)
+    except Exception:
+        return str(value)
+
+
+def _build_input_data_from_evidence(
+    evidence: Dict[str, Any],
+    original_test_case: Dict[str, Any],
+    *,
+    prefer_request_sent: bool,
+) -> Dict[str, Any]:
+    test_context = evidence.get("test_context") if isinstance(evidence.get("test_context"), dict) else {}
+    generated_input = test_context.get("generated_input") if isinstance(test_context.get("generated_input"), dict) else {}
+    execution = evidence.get("execution") if isinstance(evidence.get("execution"), dict) else {}
+    request_sent = execution.get("request_sent") if isinstance(execution.get("request_sent"), dict) else {}
+    original_steps = list(original_test_case.get("steps") or [])
+    original_input = (
+        original_steps[0].get("input_data")
+        if original_steps and isinstance(original_steps[0], dict) and isinstance(original_steps[0].get("input_data"), dict)
+        else {}
+    )
+
+    source_order = (
+        (request_sent, generated_input, original_input)
+        if prefer_request_sent
+        else (generated_input, original_input, request_sent)
+    )
+
+    path_params: Dict[str, Any] = {}
+    for source in source_order:
+        path_params = _coerce_mapping(source.get("path_params"))
+        if path_params:
+            break
+
+    query_params: Dict[str, Any] = {}
+    for source in source_order:
+        query_params = _coerce_mapping(source.get("query_params"))
+        if query_params:
+            break
+
+    headers: Dict[str, Any] = {}
+    for source in source_order:
+        headers = _coerce_mapping(source.get("headers"))
+        if headers:
+            break
+
+    body: Any = None
+    for source in source_order:
+        candidate_body = deepcopy(source.get("body"))
+        if candidate_body is not None:
+            body = candidate_body
+            break
+
+    return {
+        "path_params": path_params,
+        "query_params": query_params,
+        "headers": headers,
+        "body": body,
+    }
+
+
+def _build_step_action(method: str, path: str, input_data: Dict[str, Any]) -> str:
+    query_params = input_data.get("query_params") if isinstance(input_data.get("query_params"), dict) else {}
+    path_params = input_data.get("path_params") if isinstance(input_data.get("path_params"), dict) else {}
+    body = input_data.get("body")
+    segments = [f"Send {method} request to {path}"]
+    if query_params:
+        segments.append(f"with query params {json.dumps(query_params, ensure_ascii=True, sort_keys=True)}")
+    if path_params:
+        segments.append(f"path params {json.dumps(path_params, ensure_ascii=True, sort_keys=True)}")
+    if body is not None:
+        if isinstance(body, dict):
+            segments.append(f"body {json.dumps(body, ensure_ascii=True, sort_keys=True)}")
+        else:
+            segments.append(f"body {str(body)}")
+    return " using ".join(segments)
+
+
+def _extract_validation_focus(
+    explanation_context: Dict[str, Any],
+    input_data: Dict[str, Any],
+) -> tuple[str, Any]:
+    focus_text = " ".join(
+        str(explanation_context.get(key) or "")
+        for key in ("likely_cause", "why_likely", "check_next", "explanation")
+    ).lower()
+    query_params = input_data.get("query_params") if isinstance(input_data.get("query_params"), dict) else {}
+    for key, value in query_params.items():
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        if key_text.lower() in focus_text:
+            return key_text, value
+    path_params = input_data.get("path_params") if isinstance(input_data.get("path_params"), dict) else {}
+    for key, value in path_params.items():
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        if key_text.lower() in focus_text:
+            return key_text, value
+    body = input_data.get("body") if isinstance(input_data.get("body"), dict) else {}
+    for key, value in body.items():
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        if key_text.lower() in focus_text:
+            return key_text, value
+    for key in query_params.keys():
+        key_text = str(key).strip()
+        if "latitude" in key_text.lower():
+            return key_text, query_params.get(key)
+    for key in query_params.keys():
+        key_text = str(key).strip()
+        if key_text:
+            return key_text, query_params.get(key)
+    for key in path_params.keys():
+        key_text = str(key).strip()
+        if key_text:
+            return key_text, path_params.get(key)
+    for key in body.keys():
+        key_text = str(key).strip()
+        if key_text:
+            return key_text, body.get(key)
+    return "", None
+
+
+def _field_names_match(left: Any, right: Any) -> bool:
+    normalized_left = _normalize_field_key(left)
+    normalized_right = _normalize_field_key(right)
+    if not normalized_left or not normalized_right:
+        return False
+    return (
+        normalized_left == normalized_right
+        or normalized_left in normalized_right
+        or normalized_right in normalized_left
+    )
+
+
+def _lookup_field_value(input_data: Dict[str, Any], field_name: str) -> tuple[bool, Any, str]:
+    for section_name in ("query_params", "path_params", "body"):
+        section_obj = input_data.get(section_name)
+        if not isinstance(section_obj, dict):
+            continue
+        for existing_key, existing_value in section_obj.items():
+            if _field_names_match(existing_key, field_name):
+                return True, deepcopy(existing_value), str(existing_key)
+    return False, None, ""
+
+
+def _resolve_schema_from_request_constraints(
+    request_constraints: Dict[str, Any],
+    field_name: str,
+) -> Dict[str, Any]:
+    query_rules = request_constraints.get("query_param_rules")
+    if isinstance(query_rules, dict):
+        for rule_name, rule_schema in query_rules.items():
+            if _field_names_match(rule_name, field_name) and isinstance(rule_schema, dict):
+                return deepcopy(rule_schema)
+
+    body_schema = request_constraints.get("body_schema_rules")
+    if isinstance(body_schema, dict):
+        properties = body_schema.get("properties")
+        if isinstance(properties, dict):
+            for prop_name, prop_schema in properties.items():
+                if _field_names_match(prop_name, field_name) and isinstance(prop_schema, dict):
+                    return deepcopy(prop_schema)
+    return {}
+
+
+def _resolve_schema_from_endpoint_ir(endpoint_ir: Dict[str, Any], field_name: str) -> Dict[str, Any]:
+    for section_name in ("query_params", "path_params", "header_params"):
+        section_items = endpoint_ir.get(section_name)
+        if not isinstance(section_items, list):
+            continue
+        for item in section_items:
+            if not isinstance(item, dict):
+                continue
+            if not _field_names_match(item.get("name"), field_name):
+                continue
+            schema = item.get("schema")
+            if isinstance(schema, dict):
+                return deepcopy(schema)
+
+    request_schema = endpoint_ir.get("request_schema")
+    if isinstance(request_schema, dict):
+        properties = request_schema.get("properties")
+        if isinstance(properties, dict):
+            for prop_name, prop_schema in properties.items():
+                if _field_names_match(prop_name, field_name) and isinstance(prop_schema, dict):
+                    return deepcopy(prop_schema)
+    return {}
+
+
+def _resolve_field_schema(evidence: Dict[str, Any], field_name: str) -> Dict[str, Any]:
+    spec = evidence.get("spec") if isinstance(evidence.get("spec"), dict) else {}
+    request_constraints = (
+        spec.get("request_constraints")
+        if isinstance(spec.get("request_constraints"), dict)
+        else {}
+    )
+    from_constraints = _resolve_schema_from_request_constraints(request_constraints, field_name)
+    if from_constraints:
+        return from_constraints
+
+    ir_context = evidence.get("ir_context") if isinstance(evidence.get("ir_context"), dict) else {}
+    endpoint_ir = ir_context.get("endpoint_ir") if isinstance(ir_context.get("endpoint_ir"), dict) else {}
+    return _resolve_schema_from_endpoint_ir(endpoint_ir, field_name)
+
+
+def _resolve_baseline_valid_value(
+    *,
+    evidence: Dict[str, Any],
+    original_test_case: Dict[str, Any],
+    field_name: str,
+) -> tuple[bool, Any]:
+    test_context = evidence.get("test_context") if isinstance(evidence.get("test_context"), dict) else {}
+    generated_input = test_context.get("generated_input") if isinstance(test_context.get("generated_input"), dict) else {}
+    found, value, _ = _lookup_field_value(generated_input, field_name)
+    if found:
+        return True, value
+
+    original_steps = list(original_test_case.get("steps") or [])
+    if original_steps and isinstance(original_steps[0], dict):
+        original_input = original_steps[0].get("input_data") if isinstance(original_steps[0].get("input_data"), dict) else {}
+    else:
+        original_input = {}
+    found, value, _ = _lookup_field_value(original_input, field_name)
+    if found:
+        return True, value
+    return False, None
+
+
+def _infer_schema_from_value(value: Any) -> Dict[str, Any]:
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, int):
+        return {"type": "integer"}
+    if isinstance(value, float):
+        return {"type": "number"}
+    if isinstance(value, dict):
+        return {"type": "object"}
+    if isinstance(value, list):
+        return {"type": "array"}
+    if isinstance(value, str):
+        return {"type": "string"}
+    return {"type": "string"}
+
+
+def _resolve_target_field_and_value(
+    *,
+    evidence: Dict[str, Any],
+    explanation_context: Dict[str, Any],
+    input_data: Dict[str, Any],
+) -> tuple[str, Any]:
+    override_field, override_value = _extract_reason_field_value(evidence, explanation_context)
+    if override_field:
+        return override_field, override_value
+    focus_field, focus_value = _extract_validation_focus(explanation_context, input_data)
+    if focus_field:
+        return focus_field, focus_value
+    return "", None
+
+
+def _resolve_valid_repair_value(
+    *,
+    evidence: Dict[str, Any],
+    original_test_case: Dict[str, Any],
+    input_data: Dict[str, Any],
+    target_field: str,
+    invalid_value: Any,
+) -> Any:
+    schema = _resolve_field_schema(evidence, target_field)
+    if schema:
+        try:
+            return generate_valid_value(schema, name=target_field)
+        except Exception:
+            pass
+
+    found_baseline, baseline_value = _resolve_baseline_valid_value(
+        evidence=evidence,
+        original_test_case=original_test_case,
+        field_name=target_field,
+    )
+    if found_baseline:
+        return baseline_value
+
+    found_current, current_value, _ = _lookup_field_value(input_data, target_field)
+    if found_current:
+        try:
+            guessed_schema = _infer_schema_from_value(current_value)
+            return generate_valid_value(guessed_schema, name=target_field)
+        except Exception:
+            pass
+
+    if invalid_value is not None:
+        try:
+            guessed_schema = _infer_schema_from_value(invalid_value)
+            return generate_valid_value(guessed_schema, name=target_field)
+        except Exception:
+            pass
+    return "valid_value"
+
+
+def _resolve_negative_drift_invalid_value(
+    *,
+    evidence: Dict[str, Any],
+    drift_analysis: Dict[str, Any],
+) -> Any:
+    expected_hint = drift_analysis.get("expected_invalid_hint")
+    if expected_hint is not None and str(expected_hint).strip():
+        return deepcopy(expected_hint)
+
+    target_field = str(drift_analysis.get("target_field") or "").strip()
+    schema = _resolve_field_schema(evidence, target_field) if target_field else {}
+    if schema:
+        try:
+            return generate_wrong_type_value(schema)
+        except Exception:
+            pass
+
+    executed_value = drift_analysis.get("executed_value")
+    if _is_numeric_like_string(executed_value):
+        return "not_a_number"
+    return "invalid_value"
+
+
+def _apply_focused_field_repair(
+    *,
+    evidence: Dict[str, Any],
+    original_test_case: Dict[str, Any],
+    explanation_context: Dict[str, Any],
+    input_data: Dict[str, Any],
+) -> tuple[str, Any]:
+    target_field, invalid_value = _resolve_target_field_and_value(
+        evidence=evidence,
+        explanation_context=explanation_context,
+        input_data=input_data,
+    )
+    if not target_field:
+        return "", None
+    replacement = _resolve_valid_repair_value(
+        evidence=evidence,
+        original_test_case=original_test_case,
+        input_data=input_data,
+        target_field=target_field,
+        invalid_value=invalid_value,
+    )
+    return _apply_reason_field_override(input_data, target_field, replacement)
+
+
+def _apply_followup_policy_to_case(
+    *,
+    suggested_case: Dict[str, Any],
+    followup_mode: str,
+    evidence: Dict[str, Any],
+    original_test_case: Dict[str, Any],
+    explanation_context: Dict[str, Any],
+    status_override: Optional[int],
+    drift_analysis: Optional[Dict[str, Any]] = None,
+) -> tuple[Dict[str, Any], str, Any]:
+    normalized_case = deepcopy(suggested_case)
+    drift = drift_analysis if isinstance(drift_analysis, dict) else {}
+    drift_detected = bool(drift.get("drift_detected"))
+    input_data = _build_input_data_from_evidence(
+        evidence,
+        original_test_case,
+        prefer_request_sent=(followup_mode == FOLLOWUP_MODE_PRESERVE_NEGATIVE),
+    )
+    applied_focus_field = ""
+    applied_focus_value: Any = None
+    drift_focus_restored = False
+
+    if followup_mode == FOLLOWUP_MODE_REPAIR_VALID:
+        applied_focus_field, applied_focus_value = _apply_focused_field_repair(
+            evidence=evidence,
+            original_test_case=original_test_case,
+            explanation_context=explanation_context,
+            input_data=input_data,
+        )
+    else:
+        if drift_detected:
+            drift_target_field = str(drift.get("target_field") or "").strip()
+            if drift_target_field:
+                drift_invalid_value = _resolve_negative_drift_invalid_value(
+                    evidence=evidence,
+                    drift_analysis=drift,
+                )
+                applied_focus_field, applied_focus_value = _apply_reason_field_override(
+                    input_data,
+                    drift_target_field,
+                    drift_invalid_value,
+                )
+                drift_focus_restored = bool(applied_focus_field)
+
+        if not applied_focus_field:
+            override_field, override_value = _extract_reason_field_value(evidence, explanation_context)
+            if override_field:
+                applied_focus_field, applied_focus_value = _apply_reason_field_override(
+                    input_data,
+                    override_field,
+                    override_value,
+                )
+        if not applied_focus_field:
+            applied_focus_field, applied_focus_value = _extract_validation_focus(explanation_context, input_data)
+
+        if drift_detected and not drift_focus_restored and applied_focus_field:
+            drift_focus_restored = _field_names_match(applied_focus_field, drift.get("target_field"))
+
+    steps = normalized_case.get("steps") if isinstance(normalized_case.get("steps"), list) else []
+    fallback_step = {"step_number": 1, "action": "Execute request", "input_data": {}}
+    current_step = steps[0] if steps and isinstance(steps[0], dict) else fallback_step
+    normalized_step = _normalize_step(current_step, fallback_step)
+    normalized_step["input_data"] = input_data
+
+    method = str(normalized_case.get("method") or original_test_case.get("method") or "GET").upper()
+    path = str(normalized_case.get("path") or original_test_case.get("path") or "/")
+    normalized_step["action"] = _build_step_action(method, path, input_data)
+    normalized_case["steps"] = [normalized_step]
+
+    expected_result = normalized_case.get("expected_result") if isinstance(normalized_case.get("expected_result"), dict) else {}
+    if not expected_result:
+        expected_result = _normalize_expected_result(
+            None,
+            original_expected=original_test_case.get("expected_result") or {},
+            status_override=status_override,
+        )
+    expected_status_text = _expected_status_text(expected_result)
+    if followup_mode == FOLLOWUP_MODE_REPAIR_VALID:
+        if applied_focus_field:
+            expected_result["description"] = (
+                f"Validate that {method} {path} keeps {expected_status_text} after repairing {applied_focus_field} to a valid value."
+            )
+        else:
+            expected_result["description"] = (
+                f"Validate that {method} {path} keeps {expected_status_text} after repairing the root-cause input."
+            )
+    else:
+        if drift_focus_restored and applied_focus_field:
+            expected_result["description"] = (
+                f"Validate that {method} {path} keeps {expected_status_text} after restoring negative setup drift for {applied_focus_field}."
+            )
+        elif applied_focus_field:
+            expected_result["description"] = (
+                f"Validate that {method} {path} keeps {expected_status_text} when {applied_focus_field} remains invalid."
+            )
+        else:
+            expected_result["description"] = (
+                f"Validate that {method} {path} keeps {expected_status_text} for the targeted negative input."
+            )
+    normalized_case["expected_result"] = expected_result
+    return normalized_case, applied_focus_field, applied_focus_value
+
+
 def build_deterministic_suggested_test_payload(
     *,
     model: str,
@@ -1215,32 +2165,65 @@ def build_deterministic_suggested_test_payload(
             ),
         )
 
+    drift_analysis = analyze_negative_setup_drift(
+        evidence,
+        original_test_case=original_test_case,
+    )
+    followup_mode = _resolve_followup_mode(
+        evidence=evidence,
+        original_test_case=original_test_case,
+    )
+    drift_context = (
+        drift_analysis.get("negative_intent_context")
+        if isinstance(drift_analysis.get("negative_intent_context"), dict)
+        else {}
+    )
+    if bool(drift_analysis.get("drift_detected")) and bool(drift_context.get("is_negative_intent")):
+        followup_mode = FOLLOWUP_MODE_PRESERVE_NEGATIVE
+    status_override = _resolve_expected_status_override(
+        explanation_context=normalized_context,
+        case_result=case_result,
+    )
     suggested_case = _default_suggested_case(
         original_test_case=original_test_case,
-        case_result=case_result,
+        status_override=status_override,
+        followup_mode=followup_mode,
         existing_test_ids=existing_test_ids,
     )
+    suggested_case, focus_field, focus_value = _apply_followup_policy_to_case(
+        suggested_case=suggested_case,
+        followup_mode=followup_mode,
+        evidence=evidence,
+        original_test_case=original_test_case,
+        explanation_context=normalized_context,
+        status_override=status_override,
+        drift_analysis=drift_analysis,
+    )
+
     method = str(suggested_case.get("method") or original_test_case.get("method") or "GET").upper()
     path = str(suggested_case.get("path") or original_test_case.get("path") or "/")
     expected_result = suggested_case.get("expected_result") if isinstance(suggested_case.get("expected_result"), dict) else {}
-    expected_status = expected_result.get("status_code")
-    expected_any = expected_result.get("status_code_any_of") if isinstance(expected_result.get("status_code_any_of"), list) else []
-    if isinstance(expected_status, int):
-        expected_status_text = str(expected_status)
-    elif expected_any:
-        expected_status_text = "/".join(str(item) for item in expected_any if str(item).strip()) or "expected status"
+    expected_status_text = _expected_status_text(expected_result)
+    focus_clause = ""
+    if focus_field:
+        focus_clause = f" ({focus_field}={_format_inline_value(focus_value)})"
+    drift_detected = bool(drift_analysis.get("drift_detected"))
+    if followup_mode == FOLLOWUP_MODE_REPAIR_VALID:
+        reason = (
+            f"Adds a follow-up {method} {path} test addressing the root cause by repairing the focused field"
+            f"{focus_clause} and preserving expected status {expected_status_text}."
+        )
     else:
-        expected_status_text = "expected status"
-    signal_hint = {
-        "schema_type": "input-type validation",
-        "schema_value": "input-value validation",
-        "missing_required": "missing-required input handling",
-        "validation": "input validation handling",
-    }.get(signal, "observed behavior")
-    reason = (
-        f"Adds a follow-up {method} {path} test that reuses the failing request shape "
-        f"and asserts {expected_status_text} to validate {signal_hint}."
-    )
+        if drift_detected:
+            reason = (
+                f"Adds a follow-up {method} {path} test restoring negative setup drift with invalid-focused"
+                f" input{focus_clause} while keeping expected status {expected_status_text}."
+            )
+        else:
+            reason = (
+                f"Adds a follow-up {method} {path} test addressing the root cause by preserving the negative-invalid"
+                f" focus{focus_clause} while keeping expected status {expected_status_text}."
+            )
     reason = re.sub(r"\s+", " ", reason).strip()
 
     return {
@@ -1293,16 +2276,60 @@ def generate_suggested_test(
             ),
         )
 
+    drift_analysis = analyze_negative_setup_drift(
+        evidence,
+        original_test_case=original_test_case,
+    )
+    followup_mode = _resolve_followup_mode(
+        evidence=evidence,
+        original_test_case=original_test_case,
+    )
+    drift_context = (
+        drift_analysis.get("negative_intent_context")
+        if isinstance(drift_analysis.get("negative_intent_context"), dict)
+        else {}
+    )
+    if bool(drift_analysis.get("drift_detected")) and bool(drift_context.get("is_negative_intent")):
+        followup_mode = FOLLOWUP_MODE_PRESERVE_NEGATIVE
+    status_override = _resolve_expected_status_override(
+        explanation_context=normalized_context,
+        case_result=case_result,
+    )
+    original_expected = _normalize_expected_result(
+        None,
+        original_expected=original_test_case.get("expected_result") or {},
+        status_override=status_override,
+    )
+    expected_status_text = _expected_status_text(original_expected)
+    status_rule = (
+        f"Status override is explicitly requested; use expected status {expected_status_text}."
+        if status_override is not None
+        else f"Preserve the source test expected status {expected_status_text}."
+    )
+    followup_mode_rule = (
+        "Repair mode: correct the root-cause field to a valid value."
+        if followup_mode == FOLLOWUP_MODE_REPAIR_VALID
+        else "Negative preserve mode: keep the focused invalid field behavior."
+    )
+    drift_rule = (
+        "Negative setup drift is detected. Restore the intended invalid input shape before proposing backend-defect hypotheses."
+        if bool(drift_analysis.get("drift_detected"))
+        else "No negative setup drift was detected from executed request input."
+    )
+
     context_preview = {
         key: value
         for key, value in (
             ("signal", signal),
+            ("followup_mode", followup_mode),
+            ("status_policy", status_rule),
+            ("negative_setup_drift", _drift_prompt_context(drift_analysis)),
             ("likely_cause", normalized_context.get("likely_cause")),
             ("why_likely", normalized_context.get("why_likely")),
             ("check_next", normalized_context.get("check_next")),
             ("explanation", normalized_context.get("explanation")),
         )
-        if isinstance(value, str) and value.strip()
+        if (isinstance(value, str) and value.strip()) or isinstance(value, dict)
     }
     compact_prompt_bundle = _build_compact_suggestion_prompt_bundle(prompt_bundle)
     system_prompt = (
@@ -1315,7 +2342,11 @@ def generate_suggested_test(
         "Rules:\n"
         "- Keep the suggestion grounded in the supplied evidence.\n"
         "- Prefer same endpoint unless evidence strongly indicates otherwise.\n"
-        "- Include concrete expected status.\n"
+        f"- {followup_mode_rule}\n"
+        f"- {status_rule}\n"
+        "- Treat execution.request_sent as the authoritative executed input when it conflicts with title/category intent.\n"
+        f"- {drift_rule}\n"
+        "- Include concrete expected status in expected_result.\n"
         "- Only suggest input-focused follow-up coverage aligned to the likely cause.\n"
         "- Return JSON with keys reason and suggested_test_case.\n\n"
         "Explanation context:\n"
@@ -1327,8 +2358,6 @@ def generate_suggested_test(
     retries = 0
     attempts: List[str] = []
     user_prompt = base_user_prompt
-    observed_status = case_result.get("actual_status")
-    observed_status = int(observed_status) if str(observed_status).isdigit() else None
     current_timeout = max(1, int(getattr(client, "timeout_seconds", 0) or 1))
     timeout_seconds = min(
         current_timeout,
@@ -1398,15 +2427,45 @@ def generate_suggested_test(
         suggested_case = _normalize_suggested_case(
             _extract_suggested_case_candidate(parsed),
             original_test_case=original_test_case,
-            observed_status=observed_status,
+            status_override=status_override,
             existing_test_ids=existing_test_ids,
         )
         if suggested_case:
+            suggested_case, focus_field, focus_value = _apply_followup_policy_to_case(
+                suggested_case=suggested_case,
+                followup_mode=followup_mode,
+                evidence=evidence,
+                original_test_case=original_test_case,
+                explanation_context=normalized_context,
+                status_override=status_override,
+                drift_analysis=drift_analysis,
+            )
             if not reason:
-                reason = (
-                    "Follow-up suggestion generated from this failed case to verify whether the observed endpoint behavior "
-                    "is intentional for the same request shape."
-                )
+                method = str(suggested_case.get("method") or original_test_case.get("method") or "GET").upper()
+                path = str(suggested_case.get("path") or original_test_case.get("path") or "/")
+                if followup_mode == FOLLOWUP_MODE_REPAIR_VALID:
+                    if focus_field:
+                        reason = (
+                            f"Follow-up suggestion repairs {focus_field} to a valid value for {method} {path} "
+                            f"while preserving expected status {expected_status_text}."
+                        )
+                    else:
+                        reason = (
+                            f"Follow-up suggestion repairs the root-cause input for {method} {path} "
+                            f"while preserving expected status {expected_status_text}."
+                        )
+                else:
+                    focus_clause = f" on {focus_field}={_format_inline_value(focus_value)}" if focus_field else ""
+                    if bool(drift_analysis.get("drift_detected")):
+                        reason = (
+                            f"Follow-up suggestion restores negative setup drift{focus_clause} for {method} {path} "
+                            f"while keeping expected status {expected_status_text}."
+                        )
+                    else:
+                        reason = (
+                            f"Follow-up suggestion preserves the negative-invalid focus{focus_clause} for {method} {path} "
+                            f"while keeping expected status {expected_status_text}."
+                        )
             reason = re.sub(r"\s+", " ", reason).strip()
             return {
                 "mode": "suggest_test",
@@ -1437,14 +2496,24 @@ def generate_suggested_test(
 
     fallback_case = _default_suggested_case(
         original_test_case=original_test_case,
-        case_result=case_result,
+        status_override=status_override,
+        followup_mode=followup_mode,
         existing_test_ids=existing_test_ids,
+    )
+    fallback_case, _, _ = _apply_followup_policy_to_case(
+        suggested_case=fallback_case,
+        followup_mode=followup_mode,
+        evidence=evidence,
+        original_test_case=original_test_case,
+        explanation_context=normalized_context,
+        status_override=status_override,
+        drift_analysis=drift_analysis,
     )
     return {
         "mode": "suggest_test",
         "reason": (
-            "LLM output was invalid, so this fallback follow-up test captures the observed behavior for the same "
-            "endpoint and inputs to support a quick rerun."
+            "LLM output was invalid, so this fallback follow-up test applies root-cause targeting policy"
+            " with preserved expected status and drift-aware negative setup handling."
         ),
         "signal": signal,
         "external_failure": False,

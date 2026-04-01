@@ -146,6 +146,17 @@ export async function requestLlmFailureAnalysis(token, runId, testId) {
   });
 }
 
+export async function requestSpecGroundedChat(token, payload) {
+  return request("/api/chat/spec-assistant", {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
 export async function fetchLlmSettings(token) {
   return request("/api/llm/settings", {
     headers: {

@@ -305,6 +305,18 @@ code {
   font-size: 0.88rem;
 }
 
+.chat-context-static {
+  margin: 0;
+  min-height: 2.4rem;
+  padding: 0.55rem 0.62rem;
+  border-radius: 0.62rem;
+  border: 1px solid #c9d7ee;
+  background: #ffffff;
+  color: #1f2c46;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
 .chat-context-select:focus {
   outline: 2px solid rgba(76, 132, 255, 0.24);
   border-color: #7ba6ff;
@@ -1922,6 +1934,7 @@ code {
 .app-shell[data-theme="dark"] .auth-select,
 .app-shell[data-theme="dark"] .auth-input,
 .app-shell[data-theme="dark"] .chat-context-select,
+.app-shell[data-theme="dark"] .chat-context-static,
 .app-shell[data-theme="dark"] .chat-composer-input {
   border-color: #434a56;
   background: #1b2027;

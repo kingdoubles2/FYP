@@ -11,19 +11,18 @@ import {
   listSpecs,
   loginUser,
   requestLlmFailureAnalysis,
+  requestSpecGroundedChat,
   registerUser,
   runGeneratedTests,
   updateLlmSettings,
   uploadSpecFile,
 } from "./api.js";
-import { mockChatAdapter } from "./chatAdapter.js";
 import { buildSpecPreview } from "./testPreview.js";
 
 const SESSION_KEY = "contractguard.session.v1";
 const SPEC_CACHE_KEY = "contractguard.spec-cache.v1";
 const THEME_KEY = "contractguard.theme.v1";
 const CHAT_THREAD_KEY = "contractguard.chat-thread.v1";
-const CHAT_CONTEXT_GLOBAL = "global";
 const CHAT_CONTEXT_SPEC = "spec";
 const SETTINGS_TAB_MODEL = "model";
 const SETTINGS_TAB_CUSTOM = "custom";
@@ -162,7 +161,7 @@ function saveTheme(theme) {
 
 function getDefaultChatContext() {
   return {
-    mode: CHAT_CONTEXT_GLOBAL,
+    mode: CHAT_CONTEXT_SPEC,
     specId: null,
   };
 }
@@ -176,8 +175,8 @@ function normalizeChatContext(context) {
     return getDefaultChatContext();
   }
 
-  const mode = context.mode === CHAT_CONTEXT_SPEC ? CHAT_CONTEXT_SPEC : CHAT_CONTEXT_GLOBAL;
-  if (mode !== CHAT_CONTEXT_SPEC) {
+  const mode = context.mode === CHAT_CONTEXT_SPEC ? CHAT_CONTEXT_SPEC : null;
+  if (!mode) {
     return getDefaultChatContext();
   }
 
@@ -1012,18 +1011,21 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
 
 function ChatPanel({
   selectedEntry,
+  specDisplayIdBySpecId,
   messages,
   draft,
   pending,
-  activeContext,
-  onContextChange,
   onDraftChange,
   onSend,
 }) {
   const transcriptEndRef = useRef(null);
-  const contextValue = activeContext?.mode === CHAT_CONTEXT_SPEC ? CHAT_CONTEXT_SPEC : CHAT_CONTEXT_GLOBAL;
+  const hasSelectedSpec = Boolean(selectedEntry?.id);
+  const selectedSpecId = hasSelectedSpec ? Number(selectedEntry.id) : null;
+  const selectedSpecDisplayId = hasSelectedSpec
+    ? Number(specDisplayIdBySpecId?.[String(selectedEntry.id)] || 0) || null
+    : null;
   const selectedSpecLabel = selectedEntry
-    ? `${selectedEntry.title || selectedEntry.filename} (#${selectedEntry.id})`
+    ? `${selectedEntry.title || selectedEntry.filename} (#${selectedSpecDisplayId || selectedEntry.id})`
     : "No spec selected";
 
   useEffect(() => {
@@ -1036,54 +1038,44 @@ function ChatPanel({
         <p className="eyebrow">Assistant</p>
         <h2>Chat</h2>
         <p className="muted">
-          Ask anything in global mode, or switch context to the selected spec.
+          Assistant answers are strictly grounded to the selected spec, generated tests, and latest run.
         </p>
       </div>
 
-      <label className="chat-context-control" htmlFor="chat-context-select">
+      <div className="chat-context-control">
         <span className="chat-context-label">Context</span>
-        <select
-          id="chat-context-select"
-          className="chat-context-select"
-          value={contextValue}
-          onChange={(event) => {
-            const mode = event.target.value;
-            if (mode === CHAT_CONTEXT_SPEC && selectedEntry?.id) {
-              onContextChange?.({
-                mode: CHAT_CONTEXT_SPEC,
-                specId: Number(selectedEntry.id),
-              });
-              return;
-            }
-
-            onContextChange?.(getDefaultChatContext());
-          }}
-        >
-          <option value={CHAT_CONTEXT_GLOBAL}>Global</option>
-          <option value={CHAT_CONTEXT_SPEC} disabled={!selectedEntry?.id}>
-            {selectedEntry?.id ? `Selected spec: ${selectedSpecLabel}` : "Selected spec unavailable"}
-          </option>
-        </select>
-      </label>
+        <p className="chat-context-static">
+          {hasSelectedSpec ? `Selected spec: ${selectedSpecLabel}` : "Select a spec to enable chat"}
+        </p>
+      </div>
 
       <div className="chat-thread" role="log" aria-live="polite" aria-label="Chat transcript">
         {messages.length === 0 ? (
           <div className="chat-empty-state">
             <p>No messages yet.</p>
             <span>
-              Chat currently uses a local mock adapter so we can finalize frontend behavior before backend wiring.
+              Ask about endpoint behavior, generated tests, run summaries, or failed test diagnostics for the selected spec.
             </span>
           </div>
         ) : null}
 
         {messages.map((message) => {
-          const contextLabel = message?.context?.mode === CHAT_CONTEXT_SPEC && message?.context?.specId !== null
-            ? `Spec #${message.context.specId}`
-            : "Global";
+          const contextSpecId = Number(message?.context?.specId);
+          const contextDisplayId = Number(specDisplayIdBySpecId?.[String(contextSpecId)] || 0) || null;
+          const contextLabel = message?.context?.mode === CHAT_CONTEXT_SPEC && Number.isFinite(contextSpecId)
+            ? `Spec #${contextDisplayId || contextSpecId}`
+            : (selectedSpecDisplayId !== null
+              ? `Spec #${selectedSpecDisplayId}`
+              : (selectedSpecId !== null ? `Spec #${selectedSpecId}` : "Spec not selected"));
+          const assistantModelName = String(
+            message?.meta?.model
+            || message?.meta?.modelId
+            || "",
+          ).trim();
           const roleLabel = message.role === "user"
             ? "You"
             : message.role === "assistant"
-              ? "Assistant"
+              ? (assistantModelName || "Assistant")
               : "System";
 
           return (
@@ -1116,19 +1108,23 @@ function ChatPanel({
           value={draft}
           onChange={(event) => onDraftChange?.(event.target.value)}
           rows={3}
-          placeholder="Ask about tests, specs, or anything else..."
-          disabled={pending}
+          placeholder={
+            hasSelectedSpec
+              ? "Ask about this spec's endpoints, generated tests, or latest run..."
+              : "Select a spec to start a grounded chat..."
+          }
+          disabled={pending || !hasSelectedSpec}
         />
         <div className="chat-composer-footer">
           <span className="chat-composer-hint">
-            {activeContext?.mode === CHAT_CONTEXT_SPEC && activeContext?.specId !== null
-              ? `Scoped to spec #${activeContext.specId}`
-              : "Global scope"}
+            {hasSelectedSpec
+              ? `Scoped to spec #${selectedSpecDisplayId || selectedSpecId}`
+              : "Select a spec to enable chat"}
           </span>
           <button
             type="submit"
             className="primary-button chat-send-button"
-            disabled={pending || draft.trim().length === 0}
+            disabled={pending || draft.trim().length === 0 || !hasSelectedSpec}
           >
             {pending ? "Sending..." : "Send"}
           </button>
@@ -1482,7 +1478,7 @@ function SettingsModal({
                 />
               </label>
               <p className="muted">
-                This stores your instruction profile only. It is not injected into backend prompts yet.
+                This instruction profile is applied to spec-grounded assistant chat prompts.
               </p>
               <div className="settings-custom-actions">
                 <button
@@ -1512,6 +1508,7 @@ function SettingsModal({
 
 function SpecDetails({
   entry,
+  displaySpecId,
   runState,
   onUpdateTestCase,
   onResetTestCase,
@@ -1960,7 +1957,7 @@ function SpecDetails({
       </div>
 
       <div className="stats-grid">
-        <StatCard label="Spec ID" value={entry.id} accent="accent-amber" />
+        <StatCard label="Spec ID" value={displaySpecId || "-"} accent="accent-amber" />
         <StatCard label="Version" value={entry.version || "Unknown"} accent="accent-blue" />
         <StatCard label="Uploaded" value={formatDate(entry.created_at)} accent="accent-green" />
         <StatCard label="Endpoints" value={entry.preview?.endpointCount ?? "Unknown"} accent="accent-red" />
@@ -2771,6 +2768,19 @@ export default function App() {
     }
     return testRunBySpecId[selectedEntry.id] || getEmptyRunState();
   }, [selectedEntry, testRunBySpecId]);
+  const specDisplayIdBySpecId = useMemo(
+    () => specHistory.reduce((acc, entry, index) => {
+      acc[String(entry.id)] = index + 1;
+      return acc;
+    }, {}),
+    [specHistory],
+  );
+  const selectedEntryDisplayId = useMemo(() => {
+    if (!selectedEntry) {
+      return null;
+    }
+    return Number(specDisplayIdBySpecId[String(selectedEntry.id)] || 0) || null;
+  }, [selectedEntry, specDisplayIdBySpecId]);
 
   useEffect(() => {
     if (chatActiveContext.mode !== CHAT_CONTEXT_SPEC) {
@@ -3440,6 +3450,10 @@ export default function App() {
       setSpecHistory([]);
       setSelectedSpecId(null);
       setTestRunBySpecId({});
+      setChatMessages([]);
+      setChatDraft("");
+      setChatActiveContext(getDefaultChatContext());
+      setChatPending(false);
       setUploadMessage("");
       setUploadError("");
       setSpecCache((current) => {
@@ -3707,28 +3721,23 @@ export default function App() {
     setCustomInstructionDraft(String(llmSettings?.custom_instruction || ""));
   }
 
-  function handleChatContextChange(nextContext) {
-    const normalizedContext = normalizeChatContext(nextContext);
-    if (normalizedContext.mode !== CHAT_CONTEXT_SPEC) {
-      setChatActiveContext(getDefaultChatContext());
+  async function handleChatSend(event) {
+    event.preventDefault();
+
+    if (!session?.userId || !session?.token || chatPending) {
       return;
     }
 
     if (!selectedEntry?.id) {
-      setChatActiveContext(getDefaultChatContext());
-      return;
-    }
-
-    setChatActiveContext({
-      mode: CHAT_CONTEXT_SPEC,
-      specId: Number(selectedEntry.id),
-    });
-  }
-
-  async function handleChatSend(event) {
-    event.preventDefault();
-
-    if (!session?.userId || chatPending) {
+      const noSpecMessage = createChatMessage({
+        role: "system",
+        content: "Select a specification before sending chat messages.",
+        context: getDefaultChatContext(),
+        meta: {
+          level: "error",
+        },
+      });
+      setChatMessages((current) => [...current, noSpecMessage]);
       return;
     }
 
@@ -3737,20 +3746,42 @@ export default function App() {
       return;
     }
 
-    const resolvedContext = (
-      chatActiveContext.mode === CHAT_CONTEXT_SPEC
-      && selectedEntry?.id !== undefined
-      && selectedEntry?.id !== null
-    )
-      ? {
-          mode: CHAT_CONTEXT_SPEC,
-          specId: Number(selectedEntry.id),
-        }
-      : getDefaultChatContext();
+    const resolvedContext = {
+      mode: CHAT_CONTEXT_SPEC,
+      specId: Number(selectedEntry.id),
+    };
+    setChatActiveContext(resolvedContext);
 
-    if (resolvedContext.mode === CHAT_CONTEXT_SPEC) {
-      setChatActiveContext(resolvedContext);
-    }
+    const priorThread = chatMessages
+      .filter((message) => (
+        (message?.role === "user" || message?.role === "assistant")
+        && Number(message?.context?.specId) === Number(selectedEntry.id)
+      ))
+      .map((message) => ({
+        role: message.role,
+        content: String(message.content || "").trim(),
+      }))
+      .filter((message) => message.content.length > 0)
+      .slice(-12);
+
+    const hasLatestRunContext = (
+      selectedRunState?.runId !== null
+      || Boolean(selectedRunState?.result?.summary)
+      || (Array.isArray(selectedRunState?.result?.results) && selectedRunState.result.results.length > 0)
+      || (Array.isArray(selectedRunState?.baselineTests) && selectedRunState.baselineTests.length > 0)
+    );
+    const latestRunSnapshot = hasLatestRunContext
+      ? {
+          run_id: selectedRunState?.runId ?? null,
+          summary: selectedRunState?.result?.summary || {},
+          results: Array.isArray(selectedRunState?.result?.results)
+            ? (cloneJsonValue(selectedRunState.result.results) || [])
+            : [],
+          baseline_tests: Array.isArray(selectedRunState?.baselineTests)
+            ? (cloneJsonValue(selectedRunState.baselineTests) || [])
+            : [],
+        }
+      : null;
 
     const userMessage = createChatMessage({
       role: "user",
@@ -3765,15 +3796,24 @@ export default function App() {
     setChatPending(true);
 
     try {
-      const response = await mockChatAdapter.send({
+      const response = await requestSpecGroundedChat(session.token, {
+        spec_id: Number(selectedEntry.id),
         message: trimmedDraft,
-        context: resolvedContext,
-        runtimeConfig: chatRuntimeConfig,
+        thread: priorThread,
+        context_snapshot: {
+          parsed_spec: selectedEntry?.parsed && typeof selectedEntry.parsed === "object"
+            ? (cloneJsonValue(selectedEntry.parsed) || selectedEntry.parsed)
+            : null,
+          generated_tests: Array.isArray(selectedEntry?.generatedTests)
+            ? (cloneJsonValue(selectedEntry.generatedTests) || [])
+            : [],
+          latest_run: latestRunSnapshot,
+        },
       });
       const assistantMessage = normalizeChatMessage(response?.assistantMessage)
         || createChatMessage({
           role: "assistant",
-          content: "Mock adapter did not return a valid assistant response.",
+          content: "Assistant returned an invalid response payload.",
           context: resolvedContext,
           meta: response?.meta || {},
         });
@@ -3926,6 +3966,7 @@ export default function App() {
 
           <SpecDetails
             entry={selectedEntry}
+            displaySpecId={selectedEntryDisplayId}
             runState={selectedRunState}
             onUpdateTestCase={handleUpdateTestCase}
             onResetTestCase={handleResetTestCase}
@@ -3938,11 +3979,10 @@ export default function App() {
 
           <ChatPanel
             selectedEntry={selectedEntry}
+            specDisplayIdBySpecId={specDisplayIdBySpecId}
             messages={chatMessages}
             draft={chatDraft}
             pending={chatPending}
-            activeContext={chatActiveContext}
-            onContextChange={handleChatContextChange}
             onDraftChange={setChatDraft}
             onSend={handleChatSend}
           />

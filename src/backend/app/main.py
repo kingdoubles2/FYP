@@ -1,11 +1,14 @@
 import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from llm_eval.failure_assistant import (
     SUGGESTION_TIMEOUT_SECONDS_MAX,
@@ -26,7 +29,7 @@ from llm_eval.failure_assistant import (
     safe_json_loads,
     sha256_text,
 )
-from llm_eval.llm_client_types import is_rate_limit_or_quota_kind
+from llm_eval.llm_client_types import is_rate_limit_or_quota_kind, normalize_llm_error_meta
 from llm_eval.ollama_client import OllamaClient
 from llm_eval.provider_clients import AnthropicClient, OpenAIClient
 from spec_parser.parser import parse_openapi
@@ -83,12 +86,51 @@ class SuggestTestRequest(BaseModel):
     explanation: Optional[dict[str, Any]] = None
 
 
+class SpecAssistantThreadMessage(BaseModel):
+    role: str
+    content: str
+
+
+class SpecAssistantLatestRunSnapshot(BaseModel):
+    run_id: Optional[int] = None
+    summary: Optional[dict[str, Any]] = None
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    baseline_tests: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SpecAssistantContextSnapshot(BaseModel):
+    parsed_spec: Optional[dict[str, Any]] = None
+    generated_tests: list[dict[str, Any]] = Field(default_factory=list)
+    latest_run: Optional[SpecAssistantLatestRunSnapshot] = None
+
+
+class SpecAssistantChatRequest(BaseModel):
+    spec_id: int
+    message: str
+    thread: list[SpecAssistantThreadMessage] = Field(default_factory=list)
+    context_snapshot: Optional[SpecAssistantContextSnapshot] = None
+
+
 MODEL_SOURCE_BUILTIN = "builtin"
 MODEL_SOURCE_USER = "user"
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_OPENAI = "openai"
 PROVIDER_ANTHROPIC = "anthropic"
 SUPPORTED_PROVIDERS = {PROVIDER_OLLAMA, PROVIDER_OPENAI, PROVIDER_ANTHROPIC}
+CHAT_THREAD_ROLE_USER = "user"
+CHAT_THREAD_ROLE_ASSISTANT = "assistant"
+CHAT_ALLOWED_THREAD_ROLES = {CHAT_THREAD_ROLE_USER, CHAT_THREAD_ROLE_ASSISTANT}
+CHAT_MAX_MESSAGE_CHARS = 4000
+CHAT_MAX_THREAD_MESSAGES = 12
+CHAT_MAX_THREAD_MESSAGE_CHARS = 2000
+CHAT_MAX_SPEC_ENDPOINTS = 40
+CHAT_MAX_TEST_CASES = 120
+CHAT_MAX_RUN_RESULTS_SAMPLE = 60
+CHAT_MAX_FAILED_RESULTS = 40
+CHAT_REFUSAL_MESSAGE = (
+    "I can only help with the selected API spec context (spec details, generated tests, and latest run results). "
+    "Please ask about this spec's endpoints, generated test cases, run outcomes, or failure diagnostics."
+)
 
 
 def _validate_credentials(req: RegisterRequest | LoginRequest) -> None:
@@ -576,6 +618,356 @@ def _load_run_case_bundle(
     }
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_spec_chat_thread(raw_thread: list[SpecAssistantThreadMessage]) -> list[dict[str, str]]:
+    if len(raw_thread) > CHAT_MAX_THREAD_MESSAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Thread history must include {CHAT_MAX_THREAD_MESSAGES} messages or fewer.",
+        )
+    normalized: list[dict[str, str]] = []
+    for item in raw_thread:
+        role = str(item.role or "").strip().lower()
+        if role not in CHAT_ALLOWED_THREAD_ROLES:
+            raise HTTPException(status_code=400, detail="Thread message role must be 'user' or 'assistant'.")
+        content = str(item.content or "").strip()
+        if not content:
+            continue
+        if len(content) > CHAT_MAX_THREAD_MESSAGE_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Each thread message must be {CHAT_MAX_THREAD_MESSAGE_CHARS} characters or fewer."
+                ),
+            )
+        normalized.append({"role": role, "content": content})
+    return normalized
+
+
+def _extract_expected_status(test_case: dict[str, Any]) -> str:
+    expected = test_case.get("expected_result") if isinstance(test_case.get("expected_result"), dict) else {}
+    any_of = expected.get("status_code_any_of")
+    if isinstance(any_of, list) and any_of:
+        return " / ".join(str(item) for item in any_of[:3])
+    status_code = expected.get("status_code")
+    return str(status_code) if status_code is not None else ""
+
+
+def _summarize_spec_endpoints(parsed_spec: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+    endpoints = parsed_spec.get("endpoints") if isinstance(parsed_spec.get("endpoints"), list) else []
+    total = len(endpoints)
+    summarized: list[dict[str, Any]] = []
+    for endpoint in endpoints[:CHAT_MAX_SPEC_ENDPOINTS]:
+        if not isinstance(endpoint, dict):
+            continue
+        response_schemas = endpoint.get("response_schemas")
+        response_codes = (
+            sorted([str(key) for key in response_schemas.keys()])
+            if isinstance(response_schemas, dict)
+            else []
+        )
+        summarized.append(
+            {
+                "method": str(endpoint.get("method") or "").upper(),
+                "path": str(endpoint.get("path") or ""),
+                "operation_id": str(endpoint.get("operation_id") or ""),
+                "response_codes": response_codes[:8],
+            }
+        )
+    return summarized, total
+
+
+def _summarize_generated_tests(generated_tests: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int], int]:
+    category_counts: dict[str, int] = {}
+    for test_case in generated_tests:
+        if not isinstance(test_case, dict):
+            continue
+        category = str(test_case.get("category") or "other")
+        category_counts[category] = category_counts.get(category, 0) + 1
+
+    summarized: list[dict[str, Any]] = []
+    for test_case in generated_tests[:CHAT_MAX_TEST_CASES]:
+        if not isinstance(test_case, dict):
+            continue
+        category = str(test_case.get("category") or "other")
+        summarized.append(
+            {
+                "test_id": str(test_case.get("test_id") or ""),
+                "title": str(test_case.get("title") or ""),
+                "category": category,
+                "method": str(test_case.get("method") or "").upper(),
+                "path": str(test_case.get("path") or ""),
+                "expected_status": _extract_expected_status(test_case),
+            }
+        )
+    return summarized, category_counts, len(generated_tests)
+
+
+def _summarize_latest_run(latest_run: Optional[dict[str, Any]]) -> tuple[dict[str, Any], int]:
+    if not isinstance(latest_run, dict):
+        return {"present": False}, 0
+    summary = latest_run.get("summary") if isinstance(latest_run.get("summary"), dict) else {}
+    results = latest_run.get("results") if isinstance(latest_run.get("results"), list) else []
+    run_id_raw = latest_run.get("run_id")
+    try:
+        run_id = int(run_id_raw) if run_id_raw is not None else None
+    except Exception:
+        run_id = None
+
+    failed_cases: list[dict[str, Any]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if str(result.get("outcome") or "").upper() != "FAIL":
+            continue
+        failed_cases.append(
+            {
+                "test_id": str(result.get("test_id") or ""),
+                "method": str(result.get("method") or "").upper(),
+                "path": str(result.get("path") or ""),
+                "expected_status": result.get("expected_status_any_of") or result.get("expected_status"),
+                "actual_status": result.get("actual_status"),
+                "error_message": str(result.get("error_message") or ""),
+                "response_snippet": str(result.get("response_snippet") or ""),
+            }
+        )
+        if len(failed_cases) >= CHAT_MAX_FAILED_RESULTS:
+            break
+
+    result_sample: list[dict[str, Any]] = []
+    for result in results[:CHAT_MAX_RUN_RESULTS_SAMPLE]:
+        if not isinstance(result, dict):
+            continue
+        result_sample.append(
+            {
+                "test_id": str(result.get("test_id") or ""),
+                "outcome": str(result.get("outcome") or ""),
+                "actual_status": result.get("actual_status"),
+                "expected_status": result.get("expected_status_any_of") or result.get("expected_status"),
+            }
+        )
+
+    return {
+        "present": True,
+        "run_id": run_id,
+        "summary": summary,
+        "failed_cases": failed_cases,
+        "result_sample": result_sample,
+        "result_total": len(results),
+    }, len(failed_cases)
+
+
+def _build_spec_chat_grounding_bundle(
+    *,
+    spec_row: Spec,
+    parsed_spec: dict[str, Any],
+    generated_tests: list[dict[str, Any]],
+    latest_run: Optional[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    endpoint_summaries, endpoint_total = _summarize_spec_endpoints(parsed_spec)
+    test_summaries, category_counts, test_total = _summarize_generated_tests(generated_tests)
+    latest_run_summary, failed_count = _summarize_latest_run(latest_run)
+
+    spec_summary = {
+        "id": int(spec_row.id),
+        "title": str(parsed_spec.get("title") or spec_row.title or ""),
+        "version": str(parsed_spec.get("version") or spec_row.version or ""),
+        "base_url": str(parsed_spec.get("base_url") or ""),
+        "endpoint_total": endpoint_total,
+        "endpoint_sample": endpoint_summaries,
+    }
+    tests_summary = {
+        "total": test_total,
+        "category_counts": category_counts,
+        "case_sample": test_summaries,
+    }
+    bundle = {
+        "spec": spec_summary,
+        "generated_tests": tests_summary,
+        "latest_run": latest_run_summary,
+    }
+    stats = {
+        "endpoint_total": endpoint_total,
+        "endpoint_included": len(endpoint_summaries),
+        "test_count": test_total,
+        "test_included": len(test_summaries),
+        "has_latest_run": bool(latest_run_summary.get("present")),
+        "failed_count": failed_count,
+        "run_result_total": int(latest_run_summary.get("result_total") or 0),
+    }
+    return bundle, stats
+
+
+def _is_spec_chat_out_of_scope(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    if not text:
+        return False
+
+    scoped_tokens = (
+        "spec",
+        "openapi",
+        "contract",
+        "endpoint",
+        "api",
+        "test",
+        "case",
+        "run",
+        "failure",
+        "status",
+        "response",
+        "request",
+        "path",
+        "query",
+        "header",
+        "schema",
+        "payload",
+        "generated",
+        "suite",
+        "assertion",
+        "auth",
+    )
+    if any(token in text for token in scoped_tokens):
+        return False
+
+    general_tokens = (
+        "weather",
+        "sports",
+        "football",
+        "basketball",
+        "stock",
+        "bitcoin",
+        "crypto",
+        "news",
+        "movie",
+        "music",
+        "recipe",
+        "travel",
+        "joke",
+        "poem",
+        "horoscope",
+        "celebrity",
+        "politics",
+        "translate",
+        "essay",
+        "workout",
+    )
+    if any(token in text for token in general_tokens):
+        return True
+
+    if text.startswith("who is") or text.startswith("what is") or text.startswith("tell me about"):
+        return True
+    return False
+
+
+def _build_spec_chat_system_prompt(custom_instruction: str) -> str:
+    base = (
+        "You are ContractGuard's spec-grounded assistant.\n"
+        "Use only the provided grounding context for the selected spec.\n"
+        "Never answer general questions unrelated to this spec, generated tests, or run results.\n"
+        "If context is missing, say what is missing and ask for a spec-focused question.\n"
+        "Do not invent endpoints, statuses, test cases, or execution outcomes.\n"
+        "Keep answers concise and actionable."
+    )
+    custom = str(custom_instruction or "").strip()
+    if not custom:
+        return base
+    return f"{base}\n\nUser instruction profile:\n{custom}"
+
+
+def _build_spec_chat_user_prompt(
+    *,
+    message: str,
+    thread: list[dict[str, str]],
+    grounding_bundle: dict[str, Any],
+) -> str:
+    history_lines = [f"{item['role']}: {item['content']}" for item in thread]
+    history_text = "\n".join(history_lines) if history_lines else "(none)"
+    return (
+        "Selected spec grounding context (JSON):\n"
+        f"{safe_json_dumps(grounding_bundle)}\n\n"
+        "Conversation thread (oldest first):\n"
+        f"{history_text}\n\n"
+        "Current user message:\n"
+        f"{message}\n\n"
+        "Answer in plain text, grounded only in the context above."
+    )
+
+
+def _build_chat_assistant_payload(
+    *,
+    spec_id: int,
+    content: str,
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    created_at = _utc_now_iso()
+    return {
+        "assistantMessage": {
+            "id": f"assistant-{uuid4().hex}",
+            "role": CHAT_THREAD_ROLE_ASSISTANT,
+            "content": str(content or "").strip(),
+            "createdAt": created_at,
+            "context": {"mode": "spec", "specId": int(spec_id)},
+            "meta": meta,
+        },
+        "meta": meta,
+    }
+
+
+def _reset_table_id_sequences(db: Any, table_names: list[str]) -> None:
+    if not table_names:
+        return
+    bind = db.get_bind() if hasattr(db, "get_bind") else None
+    dialect = str(getattr(getattr(bind, "dialect", None), "name", "")).lower()
+    if not dialect:
+        return
+
+    safe_table_names = [name for name in table_names if isinstance(name, str) and name.strip()]
+    if not safe_table_names:
+        return
+
+    if dialect == "sqlite":
+        sqlite_seq_exists = db.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'")
+        ).first()
+        if not sqlite_seq_exists:
+            return
+        for table_name in safe_table_names:
+            max_id = db.execute(text(f"SELECT COALESCE(MAX(id), 0) FROM {table_name}")).scalar()
+            try:
+                max_id_int = int(max_id or 0)
+            except Exception:
+                max_id_int = 0
+            if max_id_int <= 0:
+                db.execute(text("DELETE FROM sqlite_sequence WHERE name = :name"), {"name": table_name})
+            else:
+                db.execute(
+                    text("UPDATE sqlite_sequence SET seq = :seq WHERE name = :name"),
+                    {"seq": max_id_int, "name": table_name},
+                )
+        return
+
+    if dialect.startswith("postgres"):
+        for table_name in safe_table_names:
+            seq_name = db.execute(
+                text("SELECT pg_get_serial_sequence(:table_name, 'id')"),
+                {"table_name": table_name},
+            ).scalar()
+            if not seq_name:
+                continue
+            max_id = db.execute(text(f"SELECT COALESCE(MAX(id), 0) FROM {table_name}")).scalar()
+            try:
+                next_value = int(max_id or 0) + 1
+            except Exception:
+                next_value = 1
+            db.execute(
+                text("SELECT setval(:seq_name, :next_value, false)"),
+                {"seq_name": str(seq_name), "next_value": int(next_value)},
+            )
+
+
 app = FastAPI(title="ContractGuard Backend")
 app.add_middleware(
     CORSMiddleware,
@@ -764,6 +1156,180 @@ def delete_llm_model(model_id: str, current_user: User = Depends(get_current_use
 
         resolved_after = _resolve_effective_llm_settings(db, current_user.id)
         return _settings_response_payload(resolved_after)
+    finally:
+        db.close()
+
+
+@app.post("/api/chat/spec-assistant")
+def chat_with_spec_assistant(
+    req: SpecAssistantChatRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    message = str(req.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    if len(message) > CHAT_MAX_MESSAGE_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Message must be {CHAT_MAX_MESSAGE_CHARS} characters or fewer.",
+        )
+    thread = _normalize_spec_chat_thread(req.thread or [])
+    started = time.perf_counter()
+
+    db = SessionLocal()
+    try:
+        spec_row = _get_owned_spec(db, current_user.id, int(req.spec_id))
+        context_snapshot = req.context_snapshot or SpecAssistantContextSnapshot()
+
+        artifact_row = (
+            db.query(SpecArtifact)
+            .filter(SpecArtifact.spec_id == spec_row.id, SpecArtifact.user_id == current_user.id)
+            .order_by(SpecArtifact.id.desc())
+            .first()
+        )
+
+        parsed_spec = context_snapshot.parsed_spec if isinstance(context_snapshot.parsed_spec, dict) else {}
+        if not parsed_spec:
+            parsed_spec = _json_load_or_default(artifact_row.parsed_ir_json if artifact_row else None, {})
+            if not isinstance(parsed_spec, dict):
+                parsed_spec = {}
+
+        generated_tests = context_snapshot.generated_tests if isinstance(context_snapshot.generated_tests, list) else []
+        if not generated_tests:
+            generated_suite = _json_load_or_default(artifact_row.generated_suite_json if artifact_row else None, {})
+            if isinstance(generated_suite, dict):
+                generated_tests = (
+                    generated_suite.get("test_cases") if isinstance(generated_suite.get("test_cases"), list) else []
+                )
+        generated_tests = [item for item in generated_tests if isinstance(item, dict)]
+
+        latest_run_payload = context_snapshot.latest_run.model_dump() if context_snapshot.latest_run else None
+        if not latest_run_payload:
+            latest_run_row = (
+                db.query(TestRun)
+                .filter(TestRun.spec_id == spec_row.id, TestRun.user_id == current_user.id)
+                .order_by(TestRun.id.desc())
+                .first()
+            )
+            if latest_run_row:
+                run_summary = _json_load_or_default(latest_run_row.summary_json, {})
+                if not isinstance(run_summary, dict):
+                    run_summary = {}
+                run_results = _json_load_or_default(latest_run_row.results_json, [])
+                if not isinstance(run_results, list):
+                    run_results = []
+                run_suite = _json_load_or_default(latest_run_row.suite_snapshot_json, {})
+                baseline_tests = run_suite.get("test_cases") if isinstance(run_suite, dict) else []
+                if not isinstance(baseline_tests, list):
+                    baseline_tests = []
+                latest_run_payload = {
+                    "run_id": int(latest_run_row.id),
+                    "summary": run_summary,
+                    "results": run_results,
+                    "baseline_tests": baseline_tests,
+                }
+        if isinstance(latest_run_payload, dict):
+            if not isinstance(latest_run_payload.get("summary"), dict):
+                latest_run_payload["summary"] = {}
+            if not isinstance(latest_run_payload.get("results"), list):
+                latest_run_payload["results"] = []
+            if not isinstance(latest_run_payload.get("baseline_tests"), list):
+                latest_run_payload["baseline_tests"] = []
+        else:
+            latest_run_payload = None
+
+        grounding_bundle, grounding_stats = _build_spec_chat_grounding_bundle(
+            spec_row=spec_row,
+            parsed_spec=parsed_spec,
+            generated_tests=generated_tests,
+            latest_run=latest_run_payload,
+        )
+
+        resolved_settings = _resolve_effective_llm_settings(db, current_user.id)
+        active_model = resolved_settings.get("active_model") if isinstance(resolved_settings.get("active_model"), dict) else {}
+        base_meta = {
+            **grounding_stats,
+            "thread_count": len(thread),
+            "adapter": "spec_assistant",
+            "provider": str(active_model.get("provider") or ""),
+            "model": str(active_model.get("model") or ""),
+            "out_of_scope": False,
+        }
+
+        if _is_spec_chat_out_of_scope(message):
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            refusal_meta = {
+                **base_meta,
+                "adapter": "spec_assistant_refusal",
+                "latencyMs": latency_ms,
+                "out_of_scope": True,
+            }
+            return _build_chat_assistant_payload(
+                spec_id=int(spec_row.id),
+                content=CHAT_REFUSAL_MESSAGE,
+                meta=refusal_meta,
+            )
+
+        runtime = _build_runtime_from_active_model(resolved_settings)
+        runtime_provider = str(runtime.get("provider") or "")
+        runtime_model = str(runtime.get("model") or "")
+        system_prompt = _build_spec_chat_system_prompt(str(resolved_settings.get("custom_instruction") or ""))
+        user_prompt = _build_spec_chat_user_prompt(
+            message=message,
+            thread=thread,
+            grounding_bundle=grounding_bundle,
+        )
+        response_text, llm_error = runtime["client"].generate(
+            model=runtime_model or "qwen3-coder:latest",
+            prompt=user_prompt,
+            system=system_prompt,
+            format_json=False,
+            options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
+        )
+        latency_ms = int((time.perf_counter() - started) * 1000)
+
+        if llm_error:
+            error_meta = normalize_llm_error_meta(llm_error) or {}
+            failure_kind = str(error_meta.get("kind") or "other")
+            detail_payload = _build_llm_failure_detail(
+                message="LLM chat request failed.",
+                llm_error=error_meta.get("message") or llm_error,
+                validation_errors=[],
+                attempt_diagnostics=[],
+                provider=runtime_provider,
+                model=runtime_model,
+                failure_kind=failure_kind,
+                status_hint=error_meta.get("status_code"),
+                error_meta=error_meta,
+            )
+            raise HTTPException(status_code=int(detail_payload["status"]), detail=detail_payload)
+
+        assistant_text = str(response_text or "").strip()
+        if not assistant_text:
+            detail_payload = _build_llm_failure_detail(
+                message="LLM chat request returned empty output.",
+                llm_error="empty response",
+                validation_errors=[],
+                attempt_diagnostics=[],
+                provider=runtime_provider,
+                model=runtime_model,
+                failure_kind="invalid_response",
+                status_hint=502,
+                error_meta={},
+            )
+            raise HTTPException(status_code=int(detail_payload["status"]), detail=detail_payload)
+
+        success_meta = {
+            **base_meta,
+            "provider": runtime_provider,
+            "model": runtime_model,
+            "latencyMs": latency_ms,
+        }
+        return _build_chat_assistant_payload(
+            spec_id=int(spec_row.id),
+            content=assistant_text,
+            meta=success_meta,
+        )
     finally:
         db.close()
 
@@ -1238,6 +1804,15 @@ def clear_specs_history(current_user: User = Depends(get_current_user)) -> dict[
             SpecArtifact.spec_id.in_(spec_ids),
         ).delete(synchronize_session=False)
         deleted_count = db.query(Spec).filter(Spec.user_id == current_user.id).delete(synchronize_session=False)
+        _reset_table_id_sequences(
+            db,
+            [
+                LLMRunInsight.__tablename__,
+                TestRun.__tablename__,
+                SpecArtifact.__tablename__,
+                Spec.__tablename__,
+            ],
+        )
         db.commit()
         return {"deleted": deleted_count}
     finally:

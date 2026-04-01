@@ -58,6 +58,59 @@ def _sample_evidence() -> dict:
     }
 
 
+def _negative_type_evidence(*, executed_latitude: str) -> dict:
+    evidence = _sample_evidence()
+    evidence["spec"]["operation"] = {
+        "method": "GET",
+        "path": "/v1/forecast",
+        "operation_id": "forecast/get-forecast",
+        "summary": "Forecast",
+        "description": "",
+    }
+    evidence["spec"]["request_constraints"] = {
+        "query_param_rules": {
+            "latitude": {"type": "number", "format": "double"},
+            "longitude": {"type": "number", "format": "double"},
+        }
+    }
+    evidence["ir_context"] = {
+        "endpoint_ir": {
+            "query_params": [
+                {"name": "latitude", "schema": {"type": "number", "format": "double"}},
+                {"name": "longitude", "schema": {"type": "number", "format": "double"}},
+            ]
+        },
+        "parser_warnings": [],
+        "unsupported_spec_warnings": [],
+    }
+    evidence["test_context"]["title"] = "GET /v1/forecast - Negative type: query latitude='not_a_number'"
+    evidence["test_context"]["category"] = "negative_type"
+    evidence["test_context"]["intent"] = "negative"
+    evidence["test_context"]["expected_outcome"] = {"status_code": 400, "description": "Bad request"}
+    evidence["test_context"]["generated_input"] = {
+        "path_params": {},
+        "query_params": {"latitude": "not_a_number", "longitude": 52.52},
+        "headers": {},
+        "body": None,
+    }
+    evidence["execution"]["assertion_failures"] = [
+        {"type": "status_mismatch", "expected": 400, "actual_status": 200, "actual_error": ""}
+    ]
+    evidence["execution"]["request_sent"] = {
+        "final_url": "https://api.example.com/v1/forecast",
+        "path_params": {},
+        "query_params": {"latitude": executed_latitude, "longitude": 52.52},
+        "headers": {},
+        "body": None,
+    }
+    evidence["execution"]["response_received"] = {
+        "status": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body_snippet": '{"latitude":52.52,"longitude":52.52}',
+    }
+    return evidence
+
+
 def _valid_contract_json() -> str:
     return (
         "{"
@@ -67,6 +120,19 @@ def _valid_contract_json() -> str:
         "\"confidence\":\"confirmed\","
         "\"expected_negative_behavior\":false,"
         "\"evidence_quotes\":[\"status\\\": 200\",\"body_snippet\\\": \\\"{\\\\\\\"login\\\\\\\"\\\"\"]"
+        "}"
+    )
+
+
+def _minimal_contract_json(cause: str) -> str:
+    return (
+        "{"
+        f"\"cause\":\"{cause}\","
+        "\"why_likely\":\"Model-supplied why likely.\","
+        "\"check_next\":\"Model-supplied next check.\","
+        "\"confidence\":\"likely\","
+        "\"expected_negative_behavior\":false,"
+        "\"evidence_quotes\":[]"
         "}"
     )
 
@@ -185,6 +251,52 @@ class FailureExplanationFlowTests(unittest.TestCase):
         self.assertEqual(output["status_code"], 429)
         self.assertEqual(len(output["attempts"]), 1)
         self.assertEqual(client.calls, 1)
+
+    def test_generate_explanation_hard_overrides_when_negative_setup_drift_detected(self) -> None:
+        client = _StubOllamaClient([(_minimal_contract_json("Model cause that should be overridden."), None)])
+        output = generate_failure_explanation(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_negative_type_evidence(executed_latitude="52.52"),
+            prompt_bundle={},
+            word_target=55,
+            word_max=120,
+            retry_invalid_output=0,
+            max_items_per_section=12,
+            ollama_options={},
+        )
+
+        self.assertTrue(output["ok"])
+        contract = output.get("contract")
+        self.assertIsInstance(contract, dict)
+        self.assertIn("setup drift", str(contract.get("cause") or "").lower())
+        self.assertEqual(contract.get("confidence"), "confirmed")
+        self.assertIn("restore intentionally invalid latitude", str(contract.get("check_next") or "").lower())
+        self.assertIn("drift_detected\": true", str(output["attempts"][0]["prompt"]).lower())
+        self.assertIn(
+            "execution.request_sent as the authoritative executed input",
+            str(output["attempts"][0]["prompt"]),
+        )
+
+    def test_generate_explanation_does_not_override_when_no_negative_setup_drift(self) -> None:
+        model_cause = "Model cause should remain unchanged."
+        client = _StubOllamaClient([(_minimal_contract_json(model_cause), None)])
+        output = generate_failure_explanation(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_negative_type_evidence(executed_latitude="not_a_number"),
+            prompt_bundle={},
+            word_target=55,
+            word_max=120,
+            retry_invalid_output=0,
+            max_items_per_section=12,
+            ollama_options={},
+        )
+
+        self.assertTrue(output["ok"])
+        contract = output.get("contract")
+        self.assertIsInstance(contract, dict)
+        self.assertEqual(contract.get("cause"), model_cause)
 
     def test_load_backend_settings_raises_if_missing_config_and_no_env_model(self) -> None:
         missing = Path("src/backend/tests/_missing_llm_settings.yaml")
