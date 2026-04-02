@@ -137,6 +137,58 @@ export async function fetchLatestRunForSpec(token, specId) {
   });
 }
 
+export async function listLogisticsRuns(token, params = {}) {
+  const limit = Number(params?.limit);
+  const beforeRunId = Number(params?.before_run_id ?? params?.beforeRunId);
+  const state = String(params?.state || "all").trim().toLowerCase() || "all";
+  const specQuery = String(params?.spec_query ?? params?.specQuery ?? "").trim();
+  const search = new URLSearchParams();
+  if (Number.isFinite(limit) && limit > 0) {
+    search.set("limit", String(Math.trunc(limit)));
+  }
+  if (Number.isFinite(beforeRunId) && beforeRunId > 0) {
+    search.set("before_run_id", String(Math.trunc(beforeRunId)));
+  }
+  if (specQuery) {
+    search.set("spec_query", specQuery);
+  }
+  if (state) {
+    search.set("state", state);
+  }
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return request(`/api/logistics/runs${suffix}`, {
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
+export async function fetchLogisticsRunDetail(token, runId) {
+  return request(`/api/logistics/runs/${encodeURIComponent(runId)}`, {
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
+export async function deleteLogisticsRun(token, runId) {
+  return request(`/api/logistics/runs/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
+export async function clearLogisticsRuns(token) {
+  return request("/api/logistics/runs", {
+    method: "DELETE",
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
 export async function requestLlmFailureAnalysis(token, runId, testId) {
   return request(`/api/tests/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testId)}/llm/analyze-failure`, {
     method: "POST",

@@ -2,12 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addLlmModel,
   API_BASE_URL,
+  clearLogisticsRuns,
   clearSpecs,
+  deleteLogisticsRun,
   deleteLlmModel,
+  fetchLogisticsRunDetail,
   fetchLatestRunForSpec,
   fetchLlmProviderModels,
   fetchLlmSettings,
   healthCheck,
+  listLogisticsRuns,
   listSpecs,
   loginUser,
   requestLlmFailureAnalysis,
@@ -52,6 +56,14 @@ const DEFAULT_ADD_MODEL_FORM = Object.freeze({
   base_url: "",
   api_key: "",
 });
+const WORKSPACE_VIEW_DASHBOARD = "dashboard";
+const WORKSPACE_VIEW_LOGS = "logs";
+const LOGISTICS_FILTER_STATES = new Set(["all", "passed", "failed"]);
+const DEFAULT_LOGISTICS_FILTERS = Object.freeze({
+  specQuery: "",
+  state: "all",
+});
+const LOGISTICS_PAGE_LIMIT = 25;
 
 function decodeJwtPayload(token) {
   if (!token) {
@@ -392,6 +404,89 @@ function formatDate(value) {
   return date.toLocaleString();
 }
 
+function formatDuration(durationMs) {
+  const totalMs = toSafeCount(durationMs);
+  if (totalMs <= 0) {
+    return "0 ms";
+  }
+  if (totalMs < 1000) {
+    return `${totalMs} ms`;
+  }
+  const totalSeconds = totalMs / 1000;
+  if (totalSeconds < 60) {
+    return `${totalSeconds.toFixed(totalSeconds >= 10 ? 1 : 2)} s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}m ${seconds}s`;
+}
+
+function normalizeLogisticsState(value) {
+  const normalized = String(value || "all").trim().toLowerCase() || "all";
+  return LOGISTICS_FILTER_STATES.has(normalized) ? normalized : "all";
+}
+
+function normalizeLogisticsFilters(filters) {
+  return {
+    specQuery: String(filters?.specQuery || "").trim(),
+    state: normalizeLogisticsState(filters?.state),
+  };
+}
+
+function normalizeLogisticsRunCard(entry, index = 0) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const spec = entry.spec && typeof entry.spec === "object" ? entry.spec : {};
+  const run = entry.run && typeof entry.run === "object" ? entry.run : {};
+  const auth = entry.auth && typeof entry.auth === "object" ? entry.auth : {};
+  const ai = entry.ai && typeof entry.ai === "object" ? entry.ai : {};
+  const runId = Number(run.id);
+  if (!Number.isFinite(runId)) {
+    return null;
+  }
+  const summary = normalizeOutcomeSummary(run.summary);
+  const modelList = Array.isArray(ai.model_list)
+    ? ai.model_list.map((model) => String(model || "").trim()).filter(Boolean)
+    : [];
+
+  return {
+    id: runId,
+    spec: {
+      id: Number(spec.id),
+      title: String(spec.title || spec.filename || `Spec ${index + 1}`),
+      filename: String(spec.filename || ""),
+      version: String(spec.version || "Unknown"),
+      uploadedAt: spec.uploaded_at || null,
+    },
+    run: {
+      id: runId,
+      createdAt: run.created_at || null,
+      summary,
+      durationMs: toSafeCount(run.duration_ms),
+      baseUrl: String(run.base_url || ""),
+    },
+    auth: {
+      provided: Boolean(auth.provided),
+      mode: String(auth.mode || "none"),
+    },
+    ai: {
+      hasAny: Boolean(ai.has_any),
+      hasExplanations: Boolean(ai.has_explanations),
+      hasSuggestions: Boolean(ai.has_suggestions),
+      explanationCount: toSafeCount(ai.explanation_count),
+      suggestionCount: toSafeCount(ai.suggestion_count),
+      modelList,
+    },
+  };
+}
+
+function normalizeLogisticsRunCards(items) {
+  return Array.isArray(items)
+    ? items.map((entry, index) => normalizeLogisticsRunCard(entry, index)).filter(Boolean)
+    : [];
+}
+
 function cloneJsonValue(value) {
   if (value === undefined) {
     return undefined;
@@ -701,6 +796,113 @@ function getEmptyRunState() {
   };
 }
 
+function toSafeCount(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function normalizeOutcomeSummary(summary) {
+  const source = summary && typeof summary === "object" ? summary : {};
+  const passed = toSafeCount(source.passed);
+  const failed = toSafeCount(source.failed);
+  const skipped = toSafeCount(source.skipped);
+  const providedTotal = toSafeCount(source.total);
+  const computedTotal = passed + failed + skipped;
+  const total = Math.max(providedTotal, computedTotal);
+  return {
+    total,
+    passed,
+    failed,
+    skipped,
+  };
+}
+
+function summarizeRunResults(results) {
+  const runResults = Array.isArray(results) ? results : [];
+  const summary = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+  };
+  for (const result of runResults) {
+    const outcome = normalizeRunOutcome(result?.outcome);
+    summary.total += 1;
+    if (outcome === "PASS") {
+      summary.passed += 1;
+    } else if (outcome === "FAIL") {
+      summary.failed += 1;
+    } else if (outcome === "SKIP") {
+      summary.skipped += 1;
+    }
+  }
+  return summary;
+}
+
+function resolveRunSummary(summary, results) {
+  const normalizedSummary = normalizeOutcomeSummary(summary);
+  if (normalizedSummary.total > 0) {
+    return normalizedSummary;
+  }
+  const derivedSummary = summarizeRunResults(results);
+  return derivedSummary.total > 0 ? derivedSummary : normalizedSummary;
+}
+
+function buildLatestRunState(latestRun, fallbackEntry = null) {
+  const source = latestRun && typeof latestRun === "object" ? latestRun : {};
+  const fallback = fallbackEntry && typeof fallbackEntry === "object" ? fallbackEntry : {};
+
+  const sourceId = Number(source.id ?? source.run_id);
+  const fallbackId = Number(fallback.latestRunId);
+  const latestRunId = Number.isFinite(sourceId)
+    ? sourceId
+    : (Number.isFinite(fallbackId) ? fallbackId : null);
+
+  const createdAt = source.created_at || source.createdAt || fallback.latestRunCreatedAt || null;
+  const sourceSummary = source.summary && typeof source.summary === "object"
+    ? source.summary
+    : (fallback.latestRunSummary && typeof fallback.latestRunSummary === "object"
+      ? fallback.latestRunSummary
+      : null);
+  const latestRunSummary = sourceSummary || latestRunId !== null
+    ? normalizeOutcomeSummary(sourceSummary)
+    : null;
+
+  return {
+    latestRunId,
+    latestRunCreatedAt: createdAt || null,
+    latestRunSummary,
+  };
+}
+
+function aggregateWorkspaceLatestRunSummary(entries) {
+  const sourceEntries = Array.isArray(entries) ? entries : [];
+  const totals = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    specsWithRuns: 0,
+  };
+  for (const entry of sourceEntries) {
+    const runId = Number(entry?.latestRunId);
+    const hasRun = Number.isFinite(runId);
+    if (!hasRun) {
+      continue;
+    }
+    totals.specsWithRuns += 1;
+    const summary = normalizeOutcomeSummary(entry?.latestRunSummary);
+    totals.total += summary.total;
+    totals.passed += summary.passed;
+    totals.failed += summary.failed;
+    totals.skipped += summary.skipped;
+  }
+  return totals;
+}
+
 function parseResponseSnippetMeta(snippetText) {
   const raw = String(snippetText || "").trim();
   if (!raw) {
@@ -935,6 +1137,65 @@ function StatCard({ label, value, accent }) {
   );
 }
 
+function OutcomeDonutCard({
+  title,
+  summary,
+  hasData,
+  emptyLabel = "No run yet",
+  totalLabel = "Total tests",
+}) {
+  const normalized = normalizeOutcomeSummary(summary);
+  const total = normalized.total;
+  const passed = normalized.passed;
+  const failed = normalized.failed;
+  const skipped = normalized.skipped;
+  const passDegrees = total > 0 ? (passed / total) * 360 : 0;
+  const failDegrees = total > 0 ? (failed / total) * 360 : 0;
+  const skipDegrees = Math.max(0, 360 - passDegrees - failDegrees);
+  const donutStyle = hasData && total > 0
+    ? {
+        background: `conic-gradient(
+          var(--outcome-pass) 0deg ${passDegrees}deg,
+          var(--outcome-fail) ${passDegrees}deg ${passDegrees + failDegrees}deg,
+          var(--outcome-skip) ${passDegrees + failDegrees}deg ${passDegrees + failDegrees + skipDegrees}deg
+        )`,
+      }
+    : {};
+
+  return (
+    <div className={`outcome-card ${hasData ? "" : "outcome-card-empty"}`.trim()}>
+      <div className="outcome-card-header">
+        <h3>{title}</h3>
+      </div>
+      <div className="outcome-card-body">
+        <div className="outcome-donut" style={donutStyle} aria-hidden="true">
+          <div className="outcome-donut-center">
+            <strong>{hasData ? total : "--"}</strong>
+            <span>{hasData ? totalLabel : emptyLabel}</span>
+          </div>
+        </div>
+        <div className="outcome-legend">
+          <div className="outcome-legend-row">
+            <span className="outcome-dot outcome-dot-pass" />
+            <span>Passed</span>
+            <strong>{hasData ? passed : "--"}</strong>
+          </div>
+          <div className="outcome-legend-row">
+            <span className="outcome-dot outcome-dot-fail" />
+            <span>Failed</span>
+            <strong>{hasData ? failed : "--"}</strong>
+          </div>
+          <div className="outcome-legend-row">
+            <span className="outcome-dot outcome-dot-skip" />
+            <span>Skipped</span>
+            <strong>{hasData ? skipped : "--"}</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AuthPanel({ mode, email, password, loading, error, onModeChange, onEmailChange, onPasswordChange, onSubmit }) {
   return (
     <section className="panel auth-panel">
@@ -999,10 +1260,8 @@ function AuthPanel({ mode, email, password, loading, error, onModeChange, onEmai
 function UploadPanel({ loading, onUpload, message, error }) {
   return (
     <section className="panel upload-panel">
-      <div className="panel-header">
+      <div className="panel-header upload-panel-header">
         <p className="eyebrow">Uploads</p>
-        <h2>Upload one or more API specs</h2>
-        <p className="muted">Select JSON/YAML files or pick a folder. Multiple uploads are supported.</p>
       </div>
 
       <label className="upload-dropzone">
@@ -1082,6 +1341,415 @@ function HistoryList({ entries, selectedSpecId, onSelect, onClear, clearing }) {
         </div>
       )}
     </section>
+  );
+}
+
+function LogisticsPanel({
+  rows,
+  loading,
+  loadingMore,
+  error,
+  message,
+  filterDraft,
+  onFilterDraftChange,
+  hasMore,
+  onLoadMore,
+  onOpenDetail,
+  onDeleteRun,
+  deletingRunId,
+  onClearAll,
+  clearLoading,
+}) {
+  return (
+    <section className="panel logistics-panel">
+      <div className="panel-header">
+        <div className="panel-header-row">
+          <div>
+            <p className="eyebrow">Workspace</p>
+            <h2>Logistics</h2>
+          </div>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={onClearAll}
+            disabled={clearLoading || (loading && rows.length === 0)}
+          >
+            {clearLoading ? "Clearing..." : "Clear Logs"}
+          </button>
+        </div>
+        <p className="muted">Run logs only. Uploaded specs remain after clearing logs.</p>
+      </div>
+
+      <div className="logistics-filter-bar">
+        <label className="field logistics-filter-field">
+          <span>Spec Search</span>
+          <input
+            type="text"
+            value={String(filterDraft?.specQuery || "")}
+            onChange={(event) => onFilterDraftChange?.({ specQuery: event.target.value })}
+            placeholder="Search by title, file, or version"
+          />
+        </label>
+        <label className="field logistics-filter-field logistics-filter-field-state">
+          <span>Filter</span>
+          <select
+            value={normalizeLogisticsState(filterDraft?.state)}
+            onChange={(event) => onFilterDraftChange?.({ state: event.target.value })}
+          >
+            <option value="all">All Runs</option>
+            <option value="passed">Passed</option>
+            <option value="failed">Failed</option>
+          </select>
+        </label>
+      </div>
+
+      {message ? <p className="message success">{message}</p> : null}
+      {error ? <p className="message error">{error}</p> : null}
+
+      {loading && rows.length === 0 ? (
+        <div className="empty-state">
+          <p>Loading run logs...</p>
+          <span>Pulling compact run cards for this workspace.</span>
+        </div>
+      ) : null}
+
+      {!loading && rows.length === 0 ? (
+        <div className="empty-state">
+          <p>No run logs found.</p>
+          <span>Logs are created after a test run is saved.</span>
+        </div>
+      ) : null}
+
+      {rows.length > 0 ? (
+        <>
+          <div className="logistics-list">
+            {rows.map((row) => (
+              <article key={row.id} className="logistics-row">
+                <button type="button" className="logistics-row-main" onClick={() => onOpenDetail?.(row.id)}>
+                  <div className="logistics-row-top">
+                    <strong>{row.spec.title}</strong>
+                  </div>
+                  <div className="logistics-kv-grid">
+                    <div className="logistics-kv-item">
+                      <span className="logistics-kv-label">Spec ID</span>
+                      <strong>{Number.isFinite(row.spec.id) ? `#${row.spec.id}` : "-"}</strong>
+                    </div>
+                    <div className="logistics-kv-item">
+                      <span className="logistics-kv-label">Version</span>
+                      <strong>{row.spec.version || "Unknown"}</strong>
+                    </div>
+                    <div className="logistics-kv-item">
+                      <span className="logistics-kv-label">Duration</span>
+                      <strong>{formatDuration(row.run.durationMs)}</strong>
+                    </div>
+                    <div className="logistics-kv-item logistics-kv-item-wide">
+                      <span className="logistics-kv-label">Base URL</span>
+                      <strong className="logistics-url-value">{row.run.baseUrl || "No base URL"}</strong>
+                    </div>
+                  </div>
+                  <div className="logistics-row-outcomes">
+                    <span className="run-chip run-chip-total">Total: {row.run.summary.total}</span>
+                    <span className="run-chip run-chip-pass">Passed: {row.run.summary.passed}</span>
+                    <span className="run-chip run-chip-fail">Failed: {row.run.summary.failed}</span>
+                    <span className="run-chip run-chip-skip">Skipped: {row.run.summary.skipped}</span>
+                  </div>
+                  <div className="logistics-row-bottom">
+                    <div className="logistics-row-meta">
+                      <span>
+                        Auth: {row.auth.provided ? `Provided (${String(row.auth.mode || "none").replaceAll("_", " ")})` : "Not provided"}
+                      </span>
+                      <span>
+                        AI: {row.ai.hasAny
+                          ? `${row.ai.explanationCount} explanation${row.ai.explanationCount === 1 ? "" : "s"}, ${row.ai.suggestionCount} suggestion${row.ai.suggestionCount === 1 ? "" : "s"}`
+                        : "Unavailable"}
+                      </span>
+                      <span>{row.ai.modelList.length > 0 ? row.ai.modelList.join(", ") : "No model recorded"}</span>
+                    </div>
+                  </div>
+                  <div className="logistics-row-runmeta logistics-row-runmeta-corner">
+                    <span className="logistics-row-runmeta-label">Run ID</span>
+                    <strong>#{row.id}</strong>
+                    <span className="logistics-row-runmeta-label">Run Date</span>
+                    <time dateTime={row.run.createdAt || ""}>{formatDate(row.run.createdAt)}</time>
+                  </div>
+                </button>
+                <div className="logistics-row-actions">
+                  <button
+                    type="button"
+                    className="icon-delete-button"
+                    onClick={() => onDeleteRun?.(row.id)}
+                    disabled={deletingRunId === row.id}
+                    title={deletingRunId === row.id ? "Deleting log..." : `Delete run #${row.id}`}
+                    aria-label={deletingRunId === row.id ? "Deleting run log" : `Delete run #${row.id}`}
+                  >
+                    {deletingRunId === row.id ? (
+                      <span aria-hidden="true">...</span>
+                    ) : (
+                      <svg viewBox="0 0 24 24" role="presentation" focusable="false" aria-hidden="true">
+                        <path d="M9 3.5h6l.7 1.5H20v2H4V5h4.3L9 3.5Zm-2 6h2v8H7v-8Zm4 0h2v8h-2v-8Zm4 0h2v8h-2v-8Z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="logistics-footer">
+            <span>{rows.length} run log{rows.length === 1 ? "" : "s"} shown</span>
+            {hasMore ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={onLoadMore}
+                disabled={loadingMore || loading}
+              >
+                {loadingMore ? "Loading..." : "Load More"}
+              </button>
+            ) : (
+              <span className="muted">No more logs.</span>
+            )}
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function LogisticsDetailModal({
+  open,
+  loading,
+  error,
+  detail,
+  deleting,
+  onClose,
+  onDelete,
+  onShowJson,
+}) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        onClose?.();
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [onClose, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  const run = detail?.run && typeof detail.run === "object" ? detail.run : {};
+  const spec = detail?.spec && typeof detail.spec === "object" ? detail.spec : {};
+  const auth = detail?.auth && typeof detail.auth === "object" ? detail.auth : {};
+  const suite = detail?.suite && typeof detail.suite === "object" ? detail.suite : {};
+  const runSummary = normalizeOutcomeSummary(run.summary);
+  const testCases = Array.isArray(suite.test_cases) ? suite.test_cases : [];
+  const runResults = Array.isArray(detail?.results) ? detail.results : [];
+  const llmInsights = Array.isArray(detail?.llm_insights) ? detail.llm_insights : [];
+  const resultByTestId = runResults.reduce((acc, row) => {
+    const testId = String(row?.test_id || "").trim();
+    if (!testId) {
+      return acc;
+    }
+    acc[testId] = row;
+    return acc;
+  }, {});
+  const insightByTestId = llmInsights.reduce((acc, row) => {
+    const testId = String(row?.test_id || "").trim();
+    if (!testId) {
+      return acc;
+    }
+    if (!acc[testId]) {
+      acc[testId] = [];
+    }
+    acc[testId].push(row);
+    return acc;
+  }, {});
+  const runId = Number(run.id);
+  const specId = Number(spec.id);
+
+  return (
+    <div
+      className="settings-modal-backdrop logistics-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose?.();
+        }
+      }}
+    >
+      <section
+        className="panel settings-modal-card logistics-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logistics-modal-title"
+      >
+        <div className="panel-header settings-modal-header logistics-modal-header">
+          <div>
+            <p className="eyebrow">Run Detail</p>
+            <h2 id="logistics-modal-title">{Number.isFinite(runId) ? `Run #${runId}` : "Run Detail"}</h2>
+            <p className="muted">
+              {spec.title || "Unknown spec"} {Number.isFinite(specId) ? `(spec #${specId})` : ""}
+            </p>
+          </div>
+          <div className="logistics-modal-header-actions">
+            <button
+              type="button"
+              className="danger-button"
+              onClick={() => onDelete?.(runId)}
+              disabled={!Number.isFinite(runId) || deleting}
+            >
+              {deleting ? "Deleting..." : "Delete Log"}
+            </button>
+            <button type="button" className="secondary-button" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+
+        {error ? <p className="message error">{error}</p> : null}
+        {loading ? (
+          <div className="empty-state">
+            <p>Loading run detail...</p>
+            <span>Fetching suite snapshot, results, and AI outputs.</span>
+          </div>
+        ) : null}
+
+        {!loading ? (
+          <div className="logistics-modal-body">
+            <div className="stats-grid logistics-modal-stats">
+              <StatCard label="Uploaded" value={formatDate(spec.uploaded_at)} accent="accent-green" />
+              <StatCard label="Run Time" value={formatDate(run.created_at)} accent="accent-blue" />
+              <StatCard label="Duration" value={formatDuration(run.duration_ms)} accent="accent-amber" />
+              <StatCard label="Base URL" value={run.base_url || "Unknown"} accent="accent-red" />
+            </div>
+            <div className="logistics-modal-meta-row">
+              <span>
+                Auth: {auth.provided ? `Provided (${String(auth.mode || "none").replaceAll("_", " ")})` : "Not provided"}
+              </span>
+              <span>Summary: {runSummary.passed} passed / {runSummary.failed} failed / {runSummary.skipped} skipped</span>
+              <span>AI records: {llmInsights.length}</span>
+            </div>
+
+            <div className="logistics-test-list">
+              {testCases.length === 0 ? (
+                <div className="empty-state">
+                  <p>No stored test cases in this run snapshot.</p>
+                  <span>Older runs may not have suite snapshots.</span>
+                </div>
+              ) : (
+                testCases.map((testCase, index) => {
+                  const testId = String(testCase?.test_id || `case-${index + 1}`);
+                  const result = resultByTestId[testId] || null;
+                  const insights = Array.isArray(insightByTestId[testId]) ? insightByTestId[testId] : [];
+                  const outcome = normalizeRunOutcome(result?.outcome);
+                  return (
+                    <article key={testId} className="logistics-test-row">
+                      <div className="logistics-test-main">
+                        <div className="logistics-test-top">
+                          <strong>{testCase?.title || testId}</strong>
+                          {outcome ? (
+                            <span className={`result-pill result-pill-${outcome.toLowerCase()}`}>{outcome}</span>
+                          ) : (
+                            <span className="run-chip run-chip-skip">No result</span>
+                          )}
+                        </div>
+                        <div className="logistics-test-meta">
+                          <span>{String(testCase?.method || "").toUpperCase()} {String(testCase?.path || "")}</span>
+                          <span>{testId}</span>
+                          <span>{formatDuration(result?.duration_ms)}</span>
+                          <span>{insights.length} AI record{insights.length === 1 ? "" : "s"}</span>
+                        </div>
+                      </div>
+                      <div className="logistics-test-actions">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => onShowJson?.(`Test Case JSON: ${testId}`, testCase)}
+                        >
+                          Case JSON
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => onShowJson?.(`Run Result JSON: ${testId}`, result || {})}
+                          disabled={!result}
+                        >
+                          Result JSON
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => onShowJson?.(`AI Payload JSON: ${testId}`, insights)}
+                          disabled={insights.length === 0}
+                        >
+                          AI JSON
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function JsonViewerModal({ open, title, value, onClose }) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        onClose?.();
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [onClose, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div
+      className="settings-modal-backdrop logistics-json-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose?.();
+        }
+      }}
+    >
+      <section
+        className="panel settings-modal-card logistics-json-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logistics-json-title"
+      >
+        <div className="panel-header settings-modal-header logistics-json-header">
+          <h2 id="logistics-json-title">{title || "JSON Viewer"}</h2>
+          <button type="button" className="secondary-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <pre className="logistics-json-pre">{toPrettyJson(value)}</pre>
+      </section>
+    </div>
   );
 }
 
@@ -1858,10 +2526,16 @@ function SpecDetails({
   const hasJsonDraftErrors = Object.values(jsonDrafts).some(
     (draft) => Boolean(draft?.inputDataError || draft?.expectedResultError),
   );
-  const latestRunSummary = runState?.result?.summary || null;
   const latestRunResults = Array.isArray(runState?.result?.results) ? runState.result.results : [];
-  const hasLatestRun = Boolean(latestRunSummary || latestRunResults.length > 0);
-  const latestRunId = runState?.runId || null;
+  const runSummarySource = runState?.result?.summary || entry?.latestRunSummary || null;
+  const hasLatestRun = Boolean(runState?.runId !== null || entry?.latestRunId !== null || runSummarySource || latestRunResults.length > 0);
+  const latestRunSummary = hasLatestRun ? resolveRunSummary(runSummarySource, latestRunResults) : null;
+  const latestRunId = runState?.runId || entry?.latestRunId || null;
+  const hasSpecRunData = Boolean(hasLatestRun && latestRunSummary?.total > 0);
+  const methodCounts = entry?.preview?.methodCounts && typeof entry.preview.methodCounts === "object"
+    ? entry.preview.methodCounts
+    : {};
+  const methodEntries = Object.entries(methodCounts);
   const runResultByTestId = latestRunResults.reduce((acc, result) => {
     const testId = String(result?.test_id || "");
     if (!testId) {
@@ -2032,11 +2706,37 @@ function SpecDetails({
         <p className="muted">Review metadata, test coverage overview, and edit generated JSON before running tests.</p>
       </div>
 
-      <div className="stats-grid">
-        <StatCard label="Spec ID" value={displaySpecId || "-"} accent="accent-amber" />
-        <StatCard label="Version" value={entry.version || "Unknown"} accent="accent-blue" />
-        <StatCard label="Uploaded" value={formatDate(entry.created_at)} accent="accent-green" />
-        <StatCard label="Endpoints" value={entry.preview?.endpointCount ?? "Unknown"} accent="accent-red" />
+      <div className="spec-overview-grid">
+        <OutcomeDonutCard
+          title="Latest Run Outcomes"
+          summary={latestRunSummary}
+          hasData={hasSpecRunData}
+          emptyLabel="No run yet"
+          totalLabel="Tests in latest run"
+        />
+        <div className="spec-overview-right">
+          <div className="stats-grid spec-meta-grid">
+            <StatCard label="Spec ID" value={displaySpecId || "-"} accent="accent-amber" />
+            <StatCard label="Version" value={entry.version || "Unknown"} accent="accent-blue" />
+            <StatCard label="Uploaded" value={formatDate(entry.created_at)} accent="accent-green" />
+            <StatCard label="Endpoints" value={entry.preview?.endpointCount ?? "Unknown"} accent="accent-red" />
+          </div>
+          <div className="subpanel methods-compact-card">
+            <h3>Methods</h3>
+            {methodEntries.length > 0 ? (
+              <div className="category-list">
+                {methodEntries.map(([method, count]) => (
+                  <div key={method} className="category-row">
+                    <span>{method}</span>
+                    <strong>{count}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">Methods will appear after preview data is available.</p>
+            )}
+          </div>
+        </div>
       </div>
 
       {entry.preview ? (
@@ -2445,18 +3145,6 @@ function SpecDetails({
                       })}
                     </div>
                   </div>
-
-                  <div className="subpanel">
-                    <h3>Methods</h3>
-                    <div className="category-list">
-                      {Object.entries(entry.preview.methodCounts).map(([method, count]) => (
-                        <div key={method} className="category-row">
-                          <span>{method}</span>
-                          <strong>{count}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               </div>
             </details>
@@ -2509,6 +3197,8 @@ function SpecDetails({
 export default function App() {
   const [session, setSession] = useState(() => loadSession());
   const [theme, setTheme] = useState(() => loadTheme());
+  const [workspaceView, setWorkspaceView] = useState(WORKSPACE_VIEW_DASHBOARD);
+  const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -2543,6 +3233,27 @@ export default function App() {
   const [providerModels, setProviderModels] = useState([]);
   const [providerModelsLoading, setProviderModelsLoading] = useState(false);
   const [providerModelsError, setProviderModelsError] = useState("");
+  const [logisticsFilterDraft, setLogisticsFilterDraft] = useState(() => ({ ...DEFAULT_LOGISTICS_FILTERS }));
+  const [logisticsFilters, setLogisticsFilters] = useState(() => ({ ...DEFAULT_LOGISTICS_FILTERS }));
+  const [logisticsRows, setLogisticsRows] = useState([]);
+  const [logisticsLoading, setLogisticsLoading] = useState(false);
+  const [logisticsLoadingMore, setLogisticsLoadingMore] = useState(false);
+  const [logisticsError, setLogisticsError] = useState("");
+  const [logisticsMessage, setLogisticsMessage] = useState("");
+  const [logisticsHasMore, setLogisticsHasMore] = useState(false);
+  const [logisticsCursor, setLogisticsCursor] = useState(null);
+  const [logisticsHydrated, setLogisticsHydrated] = useState(false);
+  const [logisticsDeletingRunId, setLogisticsDeletingRunId] = useState(null);
+  const [logisticsClearing, setLogisticsClearing] = useState(false);
+  const [logisticsDetailRunId, setLogisticsDetailRunId] = useState(null);
+  const [logisticsDetailLoading, setLogisticsDetailLoading] = useState(false);
+  const [logisticsDetailError, setLogisticsDetailError] = useState("");
+  const [logisticsDetail, setLogisticsDetail] = useState(null);
+  const [jsonViewerState, setJsonViewerState] = useState({
+    open: false,
+    title: "",
+    value: null,
+  });
   const providerModelsRequestRef = useRef(0);
   const isDarkTheme = theme === "dark";
 
@@ -2579,6 +3290,8 @@ export default function App() {
 
   useEffect(() => {
     if (!session?.userId) {
+      setWorkspaceView(WORKSPACE_VIEW_DASHBOARD);
+      setIsChatCollapsed(false);
       setChatMessages([]);
       setChatDraft("");
       setChatActiveContext(getDefaultChatContext());
@@ -2596,6 +3309,23 @@ export default function App() {
       setProviderModels([]);
       setProviderModelsLoading(false);
       setProviderModelsError("");
+      setLogisticsFilterDraft({ ...DEFAULT_LOGISTICS_FILTERS });
+      setLogisticsFilters({ ...DEFAULT_LOGISTICS_FILTERS });
+      setLogisticsRows([]);
+      setLogisticsLoading(false);
+      setLogisticsLoadingMore(false);
+      setLogisticsError("");
+      setLogisticsMessage("");
+      setLogisticsHasMore(false);
+      setLogisticsCursor(null);
+      setLogisticsHydrated(false);
+      setLogisticsDeletingRunId(null);
+      setLogisticsClearing(false);
+      setLogisticsDetailRunId(null);
+      setLogisticsDetailLoading(false);
+      setLogisticsDetailError("");
+      setLogisticsDetail(null);
+      setJsonViewerState({ open: false, title: "", value: null });
       providerModelsRequestRef.current = 0;
       return;
     }
@@ -2767,6 +3497,11 @@ export default function App() {
         const merged = Array.isArray(rows)
           ? rows.map((row) => {
               const cached = userCache[row.id];
+              const hasLatestRunField = row && typeof row === "object" && Object.prototype.hasOwnProperty.call(row, "latest_run");
+              const latestRunState = buildLatestRunState(
+                row?.latest_run,
+                hasLatestRunField ? null : (cached || null),
+              );
               const generatedSuite = cached?.generatedSuite && typeof cached.generatedSuite === "object"
                 ? cached.generatedSuite
                 : null;
@@ -2797,6 +3532,9 @@ export default function App() {
                 uploadDefaultTests,
                 runConfigDefault: runConfigs.runConfigDefault,
                 runConfigCurrent: runConfigs.runConfigCurrent,
+                latestRunId: latestRunState.latestRunId,
+                latestRunCreatedAt: latestRunState.latestRunCreatedAt,
+                latestRunSummary: latestRunState.latestRunSummary,
                 totalCases: generatedTests.length || cached?.preview?.totalCases || 0,
               };
             })
@@ -2844,6 +3582,10 @@ export default function App() {
     }
     return testRunBySpecId[selectedEntry.id] || getEmptyRunState();
   }, [selectedEntry, testRunBySpecId]);
+  const workspaceRunSummary = useMemo(
+    () => aggregateWorkspaceLatestRunSummary(specHistory),
+    [specHistory],
+  );
   const specDisplayIdBySpecId = useMemo(
     () => specHistory.reduce((acc, entry, index) => {
       acc[String(entry.id)] = index + 1;
@@ -2857,6 +3599,7 @@ export default function App() {
     }
     return Number(specDisplayIdBySpecId[String(selectedEntry.id)] || 0) || null;
   }, [selectedEntry, specDisplayIdBySpecId]);
+  const hasWorkspaceRunData = workspaceRunSummary.total > 0;
 
   useEffect(() => {
     if (chatActiveContext.mode !== CHAT_CONTEXT_SPEC) {
@@ -2904,6 +3647,8 @@ export default function App() {
         const generatedSuite = artifact?.generated_suite && typeof artifact.generated_suite === "object"
           ? artifact.generated_suite
           : null;
+        const latestRun = payload?.latest_run && typeof payload.latest_run === "object" ? payload.latest_run : null;
+        const latestRunState = buildLatestRunState(latestRun);
 
         setSpecHistory((current) =>
           current.map((entry) => {
@@ -2950,12 +3695,14 @@ export default function App() {
               uploadDefaultTests: nextUploadDefault,
               runConfigDefault: runConfigs.runConfigDefault,
               runConfigCurrent: runConfigs.runConfigCurrent,
+              latestRunId: latestRunState.latestRunId,
+              latestRunCreatedAt: latestRunState.latestRunCreatedAt,
+              latestRunSummary: latestRunState.latestRunSummary,
               totalCases: nextPreview?.totalCases || nextGeneratedTests.length || entry.totalCases || 0,
             };
           }),
         );
 
-        const latestRun = payload?.latest_run && typeof payload.latest_run === "object" ? payload.latest_run : null;
         if (!latestRun) {
           setTestRunBySpecId((current) => ({
             ...current,
@@ -3005,6 +3752,50 @@ export default function App() {
       cancelled = true;
     };
   }, [selectedEntry?.id, session?.token]);
+
+  useEffect(() => {
+    if (!session?.token || workspaceView !== WORKSPACE_VIEW_LOGS || logisticsHydrated) {
+      return;
+    }
+    void fetchLogisticsRunsPage({
+      append: false,
+      beforeRunId: null,
+      filtersOverride: logisticsFilters,
+    });
+  }, [session?.token, workspaceView, logisticsHydrated, logisticsFilters.specQuery, logisticsFilters.state]);
+
+  useEffect(() => {
+    if (!session?.token || workspaceView !== WORKSPACE_VIEW_LOGS || !logisticsHydrated) {
+      return undefined;
+    }
+    const normalized = normalizeLogisticsFilters(logisticsFilterDraft);
+    if (normalized.specQuery === logisticsFilters.specQuery && normalized.state === logisticsFilters.state) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setLogisticsFilters(normalized);
+      setLogisticsCursor(null);
+      setLogisticsMessage("");
+      void fetchLogisticsRunsPage({
+        append: false,
+        beforeRunId: null,
+        filtersOverride: normalized,
+      });
+    }, normalized.specQuery ? 220 : 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    logisticsFilterDraft.specQuery,
+    logisticsFilterDraft.state,
+    logisticsFilters.specQuery,
+    logisticsFilters.state,
+    logisticsHydrated,
+    session?.token,
+    workspaceView,
+  ]);
 
   function setRunBaselineForSpec(specId, executedTests) {
     const normalizedTests = Array.isArray(executedTests) ? (cloneJsonValue(executedTests) || []) : [];
@@ -3285,7 +4076,24 @@ export default function App() {
     try {
       const payload = await runGeneratedTests(session.token, suitePayload);
       const executedTests = Array.isArray(suitePayload?.test_cases) ? suitePayload.test_cases : [];
+      const latestRunState = buildLatestRunState({
+        id: payload?.run_id ?? null,
+        created_at: new Date().toISOString(),
+        summary: payload?.summary || null,
+      });
       setRunBaselineForSpec(specId, executedTests);
+      setSpecHistory((current) =>
+        current.map((entry) => (
+          entry.id === specId
+            ? {
+                ...entry,
+                latestRunId: latestRunState.latestRunId,
+                latestRunCreatedAt: latestRunState.latestRunCreatedAt,
+                latestRunSummary: latestRunState.latestRunSummary,
+              }
+            : entry
+        )),
+      );
       setTestRunBySpecId((current) => ({
         ...current,
         [specId]: {
@@ -3301,6 +4109,14 @@ export default function App() {
           llmByTestId: {},
         },
       }));
+      setLogisticsHydrated(false);
+      if (workspaceView === WORKSPACE_VIEW_LOGS) {
+        await fetchLogisticsRunsPage({
+          append: false,
+          beforeRunId: null,
+          filtersOverride: logisticsFilters,
+        });
+      }
     } catch (error) {
       setTestRunBySpecId((current) => ({
         ...current,
@@ -3331,6 +4147,47 @@ export default function App() {
         },
       };
     });
+  }
+
+  function syncLogisticsAiForRun(runId, analysisPayload) {
+    const normalizedRunId = Number(runId);
+    if (!Number.isFinite(normalizedRunId)) {
+      return;
+    }
+    const explanationPayload = analysisPayload?.explanation && typeof analysisPayload.explanation === "object"
+      ? analysisPayload.explanation
+      : {};
+    const suggestionPayload = analysisPayload?.suggestion && typeof analysisPayload.suggestion === "object"
+      ? analysisPayload.suggestion
+      : {};
+    const nextModels = [
+      explanationPayload?.model,
+      suggestionPayload?.model,
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    setLogisticsRows((current) =>
+      current.map((row) => {
+        if (Number(row?.id) !== normalizedRunId) {
+          return row;
+        }
+        const currentModels = Array.isArray(row?.ai?.modelList) ? row.ai.modelList : [];
+        const mergedModels = Array.from(new Set([...currentModels, ...nextModels])).filter(Boolean);
+        return {
+          ...row,
+          ai: {
+            ...(row.ai || {}),
+            hasAny: true,
+            hasExplanations: true,
+            hasSuggestions: true,
+            explanationCount: Math.max(1, toSafeCount(row?.ai?.explanationCount)),
+            suggestionCount: Math.max(1, toSafeCount(row?.ai?.suggestionCount)),
+            modelList: mergedModels,
+          },
+        };
+      }),
+    );
   }
 
   async function handleExplainFailure(specId, runId, testId) {
@@ -3369,6 +4226,14 @@ export default function App() {
         addedMessage: "",
         addedSuggestionFingerprint: "",
       }));
+      syncLogisticsAiForRun(runId, analysisPayload);
+      if (logisticsHydrated) {
+        void fetchLogisticsRunsPage({
+          append: false,
+          beforeRunId: null,
+          filtersOverride: logisticsFilters,
+        });
+      }
     } catch (error) {
       setLlmCaseState(specId, testId, (currentCase) => ({
         ...currentCase,
@@ -3476,6 +4341,272 @@ export default function App() {
     }));
   }
 
+  async function refreshSpecLatestRunFromServer(specId) {
+    if (!session?.token) {
+      return;
+    }
+    const normalizedSpecId = Number(specId);
+    if (!Number.isFinite(normalizedSpecId)) {
+      return;
+    }
+    try {
+      const payload = await fetchLatestRunForSpec(session.token, normalizedSpecId);
+      const latestRun = payload?.latest_run && typeof payload.latest_run === "object" ? payload.latest_run : null;
+      const latestRunState = buildLatestRunState(latestRun);
+      setSpecHistory((current) =>
+        current.map((entry) => (
+          Number(entry.id) === normalizedSpecId
+            ? {
+                ...entry,
+                latestRunId: latestRunState.latestRunId,
+                latestRunCreatedAt: latestRunState.latestRunCreatedAt,
+                latestRunSummary: latestRunState.latestRunSummary,
+              }
+            : entry
+        )),
+      );
+      if (Number(selectedSpecId) === normalizedSpecId) {
+        if (!latestRun) {
+          setTestRunBySpecId((current) => ({
+            ...current,
+            [normalizedSpecId]: {
+              ...(current[normalizedSpecId] || getEmptyRunState()),
+              runId: null,
+              result: null,
+              baselineTests: null,
+              llmByTestId: {},
+            },
+          }));
+          return;
+        }
+        const runSummary = latestRun?.summary && typeof latestRun.summary === "object" ? latestRun.summary : null;
+        const runResults = Array.isArray(latestRun?.results) ? latestRun.results : [];
+        const runSuite = latestRun?.suite_snapshot && typeof latestRun.suite_snapshot === "object"
+          ? latestRun.suite_snapshot
+          : null;
+        const baselineTests = Array.isArray(runSuite?.test_cases) ? (cloneJsonValue(runSuite.test_cases) || []) : null;
+        setTestRunBySpecId((current) => ({
+          ...current,
+          [normalizedSpecId]: {
+            ...getEmptyRunState(),
+            result: (runSummary || runResults.length > 0)
+              ? { summary: runSummary, results: runResults }
+              : null,
+            baselineTests,
+            runId: latestRun?.id ?? null,
+            llmByTestId: {},
+          },
+        }));
+      }
+    } catch {
+      // Keep the current local snapshot if latest-run hydration fails.
+    }
+  }
+
+  async function fetchLogisticsRunsPage({ append = false, beforeRunId = null, filtersOverride = null } = {}) {
+    if (!session?.token) {
+      return;
+    }
+    const activeFilters = normalizeLogisticsFilters(filtersOverride || logisticsFilters);
+    if (append) {
+      setLogisticsLoadingMore(true);
+    } else {
+      setLogisticsLoading(true);
+      setLogisticsError("");
+    }
+
+    try {
+      const payload = await listLogisticsRuns(session.token, {
+        limit: LOGISTICS_PAGE_LIMIT,
+        before_run_id: beforeRunId || undefined,
+        spec_query: activeFilters.specQuery || undefined,
+        state: activeFilters.state,
+      });
+      const normalizedRows = normalizeLogisticsRunCards(payload?.items);
+      const nextCursor = Number(payload?.next_before_run_id);
+      setLogisticsRows((current) => {
+        const merged = append ? [...current, ...normalizedRows] : normalizedRows;
+        const byId = new Map();
+        for (const row of merged) {
+          byId.set(row.id, row);
+        }
+        return Array.from(byId.values()).sort((left, right) => Number(right.id) - Number(left.id));
+      });
+      setLogisticsHasMore(Boolean(payload?.has_more));
+      setLogisticsCursor(Number.isFinite(nextCursor) ? nextCursor : null);
+      setLogisticsHydrated(true);
+    } catch (error) {
+      if (!append) {
+        setLogisticsRows([]);
+      }
+      setLogisticsError(error.message || "Unable to load run logs.");
+      setLogisticsHasMore(false);
+      setLogisticsCursor(null);
+      setLogisticsHydrated(true);
+    } finally {
+      if (append) {
+        setLogisticsLoadingMore(false);
+      } else {
+        setLogisticsLoading(false);
+      }
+    }
+  }
+
+  function handleWorkspaceViewChange(nextView) {
+    const target = nextView === WORKSPACE_VIEW_LOGS ? WORKSPACE_VIEW_LOGS : WORKSPACE_VIEW_DASHBOARD;
+    if (target === workspaceView) {
+      return;
+    }
+    setWorkspaceView(target);
+  }
+
+  function handleLogisticsFilterDraftChange(patch) {
+    if (!patch || typeof patch !== "object") {
+      return;
+    }
+    setLogisticsFilterDraft((current) => normalizeLogisticsFilters({ ...current, ...patch }));
+  }
+
+  async function handleLoadMoreLogistics() {
+    if (!logisticsHasMore || logisticsLoading || logisticsLoadingMore || !logisticsCursor) {
+      return;
+    }
+    await fetchLogisticsRunsPage({
+      append: true,
+      beforeRunId: logisticsCursor,
+      filtersOverride: logisticsFilters,
+    });
+  }
+
+  async function handleOpenLogisticsDetail(runId) {
+    if (!session?.token) {
+      return;
+    }
+    const normalizedRunId = Number(runId);
+    if (!Number.isFinite(normalizedRunId)) {
+      return;
+    }
+    setLogisticsDetailRunId(normalizedRunId);
+    setLogisticsDetailLoading(true);
+    setLogisticsDetailError("");
+    setLogisticsDetail(null);
+    try {
+      const payload = await fetchLogisticsRunDetail(session.token, normalizedRunId);
+      setLogisticsDetail(payload && typeof payload === "object" ? payload : null);
+    } catch (error) {
+      setLogisticsDetailError(error.message || "Unable to load run detail.");
+    } finally {
+      setLogisticsDetailLoading(false);
+    }
+  }
+
+  function handleCloseLogisticsDetail() {
+    setLogisticsDetailRunId(null);
+    setLogisticsDetailLoading(false);
+    setLogisticsDetailError("");
+    setLogisticsDetail(null);
+  }
+
+  function handleOpenJsonViewer(title, value) {
+    setJsonViewerState({
+      open: true,
+      title: String(title || "JSON Viewer"),
+      value: cloneJsonValue(value),
+    });
+  }
+
+  function handleCloseJsonViewer() {
+    setJsonViewerState({
+      open: false,
+      title: "",
+      value: null,
+    });
+  }
+
+  async function handleDeleteLogisticsRun(targetRunId) {
+    if (!session?.token) {
+      return;
+    }
+    const normalizedRunId = Number(targetRunId);
+    if (!Number.isFinite(normalizedRunId)) {
+      return;
+    }
+    const shouldDelete = window.confirm(
+      `Delete run #${normalizedRunId}? This will remove the saved run log and AI outputs for this run.`,
+    );
+    if (!shouldDelete) {
+      return;
+    }
+
+    const rowToDelete = logisticsRows.find((row) => Number(row.id) === normalizedRunId) || null;
+    setLogisticsDeletingRunId(normalizedRunId);
+    setLogisticsError("");
+    setLogisticsMessage("");
+    try {
+      await deleteLogisticsRun(session.token, normalizedRunId);
+      setLogisticsMessage(`Deleted run #${normalizedRunId}.`);
+      setLogisticsRows((current) => current.filter((row) => Number(row.id) !== normalizedRunId));
+      if (Number(logisticsDetailRunId) === normalizedRunId) {
+        handleCloseLogisticsDetail();
+      }
+      if (Number.isFinite(Number(rowToDelete?.spec?.id))) {
+        await refreshSpecLatestRunFromServer(Number(rowToDelete.spec.id));
+      }
+      await fetchLogisticsRunsPage({
+        append: false,
+        beforeRunId: null,
+        filtersOverride: logisticsFilters,
+      });
+    } catch (error) {
+      setLogisticsError(error.message || "Unable to delete run log.");
+    } finally {
+      setLogisticsDeletingRunId(null);
+    }
+  }
+
+  async function handleClearLogisticsRuns() {
+    if (!session?.token || logisticsClearing) {
+      return;
+    }
+    const shouldClear = window.confirm(
+      "Clear all run logs and saved AI insights for your account? Uploaded specs will remain.",
+    );
+    if (!shouldClear) {
+      return;
+    }
+
+    setLogisticsClearing(true);
+    setLogisticsError("");
+    setLogisticsMessage("");
+    try {
+      const payload = await clearLogisticsRuns(session.token);
+      const deletedRuns = toSafeCount(payload?.deleted_runs);
+      const deletedInsights = toSafeCount(payload?.deleted_llm_insights);
+      setLogisticsRows([]);
+      setLogisticsHasMore(false);
+      setLogisticsCursor(null);
+      setLogisticsHydrated(true);
+      setLogisticsMessage(
+        `Cleared ${deletedRuns} run log${deletedRuns === 1 ? "" : "s"} and ${deletedInsights} AI insight${deletedInsights === 1 ? "" : "s"}.`,
+      );
+      handleCloseLogisticsDetail();
+      handleCloseJsonViewer();
+      setSpecHistory((current) =>
+        current.map((entry) => ({
+          ...entry,
+          latestRunId: null,
+          latestRunCreatedAt: null,
+          latestRunSummary: null,
+        })),
+      );
+      setTestRunBySpecId({});
+    } catch (error) {
+      setLogisticsError(error.message || "Unable to clear run logs.");
+    } finally {
+      setLogisticsClearing(false);
+    }
+  }
+
   async function handleAuthSubmit(event) {
     event.preventDefault();
     setAuthLoading(true);
@@ -3501,12 +4632,31 @@ export default function App() {
   function handleLogout() {
     clearSession();
     setSession(null);
+    setWorkspaceView(WORKSPACE_VIEW_DASHBOARD);
+    setIsChatCollapsed(false);
     setSpecHistory([]);
     setSelectedSpecId(null);
     setTestRunBySpecId({});
     setClearHistoryLoading(false);
     setUploadError("");
     setUploadMessage("");
+    setLogisticsFilterDraft({ ...DEFAULT_LOGISTICS_FILTERS });
+    setLogisticsFilters({ ...DEFAULT_LOGISTICS_FILTERS });
+    setLogisticsRows([]);
+    setLogisticsLoading(false);
+    setLogisticsLoadingMore(false);
+    setLogisticsError("");
+    setLogisticsMessage("");
+    setLogisticsHasMore(false);
+    setLogisticsCursor(null);
+    setLogisticsHydrated(false);
+    setLogisticsDeletingRunId(null);
+    setLogisticsClearing(false);
+    setLogisticsDetailRunId(null);
+    setLogisticsDetailLoading(false);
+    setLogisticsDetailError("");
+    setLogisticsDetail(null);
+    setJsonViewerState({ open: false, title: "", value: null });
   }
 
   async function handleClearHistory() {
@@ -3533,6 +4683,16 @@ export default function App() {
       setChatPending(false);
       setUploadMessage("");
       setUploadError("");
+      setLogisticsRows([]);
+      setLogisticsHasMore(false);
+      setLogisticsCursor(null);
+      setLogisticsHydrated(false);
+      setLogisticsError("");
+      setLogisticsMessage("");
+      setLogisticsDetailRunId(null);
+      setLogisticsDetail(null);
+      setLogisticsDetailError("");
+      handleCloseJsonViewer();
       setSpecCache((current) => {
         const next = { ...current };
         delete next[session.userId];
@@ -3602,6 +4762,9 @@ export default function App() {
             uploadDefaultTests,
             runConfigDefault,
             runConfigCurrent,
+            latestRunId: null,
+            latestRunCreatedAt: null,
+            latestRunSummary: null,
             totalCases: generatedTests.length || preview?.totalCases || 0,
           });
         } catch (error) {
@@ -3911,8 +5074,16 @@ export default function App() {
     setTheme((current) => (current === "dark" ? "light" : "dark"));
   }
 
+  function handleToggleChatPanel() {
+    setIsChatCollapsed((current) => !current);
+  }
+
+  const isLogsView = workspaceView === WORKSPACE_VIEW_LOGS;
+  const showChatPanel = Boolean(session) && !isChatCollapsed;
+  const appShellClassName = `app-shell ${showChatPanel ? "" : "chat-rail-collapsed"}`.trim();
+
   return (
-    <div className="app-shell" data-theme={theme}>
+    <div className={appShellClassName} data-theme={theme}>
       <div className="background-orb orb-one" />
       <div className="background-orb orb-two" />
 
@@ -3927,24 +5098,46 @@ export default function App() {
         <div className="hero-aside">
           <div className="hero-controls">
             {session ? (
-              <button
-                type="button"
-                className="settings-trigger-button"
-                onClick={() => {
-                  setSettingsTab(SETTINGS_TAB_MODEL);
-                  setLlmSettingsError("");
-                  setIsAddModelFormOpen(false);
-                  setAddModelForm({ ...DEFAULT_ADD_MODEL_FORM });
-                  setProviderModels([]);
-                  setProviderModelsLoading(false);
-                  setProviderModelsError("");
-                  providerModelsRequestRef.current += 1;
-                  setIsSettingsOpen(true);
-                }}
-                aria-label="Open settings"
-              >
-                Settings
-              </button>
+              <>
+                <div className="workspace-segmented-toggle" role="tablist" aria-label="Workspace views">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={workspaceView === WORKSPACE_VIEW_DASHBOARD}
+                    className={`workspace-segment-button ${workspaceView === WORKSPACE_VIEW_DASHBOARD ? "active" : ""}`}
+                    onClick={() => handleWorkspaceViewChange(WORKSPACE_VIEW_DASHBOARD)}
+                  >
+                    Dashboard
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={workspaceView === WORKSPACE_VIEW_LOGS}
+                    className={`workspace-segment-button ${workspaceView === WORKSPACE_VIEW_LOGS ? "active" : ""}`}
+                    onClick={() => handleWorkspaceViewChange(WORKSPACE_VIEW_LOGS)}
+                  >
+                    Logs
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="settings-trigger-button"
+                  onClick={() => {
+                    setSettingsTab(SETTINGS_TAB_MODEL);
+                    setLlmSettingsError("");
+                    setIsAddModelFormOpen(false);
+                    setAddModelForm({ ...DEFAULT_ADD_MODEL_FORM });
+                    setProviderModels([]);
+                    setProviderModelsLoading(false);
+                    setProviderModelsError("");
+                    providerModelsRequestRef.current += 1;
+                    setIsSettingsOpen(true);
+                  }}
+                  aria-label="Open settings"
+                >
+                  Settings
+                </button>
+              </>
             ) : null}
             <button
               type="button"
@@ -3985,6 +5178,19 @@ export default function App() {
               </button>
             </div>
           ) : null}
+          {session ? (
+            <button
+              type="button"
+              className={`chat-bubble-toggle ${showChatPanel ? "active" : ""}`.trim()}
+              onClick={handleToggleChatPanel}
+              aria-label={showChatPanel ? "Collapse chat panel" : "Open chat panel"}
+              title={showChatPanel ? "Collapse chat" : "Open chat"}
+            >
+              <svg viewBox="0 0 24 24" role="presentation" focusable="false" aria-hidden="true">
+                <path d="M4 4.8h16v10.9H8.8L5.2 19V15.7H4V4.8Zm2 2v7h0.8l0.4 0.4L9.7 13.7H18V6.8H6Z" />
+              </svg>
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -4001,67 +5207,115 @@ export default function App() {
           onSubmit={handleAuthSubmit}
         />
       ) : (
-        <main className="dashboard-grid">
-          <section className="panel summary-panel">
-            <div className="panel-header">
-              <p className="eyebrow">Workspace</p>
-              <h2>Dashboard</h2>
-              <p className="muted">Manage your uploads and inspect each API specification.</p>
-            </div>
-
-            <div className="stats-grid">
-              <StatCard label="Uploads" value={historyLoading ? "..." : specHistory.length} accent="accent-blue" />
-              <StatCard
-                label="Cached previews"
-                value={Object.keys(specCache[session.userId] || {}).length}
-                accent="accent-green"
-              />
-              <StatCard
-                label="Known tests"
-                value={specHistory.reduce((sum, entry) => sum + (entry.totalCases || 0), 0)}
-                accent="accent-red"
-              />
-              <StatCard label="API URL" value={API_BASE_URL} accent="accent-amber" />
-            </div>
-
-            {historyError ? <p className="message error">{historyError}</p> : null}
-          </section>
-
-          <div className="left-column">
-            <UploadPanel loading={uploadLoading} onUpload={handleUpload} message={uploadMessage} error={uploadError} />
-            <HistoryList
-              entries={specHistory}
-              selectedSpecId={selectedSpecId}
-              onSelect={setSelectedSpecId}
-              onClear={handleClearHistory}
-              clearing={clearHistoryLoading}
+        <main className={`dashboard-grid ${isLogsView ? "dashboard-grid-logs" : ""}`.trim()}>
+          {isLogsView ? (
+            <LogisticsPanel
+              rows={logisticsRows}
+              loading={logisticsLoading}
+              loadingMore={logisticsLoadingMore}
+              error={logisticsError}
+              message={logisticsMessage}
+              filterDraft={logisticsFilterDraft}
+              onFilterDraftChange={handleLogisticsFilterDraftChange}
+              hasMore={logisticsHasMore}
+              onLoadMore={handleLoadMoreLogistics}
+              onOpenDetail={handleOpenLogisticsDetail}
+              onDeleteRun={handleDeleteLogisticsRun}
+              deletingRunId={logisticsDeletingRunId}
+              onClearAll={handleClearLogisticsRuns}
+              clearLoading={logisticsClearing}
             />
-          </div>
+          ) : (
+            <>
+              <section className="panel summary-panel">
+                <div className="panel-header">
+                  <p className="eyebrow">Workspace</p>
+                  <h2>Dashboard</h2>
+                  <p className="muted">Manage your uploads and inspect each API specification.</p>
+                </div>
 
-          <SpecDetails
-            entry={selectedEntry}
-            displaySpecId={selectedEntryDisplayId}
-            runState={selectedRunState}
-            onUpdateTestCase={handleUpdateTestCase}
-            onResetTestCase={handleResetTestCase}
-            onRunTests={handleRunTests}
-            onExplainFailure={handleExplainFailure}
-            onUpdateRunConfig={handleUpdateRunConfig}
-            onResetRunConfig={handleResetRunConfig}
-            onApplySuggestedTest={handleApplySuggestedTest}
-          />
+                <div className="workspace-overview-grid">
+                  <OutcomeDonutCard
+                    title="Workspace Run Outcomes"
+                    summary={workspaceRunSummary}
+                    hasData={hasWorkspaceRunData}
+                    emptyLabel="No runs yet"
+                    totalLabel="Total Runs"
+                  />
+                  <div className="stats-grid workspace-stats-grid">
+                    <StatCard label="Total Uploads" value={historyLoading ? "..." : specHistory.length} accent="accent-blue" />
+                    <StatCard
+                      label="Specs With Runs"
+                      value={historyLoading ? "..." : workspaceRunSummary.specsWithRuns}
+                      accent="accent-green"
+                    />
+                    <StatCard
+                      label="Total Runs"
+                      value={historyLoading ? "..." : workspaceRunSummary.total}
+                      accent="accent-red"
+                    />
+                    <StatCard label="API URL" value={API_BASE_URL} accent="accent-amber" />
+                  </div>
+                </div>
 
-          <ChatPanel
-            selectedEntry={selectedEntry}
-            specDisplayIdBySpecId={specDisplayIdBySpecId}
-            messages={chatMessages}
-            draft={chatDraft}
-            pending={chatPending}
-            onDraftChange={setChatDraft}
-            onSend={handleChatSend}
-          />
+                {historyError ? <p className="message error">{historyError}</p> : null}
+              </section>
+
+              <div className="left-column">
+                <UploadPanel loading={uploadLoading} onUpload={handleUpload} message={uploadMessage} error={uploadError} />
+                <HistoryList
+                  entries={specHistory}
+                  selectedSpecId={selectedSpecId}
+                  onSelect={setSelectedSpecId}
+                  onClear={handleClearHistory}
+                  clearing={clearHistoryLoading}
+                />
+              </div>
+
+              <SpecDetails
+                entry={selectedEntry}
+                displaySpecId={selectedEntryDisplayId}
+                runState={selectedRunState}
+                onUpdateTestCase={handleUpdateTestCase}
+                onResetTestCase={handleResetTestCase}
+                onRunTests={handleRunTests}
+                onExplainFailure={handleExplainFailure}
+                onUpdateRunConfig={handleUpdateRunConfig}
+                onResetRunConfig={handleResetRunConfig}
+                onApplySuggestedTest={handleApplySuggestedTest}
+              />
+            </>
+          )}
+
+          {showChatPanel ? (
+            <ChatPanel
+              selectedEntry={selectedEntry}
+              specDisplayIdBySpecId={specDisplayIdBySpecId}
+              messages={chatMessages}
+              draft={chatDraft}
+              pending={chatPending}
+              onDraftChange={setChatDraft}
+              onSend={handleChatSend}
+            />
+          ) : null}
         </main>
       )}
+      <LogisticsDetailModal
+        open={Boolean(logisticsDetailRunId)}
+        loading={logisticsDetailLoading}
+        error={logisticsDetailError}
+        detail={logisticsDetail}
+        deleting={Number(logisticsDeletingRunId) === Number(logisticsDetailRunId)}
+        onClose={handleCloseLogisticsDetail}
+        onDelete={handleDeleteLogisticsRun}
+        onShowJson={handleOpenJsonViewer}
+      />
+      <JsonViewerModal
+        open={Boolean(jsonViewerState?.open)}
+        title={jsonViewerState?.title || "JSON Viewer"}
+        value={jsonViewerState?.value}
+        onClose={handleCloseJsonViewer}
+      />
       <SettingsModal
         open={Boolean(session) && isSettingsOpen}
         tab={settingsTab}

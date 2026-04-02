@@ -8,7 +8,7 @@ from typing import Any, Optional
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 
 from llm_eval.failure_assistant import (
     SUGGESTION_TIMEOUT_SECONDS_MAX,
@@ -144,6 +144,213 @@ def _validate_credentials(req: RegisterRequest | LoginRequest) -> None:
 def _json_load_or_default(raw: Optional[str], default: Any) -> Any:
     parsed = safe_json_loads(raw)
     return parsed if parsed is not None else default
+
+
+def _coerce_non_negative_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return 0
+    return parsed if parsed >= 0 else 0
+
+
+def _normalize_run_summary_counts(summary: Any) -> dict[str, int]:
+    source = summary if isinstance(summary, dict) else {}
+    passed = _coerce_non_negative_int(source.get("passed"))
+    failed = _coerce_non_negative_int(source.get("failed"))
+    skipped = _coerce_non_negative_int(source.get("skipped"))
+    provided_total = _coerce_non_negative_int(source.get("total"))
+    computed_total = passed + failed + skipped
+    total = max(provided_total, computed_total)
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+    }
+
+
+def _normalize_auth_meta(auth_meta: Any) -> dict[str, Any]:
+    source = auth_meta if isinstance(auth_meta, dict) else {}
+    mode = str(source.get("mode") or "none").strip().lower() or "none"
+    provided = bool(source.get("provided"))
+    header = str(source.get("header") or "").strip() or None
+    return {
+        "mode": mode,
+        "provided": provided,
+        "header": header,
+    }
+
+
+def _derive_run_duration_ms(results: Any) -> int:
+    run_results = results if isinstance(results, list) else []
+    total = 0
+    for row in run_results:
+        if not isinstance(row, dict):
+            continue
+        total += _coerce_non_negative_int(row.get("duration_ms"))
+    return total
+
+
+def _run_matches_state_filter(summary: dict[str, int], state: str) -> bool:
+    normalized_state = str(state or "all").strip().lower()
+    if normalized_state == "all":
+        return True
+    if normalized_state == "failed":
+        return int(summary.get("failed") or 0) > 0
+    if normalized_state == "passed":
+        return int(summary.get("total") or 0) > 0 and int(summary.get("failed") or 0) == 0
+    return True
+
+
+def _extract_llm_payload_model(payload: Any) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    candidates = [
+        payload.get("model"),
+    ]
+    explanation_payload = payload.get("explanation") if isinstance(payload.get("explanation"), dict) else {}
+    suggestion_payload = payload.get("suggestion") if isinstance(payload.get("suggestion"), dict) else {}
+    candidates.append(explanation_payload.get("model"))
+    candidates.append(suggestion_payload.get("model"))
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _upsert_llm_run_insight(
+    *,
+    db: Any,
+    user_id: int,
+    run_row: Any,
+    test_id: str,
+    mode: str,
+    payload: Any,
+) -> None:
+    if not hasattr(db, "query"):
+        return
+    run_id = getattr(run_row, "id", None)
+    spec_id = getattr(run_row, "spec_id", None)
+    if run_id is None or spec_id is None:
+        return
+    try:
+        run_id_int = int(run_id)
+        spec_id_int = int(spec_id)
+    except Exception:
+        return
+
+    mode_text = str(mode or "").strip().lower()
+    test_id_text = str(test_id or "").strip()
+    if not mode_text or not test_id_text:
+        return
+
+    normalized_payload: Any
+    if isinstance(payload, (dict, list)):
+        normalized_payload = payload
+    else:
+        normalized_payload = {"value": payload}
+    model_name = _extract_llm_payload_model(normalized_payload)
+
+    existing_row = (
+        db.query(LLMRunInsight)
+        .filter(
+            LLMRunInsight.user_id == int(user_id),
+            LLMRunInsight.run_id == run_id_int,
+            LLMRunInsight.test_id == test_id_text,
+            LLMRunInsight.mode == mode_text,
+        )
+        .first()
+    )
+    if existing_row:
+        existing_row.spec_id = spec_id_int
+        existing_row.model = model_name
+        existing_row.payload_json = safe_json_dumps(normalized_payload)
+        return
+
+    db.add(
+        LLMRunInsight(
+            run_id=run_id_int,
+            spec_id=spec_id_int,
+            user_id=int(user_id),
+            test_id=test_id_text,
+            mode=mode_text,
+            model=model_name,
+            payload_json=safe_json_dumps(normalized_payload),
+        )
+    )
+
+
+def _summarize_llm_insights_for_runs(
+    db: Any,
+    *,
+    user_id: int,
+    run_ids: list[int],
+) -> dict[int, dict[str, Any]]:
+    if not run_ids:
+        return {}
+    normalized_run_ids = [int(run_id) for run_id in run_ids if run_id is not None]
+    if not normalized_run_ids:
+        return {}
+
+    summary_by_run: dict[int, dict[str, Any]] = {
+        run_id: {
+            "has_any": False,
+            "has_explanations": False,
+            "has_suggestions": False,
+            "explanation_count": 0,
+            "suggestion_count": 0,
+            "model_list": [],
+            "_model_set": set(),
+        }
+        for run_id in normalized_run_ids
+    }
+
+    grouped_rows = (
+        db.query(
+            LLMRunInsight.run_id,
+            LLMRunInsight.mode,
+            LLMRunInsight.model,
+            func.count(LLMRunInsight.id).label("insight_count"),
+        )
+        .filter(
+            LLMRunInsight.user_id == int(user_id),
+            LLMRunInsight.run_id.in_(normalized_run_ids),
+        )
+        .group_by(LLMRunInsight.run_id, LLMRunInsight.mode, LLMRunInsight.model)
+        .all()
+    )
+
+    for row in grouped_rows:
+        run_id = int(row.run_id)
+        mode = str(row.mode or "").strip().lower()
+        model_name = str(row.model or "").strip()
+        insight_count = _coerce_non_negative_int(row.insight_count)
+        target = summary_by_run.get(run_id)
+        if not target:
+            continue
+        target["has_any"] = True
+        if mode == "explanation":
+            target["has_explanations"] = True
+            target["explanation_count"] += insight_count
+        elif mode == "suggest_test":
+            target["has_suggestions"] = True
+            target["suggestion_count"] += insight_count
+        elif mode == "analysis":
+            # Analysis endpoint stores both explanation and suggestion in one payload.
+            target["has_explanations"] = True
+            target["has_suggestions"] = True
+            target["explanation_count"] += insight_count
+            target["suggestion_count"] += insight_count
+        if model_name:
+            target["_model_set"].add(model_name)
+
+    for value in summary_by_run.values():
+        model_set = value.pop("_model_set", set())
+        value["model_list"] = sorted([str(model) for model in model_set if str(model).strip()])
+
+    return summary_by_run
 
 
 def _is_field_provided(model: BaseModel, field_name: str) -> bool:
@@ -1527,13 +1734,47 @@ def list_specs(current_user: User = Depends(get_current_user), limit: Optional[i
     safe_limit = max(1, min(limit or 50, 200))
     db = SessionLocal()
     try:
-        rows = (
+        spec_rows = (
             db.query(Spec)
             .filter(Spec.user_id == current_user.id)
             .order_by(Spec.id.desc())
             .limit(safe_limit)
             .all()
         )
+        spec_ids = [int(row.id) for row in spec_rows]
+        latest_run_by_spec_id: dict[int, dict[str, Any]] = {}
+
+        if spec_ids:
+            latest_run_id_subquery = (
+                db.query(
+                    TestRun.spec_id.label("spec_id"),
+                    func.max(TestRun.id).label("latest_run_id"),
+                )
+                .filter(
+                    TestRun.user_id == current_user.id,
+                    TestRun.spec_id.in_(spec_ids),
+                )
+                .group_by(TestRun.spec_id)
+                .subquery()
+            )
+            latest_run_rows = (
+                db.query(TestRun)
+                .join(
+                    latest_run_id_subquery,
+                    TestRun.id == latest_run_id_subquery.c.latest_run_id,
+                )
+                .all()
+            )
+            latest_run_by_spec_id = {
+                int(run_row.spec_id): {
+                    "id": int(run_row.id),
+                    "created_at": run_row.created_at.isoformat() if run_row.created_at else None,
+                    "summary": _normalize_run_summary_counts(
+                        _json_load_or_default(run_row.summary_json, {})
+                    ),
+                }
+                for run_row in latest_run_rows
+            }
 
         return [
             {
@@ -1542,8 +1783,9 @@ def list_specs(current_user: User = Depends(get_current_user), limit: Optional[i
                 "title": row.title,
                 "version": row.version,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
+                "latest_run": latest_run_by_spec_id.get(int(row.id)),
             }
-            for row in rows
+            for row in spec_rows
         ]
     finally:
         db.close()
@@ -1621,6 +1863,16 @@ def explain_failed_case(run_id: int, test_id: str, current_user: User = Depends(
             resolved_settings=resolved_settings,
         )
         payload = explanation_output["payload"]
+        _upsert_llm_run_insight(
+            db=db,
+            user_id=current_user.id,
+            run_row=bundle.get("run_row"),
+            test_id=test_id,
+            mode="explanation",
+            payload=payload,
+        )
+        if hasattr(db, "commit"):
+            db.commit()
 
         return {
             "run_id": run_id,
@@ -1676,7 +1928,7 @@ def analyze_failure_with_suggestion(
                 "explanation": explanation_payload.get("explanation"),
             },
         )
-        return {
+        response_payload = {
             "run_id": run_id,
             "test_id": test_id,
             "mode": "analysis",
@@ -1685,6 +1937,17 @@ def analyze_failure_with_suggestion(
                 "suggestion": suggestion_payload,
             },
         }
+        _upsert_llm_run_insight(
+            db=db,
+            user_id=current_user.id,
+            run_row=bundle.get("run_row"),
+            test_id=test_id,
+            mode="analysis",
+            payload=response_payload["payload"],
+        )
+        if hasattr(db, "commit"):
+            db.commit()
+        return response_payload
     finally:
         db.close()
 
@@ -1733,12 +1996,23 @@ def suggest_test_for_failure(
                     "Suggested tests are only generated for schema/validation input failures."
                 ),
             )
-            return {
+            response_payload = {
                 "run_id": run_id,
                 "test_id": test_id,
                 "mode": "suggest_test",
                 "payload": skip_payload,
             }
+            _upsert_llm_run_insight(
+                db=db,
+                user_id=current_user.id,
+                run_row=bundle.get("run_row"),
+                test_id=test_id,
+                mode="suggest_test",
+                payload=skip_payload,
+            )
+            if hasattr(db, "commit"):
+                db.commit()
+            return response_payload
 
         runtime = _build_runtime_from_active_model(resolved_settings)
         existing_ids = [str(case.get("test_id") or "") for case in (bundle["suite_data"].get("test_cases") or [])]
@@ -1771,11 +2045,292 @@ def suggest_test_for_failure(
                 error_meta=payload.get("error_meta"),
             )
             raise HTTPException(status_code=int(detail_payload["status"]), detail=detail_payload)
-        return {
+        response_payload = {
             "run_id": run_id,
             "test_id": test_id,
             "mode": "suggest_test",
             "payload": payload,
+        }
+        _upsert_llm_run_insight(
+            db=db,
+            user_id=current_user.id,
+            run_row=bundle.get("run_row"),
+            test_id=test_id,
+            mode="suggest_test",
+            payload=payload,
+        )
+        if hasattr(db, "commit"):
+            db.commit()
+        return response_payload
+    finally:
+        db.close()
+
+
+@app.get("/api/logistics/runs")
+def list_logistics_runs(
+    current_user: User = Depends(get_current_user),
+    limit: Optional[int] = 25,
+    before_run_id: Optional[int] = None,
+    spec_query: Optional[str] = None,
+    state: str = "all",
+) -> dict[str, Any]:
+    safe_limit = max(1, min(limit or 25, 100))
+    normalized_state = str(state or "all").strip().lower() or "all"
+    if normalized_state not in {"all", "passed", "failed"}:
+        raise HTTPException(status_code=400, detail="state must be one of: all, passed, failed.")
+
+    safe_spec_query = str(spec_query or "").strip().lower()
+    safe_before_run_id: Optional[int]
+    if before_run_id is None:
+        safe_before_run_id = None
+    else:
+        safe_before_run_id = _coerce_non_negative_int(before_run_id)
+        if safe_before_run_id <= 0:
+            safe_before_run_id = None
+
+    db = SessionLocal()
+    try:
+        base_query = (
+            db.query(TestRun, Spec)
+            .join(Spec, Spec.id == TestRun.spec_id)
+            .filter(
+                TestRun.user_id == current_user.id,
+                Spec.user_id == current_user.id,
+            )
+        )
+        if safe_spec_query:
+            pattern = f"%{safe_spec_query}%"
+            base_query = base_query.filter(
+                or_(
+                    func.lower(Spec.title).like(pattern),
+                    func.lower(Spec.filename).like(pattern),
+                    func.lower(Spec.version).like(pattern),
+                )
+            )
+
+        collected: list[tuple[TestRun, Spec, dict[str, int]]] = []
+        cursor = safe_before_run_id
+        chunk_size = max(50, min(safe_limit * 4, 400))
+
+        while len(collected) < (safe_limit + 1):
+            page_query = base_query
+            if cursor is not None:
+                page_query = page_query.filter(TestRun.id < int(cursor))
+            batch_rows = page_query.order_by(TestRun.id.desc()).limit(chunk_size).all()
+            if not batch_rows:
+                break
+
+            for run_row, spec_row in batch_rows:
+                summary = _normalize_run_summary_counts(_json_load_or_default(run_row.summary_json, {}))
+                if not _run_matches_state_filter(summary, normalized_state):
+                    continue
+                collected.append((run_row, spec_row, summary))
+                if len(collected) >= (safe_limit + 1):
+                    break
+
+            min_batch_id: Optional[int] = None
+            for run_row, _ in batch_rows:
+                if run_row.id is None:
+                    continue
+                run_id = int(run_row.id)
+                min_batch_id = run_id if min_batch_id is None else min(min_batch_id, run_id)
+            if len(batch_rows) < chunk_size or min_batch_id is None or min_batch_id <= 1:
+                break
+            cursor = min_batch_id
+
+        has_more = len(collected) > safe_limit
+        visible_rows = collected[:safe_limit]
+        visible_run_ids = [int(run_row.id) for run_row, _, _ in visible_rows if run_row.id is not None]
+        insight_summary_by_run = _summarize_llm_insights_for_runs(
+            db,
+            user_id=current_user.id,
+            run_ids=visible_run_ids,
+        )
+
+        items: list[dict[str, Any]] = []
+        for run_row, spec_row, summary in visible_rows:
+            results_payload = _json_load_or_default(run_row.results_json, [])
+            duration_ms = _derive_run_duration_ms(results_payload)
+            auth_meta = _normalize_auth_meta(_json_load_or_default(run_row.auth_meta_json, {}))
+            ai_summary = insight_summary_by_run.get(int(run_row.id), {
+                "has_any": False,
+                "has_explanations": False,
+                "has_suggestions": False,
+                "explanation_count": 0,
+                "suggestion_count": 0,
+                "model_list": [],
+            })
+            items.append(
+                {
+                    "spec": {
+                        "id": int(spec_row.id),
+                        "title": spec_row.title,
+                        "filename": spec_row.filename,
+                        "version": spec_row.version,
+                        "uploaded_at": spec_row.created_at.isoformat() if spec_row.created_at else None,
+                    },
+                    "run": {
+                        "id": int(run_row.id),
+                        "created_at": run_row.created_at.isoformat() if run_row.created_at else None,
+                        "summary": summary,
+                        "duration_ms": duration_ms,
+                        "base_url": run_row.base_url,
+                    },
+                    "auth": {
+                        "provided": bool(auth_meta.get("provided")),
+                        "mode": str(auth_meta.get("mode") or "none"),
+                    },
+                    "ai": ai_summary,
+                }
+            )
+
+        next_before_run_id = int(visible_rows[-1][0].id) if has_more and visible_rows else None
+        return {
+            "items": items,
+            "has_more": has_more,
+            "next_before_run_id": next_before_run_id,
+            "limit": safe_limit,
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/logistics/runs/{run_id}")
+def get_logistics_run_detail(run_id: int, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        run_row = _get_owned_run(db, current_user.id, run_id)
+        spec_row = _get_owned_spec(db, current_user.id, int(run_row.spec_id))
+
+        suite_payload = _json_load_or_default(run_row.suite_snapshot_json, {})
+        if not isinstance(suite_payload, dict):
+            suite_payload = {}
+        test_cases = suite_payload.get("test_cases") if isinstance(suite_payload.get("test_cases"), list) else []
+        if not isinstance(test_cases, list):
+            test_cases = []
+
+        results_payload = _json_load_or_default(run_row.results_json, [])
+        if not isinstance(results_payload, list):
+            results_payload = []
+        summary_payload = _normalize_run_summary_counts(_json_load_or_default(run_row.summary_json, {}))
+        auth_meta = _normalize_auth_meta(_json_load_or_default(run_row.auth_meta_json, {}))
+        duration_ms = _derive_run_duration_ms(results_payload)
+
+        llm_rows = (
+            db.query(LLMRunInsight)
+            .filter(
+                LLMRunInsight.user_id == current_user.id,
+                LLMRunInsight.run_id == int(run_row.id),
+            )
+            .order_by(LLMRunInsight.id.desc())
+            .all()
+        )
+        llm_payloads: list[dict[str, Any]] = []
+        for row in llm_rows:
+            payload = _json_load_or_default(row.payload_json, {})
+            if payload is None:
+                payload = {}
+            llm_payloads.append(
+                {
+                    "id": int(row.id),
+                    "test_id": str(row.test_id),
+                    "mode": str(row.mode),
+                    "model": str(row.model or ""),
+                    "payload": payload,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                }
+            )
+
+        return {
+            "spec": {
+                "id": int(spec_row.id),
+                "title": spec_row.title,
+                "filename": spec_row.filename,
+                "version": spec_row.version,
+                "uploaded_at": spec_row.created_at.isoformat() if spec_row.created_at else None,
+            },
+            "run": {
+                "id": int(run_row.id),
+                "created_at": run_row.created_at.isoformat() if run_row.created_at else None,
+                "api_title": run_row.api_title,
+                "api_version": run_row.api_version,
+                "base_url": run_row.base_url,
+                "summary": summary_payload,
+                "duration_ms": duration_ms,
+                "timeout_seconds": int(run_row.timeout_seconds or 10),
+            },
+            "auth": {
+                "provided": bool(auth_meta.get("provided")),
+                "mode": str(auth_meta.get("mode") or "none"),
+                "header": auth_meta.get("header"),
+            },
+            "suite": {
+                "test_cases": test_cases,
+            },
+            "results": results_payload,
+            "llm_insights": llm_payloads,
+        }
+    finally:
+        db.close()
+
+
+@app.delete("/api/logistics/runs/{run_id}")
+def delete_logistics_run(run_id: int, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        run_row = _get_owned_run(db, current_user.id, run_id)
+        deleted_insights = (
+            db.query(LLMRunInsight)
+            .filter(
+                LLMRunInsight.user_id == current_user.id,
+                LLMRunInsight.run_id == int(run_row.id),
+            )
+            .delete(synchronize_session=False)
+        )
+        db.delete(run_row)
+        db.commit()
+        return {
+            "deleted": 1,
+            "run_id": int(run_id),
+            "deleted_llm_insights": int(deleted_insights or 0),
+        }
+    finally:
+        db.close()
+
+
+@app.delete("/api/logistics/runs")
+def clear_logistics_runs(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        run_ids = [
+            int(row.id)
+            for row in db.query(TestRun.id).filter(TestRun.user_id == current_user.id).all()
+            if row.id is not None
+        ]
+        if not run_ids:
+            return {
+                "deleted_runs": 0,
+                "deleted_llm_insights": 0,
+            }
+
+        deleted_insights = (
+            db.query(LLMRunInsight)
+            .filter(
+                LLMRunInsight.user_id == current_user.id,
+                LLMRunInsight.run_id.in_(run_ids),
+            )
+            .delete(synchronize_session=False)
+        )
+        deleted_runs = (
+            db.query(TestRun)
+            .filter(TestRun.user_id == current_user.id)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        return {
+            "deleted_runs": int(deleted_runs or 0),
+            "deleted_llm_insights": int(deleted_insights or 0),
         }
     finally:
         db.close()
