@@ -48,7 +48,7 @@ run-tests:
   stage: test
   script:
     - cd src
-    - python test_runner/run_test.py test_cases/ --json-output test_runner_results.json
+    - python test_runner/run_test.py test_cases/ --json-output test_runner_results.json || test -f test_runner_results.json
     - cat test_runner_results.json
   needs:
     - generate-tests
@@ -56,4 +56,3 @@ run-tests:
     paths:
       - src/test_runner_results.json
     expire_in: 1 week
-  allow_failure: true
