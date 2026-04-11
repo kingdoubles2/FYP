@@ -2,6 +2,13 @@
   "title": "GitHub v3 REST API - Minimal Subset",
   "version": "1.0.0",
   "base_url": "https://api.github.com",
+  "security_schemes": {
+    "bearerAuth": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "token"
+    }
+  },
   "endpoints": [
     {
       "endpoint_id": "GET /user",
@@ -79,7 +86,22 @@
             "message"
           ]
         }
-      }
+      },
+      "summary": "Get the authenticated user",
+      "description": null,
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "bearerAuth": []
+        }
+      ],
+      "response_descriptions": {
+        "200": "Authenticated user",
+        "401": "Requires authentication",
+        "403": "Forbidden"
+      },
+      "response_examples": {}
     },
     {
       "endpoint_id": "GET /rate_limit",
@@ -257,7 +279,21 @@
             "message"
           ]
         }
-      }
+      },
+      "summary": "Get rate limit status for the authenticated user",
+      "description": null,
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "bearerAuth": []
+        }
+      ],
+      "response_descriptions": {
+        "200": "Rate limit overview",
+        "404": "Not found"
+      },
+      "response_examples": {}
     },
     {
       "endpoint_id": "GET /repos/{owner}/{repo}",
@@ -421,7 +457,23 @@
             "message"
           ]
         }
-      }
+      },
+      "summary": "Get a repository",
+      "description": null,
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "bearerAuth": []
+        }
+      ],
+      "response_descriptions": {
+        "200": "Repository",
+        "301": "Moved permanently",
+        "403": "Forbidden",
+        "404": "Not found"
+      },
+      "response_examples": {}
     }
   ]
 }
