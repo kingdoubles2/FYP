@@ -11,18 +11,20 @@ def _build_valid_params(
     *,
     required_only: bool = False,
     skip_example: bool = False,
+    use_realistic: bool = False,
 ) -> Dict[str, Any]:
     """Generate a valid value for every parameter in the list.
 
     When *required_only* is True, optional parameters are omitted.
     When *skip_example* is True, schema ``example`` values are ignored.
+    When *use_realistic* is True, prefers realistic values over generic placeholders.
     """
     selected = params
     if required_only:
         selected = [p for p in params if p.get("required", False)]
     return {
         p["name"]: generate_valid_value(
-            p["schema"], name=p["name"], skip_example=skip_example,
+            p["schema"], name=p["name"], skip_example=skip_example, use_realistic=use_realistic,
         )
         for p in selected
     }
@@ -107,18 +109,18 @@ def generate_happy_path_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
 
     # ----- Case 1: Minimal valid request (required params only, no examples) -----
     min_path = _build_valid_params(
-        endpoint.get("path_params", []), required_only=True, skip_example=True,
+        endpoint.get("path_params", []), required_only=True, skip_example=True, use_realistic=True,
     )
     min_query = _build_valid_params(
-        endpoint.get("query_params", []), required_only=True, skip_example=True,
+        endpoint.get("query_params", []), required_only=True, skip_example=True, use_realistic=True,
     )
     min_headers = _build_valid_params(
-        endpoint.get("header_params", []), required_only=True, skip_example=True,
+        endpoint.get("header_params", []), required_only=True, skip_example=True, use_realistic=True,
     )
     min_body = None
     if endpoint.get("request_schema"):
         min_body = generate_valid_value(
-            endpoint["request_schema"], skip_example=True,
+            endpoint["request_schema"], skip_example=True, use_realistic=True,
         )
 
     min_rendered = _render_path(path, min_path)
