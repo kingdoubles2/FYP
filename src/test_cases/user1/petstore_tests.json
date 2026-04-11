@@ -1,8 +1,8 @@
 {
   "api_title": "Swagger Petstore - OpenAPI 3.0",
   "api_version": "1.0.27",
-  "generated_at": "2026-03-15T22:27:32Z",
-  "base_url": "/api/v3",
+  "generated_at": "2026-04-11T12:03:41Z",
+  "base_url": "https://petstore.swagger.io/v2/swagger.json",
   "test_cases": [
     {
       "test_id": "TC-PUT-pet-001",
@@ -22,19 +22,19 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 100000,
-              "name": "test_string",
+              "id": 1001,
+              "name": "Sample Name",
               "category": {
-                "id": 100000,
-                "name": "test_string"
+                "id": 1,
+                "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -72,12 +72,12 @@
                 "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -114,12 +114,12 @@
                 "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -161,8 +161,8 @@
               },
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -203,12 +203,12 @@
                 "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "invalid_enum_value_xyz"
@@ -249,12 +249,12 @@
                 "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -285,19 +285,19 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 100000,
-              "name": "test_string",
+              "id": 1001,
+              "name": "Sample Name",
               "category": {
-                "id": 100000,
-                "name": "test_string"
+                "id": 1,
+                "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -335,12 +335,12 @@
                 "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -377,12 +377,12 @@
                 "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -424,8 +424,8 @@
               },
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -466,12 +466,12 @@
                 "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "invalid_enum_value_xyz"
@@ -512,12 +512,12 @@
                 "name": "Dogs"
               },
               "photoUrls": [
-                "test_string"
+                "https://example.com/resource"
               ],
               "tags": [
                 {
-                  "id": 100000,
-                  "name": "test_string"
+                  "id": 10,
+                  "name": "friendly"
                 }
               ],
               "status": "available"
@@ -708,12 +708,12 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /pet/findByTags with query params {'tags': ['test_string']}",
+          "action": "Send GET request to /pet/findByTags with query params {'tags': ['standard-text']}",
           "input_data": {
             "path_params": {},
             "query_params": {
               "tags": [
-                "test_string"
+                "standard-text"
               ]
             },
             "headers": {},
@@ -789,15 +789,15 @@
       "path": "/pet/{petId}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for petId=100000"
+        "Resource exists for petId=1001"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /pet/100000",
+          "action": "Send GET request to /pet/1001",
           "input_data": {
             "path_params": {
-              "petId": 100000
+              "petId": 1001
             },
             "query_params": {},
             "headers": {},
@@ -935,15 +935,15 @@
       "path": "/pet/{petId}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for petId=100000"
+        "Resource exists for petId=1001"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send POST request to /pet/100000",
+          "action": "Send POST request to /pet/1001",
           "input_data": {
             "path_params": {
-              "petId": 100000
+              "petId": 1001
             },
             "query_params": {},
             "headers": {},
@@ -974,8 +974,8 @@
               "petId": "not_a_number"
             },
             "query_params": {
-              "name": "test_string",
-              "status": "test_string"
+              "name": "Sample Name",
+              "status": "active"
             },
             "headers": {},
             "body": null
@@ -1007,8 +1007,8 @@
               "petId": 9999999
             },
             "query_params": {
-              "name": "test_string",
-              "status": "test_string"
+              "name": "Sample Name",
+              "status": "active"
             },
             "headers": {},
             "body": null
@@ -1038,8 +1038,8 @@
               "petId": 9223372036854775807
             },
             "query_params": {
-              "name": "test_string",
-              "status": "test_string"
+              "name": "Sample Name",
+              "status": "active"
             },
             "headers": {},
             "body": null
@@ -1060,15 +1060,15 @@
       "path": "/pet/{petId}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for petId=100000"
+        "Resource exists for petId=1001"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send DELETE request to /pet/100000",
+          "action": "Send DELETE request to /pet/1001",
           "input_data": {
             "path_params": {
-              "petId": 100000
+              "petId": 1001
             },
             "query_params": {},
             "headers": {},
@@ -1100,7 +1100,7 @@
             },
             "query_params": {},
             "headers": {
-              "api_key": "test_string"
+              "api_key": "standard-text"
             },
             "body": null
           }
@@ -1132,7 +1132,7 @@
             },
             "query_params": {},
             "headers": {
-              "api_key": "test_string"
+              "api_key": "standard-text"
             },
             "body": null
           }
@@ -1162,7 +1162,7 @@
             },
             "query_params": {},
             "headers": {
-              "api_key": "test_string"
+              "api_key": "standard-text"
             },
             "body": null
           }
@@ -1185,10 +1185,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send DELETE request to /pet/100000 without 'api_key' header",
+          "action": "Send DELETE request to /pet/1001 without 'api_key' header",
           "input_data": {
             "path_params": {
-              "petId": 100000
+              "petId": 1001
             },
             "query_params": {},
             "headers": {},
@@ -1213,10 +1213,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send DELETE request to /pet/100000 with api_key='invalid_key_12345'",
+          "action": "Send DELETE request to /pet/1001 with api_key='invalid_key_12345'",
           "input_data": {
             "path_params": {
-              "petId": 100000
+              "petId": 1001
             },
             "query_params": {},
             "headers": {
@@ -1243,10 +1243,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send DELETE request to /pet/100000 with api_key='' (empty)",
+          "action": "Send DELETE request to /pet/1001 with api_key='' (empty)",
           "input_data": {
             "path_params": {
-              "petId": 100000
+              "petId": 1001
             },
             "query_params": {},
             "headers": {
@@ -1270,15 +1270,15 @@
       "path": "/pet/{petId}/uploadImage",
       "priority": "high",
       "preconditions": [
-        "Resource exists for petId=100000"
+        "Resource exists for petId=1001"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send POST request to /pet/100000/uploadImage",
+          "action": "Send POST request to /pet/1001/uploadImage",
           "input_data": {
             "path_params": {
-              "petId": 100000
+              "petId": 1001
             },
             "query_params": {},
             "headers": {},
@@ -1309,7 +1309,7 @@
               "petId": "not_a_number"
             },
             "query_params": {
-              "additionalMetadata": "test_string"
+              "additionalMetadata": "profile image"
             },
             "headers": {},
             "body": null
@@ -1341,7 +1341,7 @@
               "petId": 9999999
             },
             "query_params": {
-              "additionalMetadata": "test_string"
+              "additionalMetadata": "profile image"
             },
             "headers": {},
             "body": null
@@ -1371,7 +1371,7 @@
               "petId": 9223372036854775807
             },
             "query_params": {
-              "additionalMetadata": "test_string"
+              "additionalMetadata": "profile image"
             },
             "headers": {},
             "body": null
@@ -1403,7 +1403,7 @@
               "petId": 9999999
             },
             "query_params": {
-              "additionalMetadata": "test_string"
+              "additionalMetadata": "profile image"
             },
             "headers": {},
             "body": null
@@ -1513,9 +1513,9 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 100000,
-              "petId": 100000,
-              "quantity": 42,
+              "id": 1001,
+              "petId": 1001,
+              "quantity": 2,
               "shipDate": "2026-01-15T10:30:00Z",
               "status": "placed",
               "complete": true
@@ -1740,15 +1740,15 @@
       "path": "/store/order/{orderId}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for orderId=100000"
+        "Resource exists for orderId=5001"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /store/order/100000",
+          "action": "Send GET request to /store/order/5001",
           "input_data": {
             "path_params": {
-              "orderId": 100000
+              "orderId": 5001
             },
             "query_params": {},
             "headers": {},
@@ -1886,15 +1886,15 @@
       "path": "/store/order/{orderId}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for orderId=100000"
+        "Resource exists for orderId=5001"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send DELETE request to /store/order/100000",
+          "action": "Send DELETE request to /store/order/5001",
           "input_data": {
             "path_params": {
-              "orderId": 100000
+              "orderId": 5001
             },
             "query_params": {},
             "headers": {},
@@ -2041,14 +2041,14 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 100000,
-              "username": "test_string",
-              "firstName": "test_string",
-              "lastName": "test_string",
-              "email": "test_string",
-              "password": "test_string",
-              "phone": "test_string",
-              "userStatus": 42
+              "id": 1001,
+              "username": "jane_doe",
+              "firstName": "Jane",
+              "lastName": "Doe",
+              "email": "jane.doe@example.com",
+              "password": "SecurePass123!",
+              "phone": "871234567",
+              "userStatus": 1
             }
           }
         }
@@ -2245,14 +2245,14 @@
             "headers": {},
             "body": [
               {
-                "id": 100000,
-                "username": "test_string",
-                "firstName": "test_string",
-                "lastName": "test_string",
-                "email": "test_string",
-                "password": "test_string",
-                "phone": "test_string",
-                "userStatus": 42
+                "id": 1001,
+                "username": "jane_doe",
+                "firstName": "Jane",
+                "lastName": "Doe",
+                "email": "jane.doe@example.com",
+                "password": "SecurePass123!",
+                "phone": "871234567",
+                "userStatus": 1
               }
             ]
           }
@@ -2372,8 +2372,8 @@
           "input_data": {
             "path_params": {},
             "query_params": {
-              "username": "test_string",
-              "password": "test_string"
+              "username": "jane_doe",
+              "password": "SecurePass123!"
             },
             "headers": {},
             "body": null
@@ -2500,15 +2500,15 @@
       "path": "/user/{username}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for username=test_string"
+        "Resource exists for username=jane_doe"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /user/test_string",
+          "action": "Send GET request to /user/jane_doe",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
@@ -2563,10 +2563,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /user/test_string for a non-existent resource",
+          "action": "Send GET request to /user/jane_doe for a non-existent resource",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
@@ -2618,27 +2618,27 @@
       "path": "/user/{username}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for username=test_string"
+        "Resource exists for username=jane_doe"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PUT request to /user/test_string with valid request body",
+          "action": "Send PUT request to /user/jane_doe with valid request body",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 100000,
-              "username": "test_string",
-              "firstName": "test_string",
-              "lastName": "test_string",
-              "email": "test_string",
-              "password": "test_string",
-              "phone": "test_string",
-              "userStatus": 42
+              "id": 1001,
+              "username": "jane_doe",
+              "firstName": "Jane",
+              "lastName": "Doe",
+              "email": "jane.doe@example.com",
+              "password": "SecurePass123!",
+              "phone": "871234567",
+              "userStatus": 1
             }
           }
         }
@@ -2657,15 +2657,15 @@
       "path": "/user/{username}",
       "priority": "medium",
       "preconditions": [
-        "Resource exists for username=test_string"
+        "Resource exists for username=standard-text"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PUT request to /user/test_string with example request body",
+          "action": "Send PUT request to /user/standard-text with example request body",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "standard-text"
             },
             "query_params": {},
             "headers": {},
@@ -2738,10 +2738,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PUT request to /user/test_string for a non-existent resource",
+          "action": "Send PUT request to /user/jane_doe for a non-existent resource",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
@@ -2778,7 +2778,7 @@
           "action": "Send PUT request with body 'id'=9223372036854775807",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
@@ -2815,7 +2815,7 @@
           "action": "Send PUT request with body 'userStatus'=2147483647",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
@@ -2885,15 +2885,15 @@
       "path": "/user/{username}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for username=test_string"
+        "Resource exists for username=jane_doe"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send DELETE request to /user/test_string",
+          "action": "Send DELETE request to /user/jane_doe",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
@@ -2948,10 +2948,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send DELETE request to /user/test_string for a non-existent resource",
+          "action": "Send DELETE request to /user/jane_doe for a non-existent resource",
           "input_data": {
             "path_params": {
-              "username": "test_string"
+              "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},

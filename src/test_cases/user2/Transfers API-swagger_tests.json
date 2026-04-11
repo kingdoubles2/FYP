@@ -1,7 +1,7 @@
 {
   "api_title": "Transfers API",
   "api_version": "3",
-  "generated_at": "2026-03-15T22:27:32Z",
+  "generated_at": "2026-04-11T11:16:38Z",
   "base_url": "https://balanceplatform-api-test.adyen.com/btl/v3",
   "test_cases": [
     {
@@ -45,18 +45,18 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /transactions with query params {'balancePlatform': 'YOUR_BALANCE_PLATFORM', 'paymentInstrumentId': 'test_string', 'accountHolderId': 'AHA1B2C3D4E5F6G7H8I9J0', 'balanceAccountId': 'BAB8B2C3D4E5F6G7H8D9J6GD4', 'cursor': 'test_string', 'createdSince': '2026-01-15T10:30:00Z', 'createdUntil': '2026-01-15T10:30:00Z', 'limit': 42}",
+          "action": "Send GET request to /transactions with query params {'balancePlatform': 'YOUR_BALANCE_PLATFORM', 'paymentInstrumentId': 'standard-text', 'accountHolderId': 'AHA1B2C3D4E5F6G7H8I9J0', 'balanceAccountId': 'BAB8B2C3D4E5F6G7H8D9J6GD4', 'cursor': 'standard-text', 'createdSince': '2026-01-15T10:30:00Z', 'createdUntil': '2026-01-15T10:30:00Z', 'limit': 1}",
           "input_data": {
             "path_params": {},
             "query_params": {
               "balancePlatform": "YOUR_BALANCE_PLATFORM",
-              "paymentInstrumentId": "test_string",
+              "paymentInstrumentId": "standard-text",
               "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
               "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
-              "cursor": "test_string",
+              "cursor": "standard-text",
               "createdSince": "2026-01-15T10:30:00Z",
               "createdUntil": "2026-01-15T10:30:00Z",
-              "limit": 42
+              "limit": 1
             },
             "headers": {},
             "body": null
@@ -85,13 +85,13 @@
             "path_params": {},
             "query_params": {
               "balancePlatform": "YOUR_BALANCE_PLATFORM",
-              "paymentInstrumentId": "test_string",
+              "paymentInstrumentId": "standard-text",
               "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
               "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
-              "cursor": "test_string",
+              "cursor": "standard-text",
               "createdSince": 12345,
               "createdUntil": "2026-01-15T10:30:00Z",
-              "limit": 42
+              "limit": 20
             },
             "headers": {},
             "body": null
@@ -120,13 +120,13 @@
             "path_params": {},
             "query_params": {
               "balancePlatform": "YOUR_BALANCE_PLATFORM",
-              "paymentInstrumentId": "test_string",
+              "paymentInstrumentId": "standard-text",
               "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
               "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
-              "cursor": "test_string",
+              "cursor": "standard-text",
               "createdSince": "2026-01-15T10:30:00Z",
               "createdUntil": 12345,
-              "limit": 42
+              "limit": 20
             },
             "headers": {},
             "body": null
@@ -155,12 +155,12 @@
             "path_params": {},
             "query_params": {
               "balancePlatform": "YOUR_BALANCE_PLATFORM",
-              "paymentInstrumentId": "test_string",
+              "paymentInstrumentId": "standard-text",
               "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
               "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
-              "cursor": "test_string",
+              "cursor": "standard-text",
               "createdUntil": "2026-01-15T10:30:00Z",
-              "limit": 42
+              "limit": 20
             },
             "headers": {},
             "body": null
@@ -189,12 +189,12 @@
             "path_params": {},
             "query_params": {
               "balancePlatform": "YOUR_BALANCE_PLATFORM",
-              "paymentInstrumentId": "test_string",
+              "paymentInstrumentId": "standard-text",
               "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
               "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
-              "cursor": "test_string",
+              "cursor": "standard-text",
               "createdSince": "2026-01-15T10:30:00Z",
-              "limit": 42
+              "limit": 20
             },
             "headers": {},
             "body": null
@@ -223,13 +223,13 @@
             "path_params": {},
             "query_params": {
               "balancePlatform": "YOUR_BALANCE_PLATFORM",
-              "paymentInstrumentId": "test_string",
+              "paymentInstrumentId": "standard-text",
               "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
               "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
-              "cursor": "test_string",
+              "cursor": "standard-text",
               "createdSince": "not-a-date",
               "createdUntil": "2026-01-15T10:30:00Z",
-              "limit": 42
+              "limit": 20
             },
             "headers": {},
             "body": null
@@ -258,13 +258,13 @@
             "path_params": {},
             "query_params": {
               "balancePlatform": "YOUR_BALANCE_PLATFORM",
-              "paymentInstrumentId": "test_string",
+              "paymentInstrumentId": "standard-text",
               "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
               "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
-              "cursor": "test_string",
+              "cursor": "standard-text",
               "createdSince": "2026-01-15T10:30:00Z",
               "createdUntil": "not-a-date",
-              "limit": 42
+              "limit": 20
             },
             "headers": {},
             "body": null
@@ -293,10 +293,10 @@
             "path_params": {},
             "query_params": {
               "balancePlatform": "YOUR_BALANCE_PLATFORM",
-              "paymentInstrumentId": "test_string",
+              "paymentInstrumentId": "standard-text",
               "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
               "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
-              "cursor": "test_string",
+              "cursor": "standard-text",
               "createdSince": "2026-01-15T10:30:00Z",
               "createdUntil": "2026-01-15T10:30:00Z",
               "limit": 2147483647
@@ -320,15 +320,15 @@
       "path": "/transactions/{id}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=abc123"
+        "Resource exists for id=standard-text"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /transactions/abc123",
+          "action": "Send GET request to /transactions/standard-text",
           "input_data": {
             "path_params": {
-              "id": "abc123"
+              "id": "standard-text"
             },
             "query_params": {},
             "headers": {},
@@ -449,58 +449,58 @@
             "body": {
               "amount": {
                 "currency": "USD",
-                "value": 100000
+                "value": 1
               },
-              "balanceAccountId": "test_string",
+              "balanceAccountId": "standard-text",
               "category": "bank",
               "counterparty": {
-                "balanceAccountId": "test_string",
+                "balanceAccountId": "standard-text",
                 "bankAccount": {
                   "accountHolder": {
                     "address": {
-                      "city": "test_string",
-                      "country": "IE",
-                      "line1": "test_string",
-                      "line2": "test_string",
-                      "postalCode": "test_string",
-                      "stateOrProvince": "test_string"
+                      "city": "Dublin",
+                      "country": "Ireland",
+                      "line1": "standard-text",
+                      "line2": "standard-text",
+                      "postalCode": "D02X285",
+                      "stateOrProvince": "standard-text"
                     },
                     "dateOfBirth": "2026-01-15",
-                    "firstName": "test_string",
-                    "fullName": "test_string",
-                    "lastName": "test_string",
-                    "reference": "test_string",
-                    "type": "unknown"
+                    "firstName": "Jane",
+                    "fullName": "Jane Doe",
+                    "lastName": "Doe",
+                    "reference": "standard-text",
+                    "type": "individual"
                   },
                   "accountIdentification": {
-                    "accountNumber": "test_stri",
-                    "bsbCode": "test_s",
+                    "accountNumber": "standard-",
+                    "bsbCode": "standa",
                     "type": "auLocal"
                   }
                 },
-                "transferInstrumentId": "test_string"
+                "transferInstrumentId": "standard-text"
               },
-              "description": "test_string",
-              "id": "abc123",
-              "paymentInstrumentId": "test_string",
+              "description": "Primary account profile",
+              "id": "standard-text",
+              "paymentInstrumentId": "standard-text",
               "priority": "crossBorder",
-              "reference": "test_string",
-              "referenceForBeneficiary": "test_string",
+              "reference": "standard-text",
+              "referenceForBeneficiary": "standard-text",
               "ultimateParty": {
                 "address": {
-                  "city": "test_string",
-                  "country": "IE",
-                  "line1": "test_string",
-                  "line2": "test_string",
-                  "postalCode": "test_string",
-                  "stateOrProvince": "test_string"
+                  "city": "Dublin",
+                  "country": "Ireland",
+                  "line1": "standard-text",
+                  "line2": "standard-text",
+                  "postalCode": "D02X285",
+                  "stateOrProvince": "standard-text"
                 },
                 "dateOfBirth": "2026-01-15",
-                "firstName": "test_string",
-                "fullName": "test_string",
-                "lastName": "test_string",
-                "reference": "test_string",
-                "type": "unknown"
+                "firstName": "Jane",
+                "fullName": "Jane Doe",
+                "lastName": "Doe",
+                "reference": "standard-text",
+                "type": "individual"
               }
             }
           }

@@ -1,7 +1,7 @@
 {
   "api_title": "GitHub v3 REST API - Minimal Subset",
   "api_version": "1.0.0",
-  "generated_at": "2026-03-15T22:27:32Z",
+  "generated_at": "2026-04-11T12:03:41Z",
   "base_url": "https://api.github.com",
   "test_cases": [
     {
@@ -173,16 +173,16 @@
       "path": "/repos/{owner}/{repo}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for owner=christianly326, repo=CSC1044-machine-learning-project"
+        "Resource exists for owner=standard-text, repo=standard-text"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /repos/christianly326/CSC1044-machine-learning-project",
+          "action": "Send GET request to /repos/standard-text/standard-text",
           "input_data": {
             "path_params": {
-              "owner": "christianly326",
-              "repo": "CSC1044-machine-learning-project"
+              "owner": "standard-text",
+              "repo": "standard-text"
             },
             "query_params": {},
             "headers": {},
@@ -207,11 +207,11 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /repos/12345/test_string with owner as wrong type",
+          "action": "Send GET request to /repos/12345/standard-text with owner as wrong type",
           "input_data": {
             "path_params": {
               "owner": 12345,
-              "repo": "test_string"
+              "repo": "standard-text"
             },
             "query_params": {},
             "headers": {},
@@ -236,10 +236,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /repos/test_string/12345 with repo as wrong type",
+          "action": "Send GET request to /repos/standard-text/12345 with repo as wrong type",
           "input_data": {
             "path_params": {
-              "owner": "test_string",
+              "owner": "standard-text",
               "repo": 12345
             },
             "query_params": {},
@@ -267,11 +267,11 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /repos/nonexistent_resource_xyz/test_string with non-existent owner",
+          "action": "Send GET request to /repos/nonexistent_resource_xyz/standard-text with non-existent owner",
           "input_data": {
             "path_params": {
               "owner": "nonexistent_resource_xyz",
-              "repo": "test_string"
+              "repo": "standard-text"
             },
             "query_params": {},
             "headers": {},
@@ -302,10 +302,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /repos/test_string/nonexistent_resource_xyz with non-existent repo",
+          "action": "Send GET request to /repos/standard-text/nonexistent_resource_xyz with non-existent repo",
           "input_data": {
             "path_params": {
-              "owner": "test_string",
+              "owner": "standard-text",
               "repo": "nonexistent_resource_xyz"
             },
             "query_params": {},
