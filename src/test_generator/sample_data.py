@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -8,21 +9,22 @@ from typing import Any, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 VALID_DEFAULTS: Dict[Tuple[str, Optional[str]], Any] = {
-    ("integer", None):       10,
-    ("integer", "int32"):    42,
-    ("integer", "int64"):    100000,
-    ("number", None):        3.14,
-    ("number", "float"):     1.5,
-    ("number", "double"):    52.52,
-    ("string", None):        "test_string",
+    ("integer", None):       1,
+    ("integer", "int32"):    1,
+    ("integer", "int64"):    1,
+    ("number", None):        1.0,
+    ("number", "float"):     1.0,
+    ("number", "double"):    1.0,
+    ("string", None):        "standard-text",
     ("string", "date-time"): "2026-01-15T10:30:00Z",
     ("string", "date"):      "2026-01-15",
-    ("string", "email"):     "user@example.com",
+    ("string", "email"):     "jane.doe@example.com",
     ("string", "uri"):       "https://example.com/resource",
-    ("string", "uuid"):      "550e8400-e29b-41d4-a716-446655440000",
+    ("string", "url"):       "https://example.com/resource",
+    ("string", "uuid"):      "123e4567-e89b-12d3-a456-426614174000",
     ("string", "byte"):      "dGVzdA==",
-    ("string", "binary"):    "<binary_data>",
-    ("string", "password"):  "P@ssw0rd123",
+    ("string", "binary"):    "binary-content",
+    ("string", "password"):  "SecurePass123!",
     ("boolean", None):       True,
 }
 
@@ -43,24 +45,168 @@ INVALID_FORMAT_MAP: Dict[str, str] = {
     "uuid":      "not-a-uuid",
 }
 
-# Name-aware realistic defaults for common field names (case-insensitive).
-# Used when a string field has no example/default/enum in the IR.
-FIELD_NAME_HINTS: Dict[str, str] = {
-    "timezone":     "UTC",
-    "country":      "IE",
-    "country_code": "IE",
-    "language":     "en",
-    "locale":       "en_US",
-    "currency":     "USD",
-    "id":           "abc123",
-    "userid":       "user_001",
-    "user_id":      "user_001",
-    "accountid":    "acct_001",
-    "account_id":   "acct_001",
-    "transactionid": "txn_001",
-    "transaction_id": "txn_001",
-    "orderid":      "order_001",
-    "order_id":     "order_001",
+# Name-aware deterministic values for common fields (case-insensitive).
+SEMANTIC_STRING_VALUES: Dict[str, str] = {
+    "username": "jane_doe",
+    "user": "jane_doe",
+    "firstname": "Jane",
+    "lastname": "Doe",
+    "fullname": "Jane Doe",
+    "displayname": "Jane Doe",
+    "nickname": "jane",
+    "givenname": "Jane",
+    "surname": "Doe",
+    "addressline1": "12 River Street",
+    "addressline2": "Suite 5",
+    "adminarea1": "Leinster",
+    "adminarea2": "Dublin",
+    "email": "jane.doe@example.com",
+    "emailaddress": "buyer@example.com",
+    "contactemail": "contact@example.com",
+    "supportemail": "support@example.com",
+    "phone": "+353871234567",
+    "phonenumber": "871234567",
+    "nationalnumber": "871234567",
+    "password": "SecurePass123!",
+    "sessionid": "sess_10001",
+    "requestid": "req_10001",
+    "traceid": "trace_10001",
+    "correlationid": "corr_10001",
+    "title": "Senior Engineer",
+    "description": "Primary account profile",
+    "summary": "Primary account profile",
+    "notes": "Customer requested fast delivery",
+    "address": "12 River Street",
+    "street": "12 River Street",
+    "street1": "12 River Street",
+    "street2": "Suite 5",
+    "city": "Dublin",
+    "state": "Leinster",
+    "region": "Leinster",
+    "zipcode": "D02X285",
+    "postalcode": "D02X285",
+    "postcode": "D02X285",
+    "country": "Ireland",
+    "countrycode": "IE",
+    "statecode": "L",
+    "continent": "Europe",
+    "company": "Acme Ltd",
+    "organization": "Acme Ltd",
+    "department": "Engineering",
+    "role": "admin",
+    "permission": "read_write",
+    "source": "web",
+    "channel": "online",
+    "slug": "jane-doe",
+    "filename": "report.pdf",
+    "filepath": "/reports/report.pdf",
+    "filetype": "pdf",
+    "mimetype": "application/json",
+    "contenttype": "application/json",
+    "additionalmetadata": "profile image",
+    "metadata": "key-value metadata",
+    "timezone": "UTC",
+    "currency": "USD",
+    "currencycode": "USD",
+    "language": "en",
+    "locale": "en_US",
+    "status": "active",
+    "priority": "normal",
+    "environment": "sandbox",
+    "platform": "web",
+    "version": "v1",
+    "tag": "general",
+    "category": "general",
+    "type": "standard",
+    "code": "CODE-10001",
+    "message": "Operation completed successfully",
+    "reason": "valid_request",
+    # Commerce / payment (also common in many B2C APIs)
+    "merchantid": "MERCHANT12345",
+    "invoiceid": "INV-10001",
+    "customid": "CUST-10001",
+    "referenceid": "REF-10001",
+    "payerid": "PAYER12345",
+    "transactionid": "TXN-10001",
+    "paymentid": "PAY-10001",
+    "orderreference": "ORDER-10001",
+    "sku": "SKU-001",
+    "commoditycode": "53111600",
+    "unitofmeasure": "PCS",
+    "brandname": "Example Store",
+    "softdescriptor": "EXAMPLESTORE",
+    "value": "100.00",
+    "quantity": "1",
+    "expiry": "2028-12",
+    "date": "2026-01-15",
+    "birthdate": "1995-08-21",
+    "ipaddress": "203.0.113.42",
+    "consumerip": "203.0.113.42",
+    "consumeruseragent": "Mozilla/5.0",
+}
+
+SEMANTIC_INTEGER_VALUES: Dict[str, int] = {
+    "id": 1001,
+    "version": 1,
+    "petid": 1001,
+    "userid": 1001,
+    "requestid": 10001,
+    "traceid": 10001,
+    "correlationid": 10001,
+    "accountid": 2001,
+    "itemid": 3001,
+    "productid": 4001,
+    "categoryid": 1,
+    "tagid": 10,
+    "orderid": 5001,
+    "quantity": 2,
+    "age": 30,
+    "count": 1,
+    "page": 1,
+    "perpage": 20,
+    "limit": 20,
+    "offset": 0,
+    "retrycount": 0,
+    "attempt": 1,
+    "year": 2026,
+    "month": 1,
+    "day": 15,
+    "statuscode": 200,
+    "userstatus": 1,
+}
+
+SEMANTIC_NUMBER_VALUES: Dict[str, float] = {
+    "price": 19.99,
+    "amount": 19.99,
+    "total": 19.99,
+    "subtotal": 17.99,
+    "tax": 2.0,
+    "discount": 1.0,
+    "shipping": 4.99,
+    "fee": 0.99,
+    "balance": 250.75,
+    "rate": 0.05,
+    "score": 4.5,
+    "percentage": 10.0,
+    "weight": 1.2,
+    "height": 180.0,
+    "width": 80.0,
+    "length": 120.0,
+    "latitude": 53.3498,
+    "longitude": -6.2603,
+}
+
+SEMANTIC_BOOLEAN_VALUES: Dict[str, bool] = {
+    "active": True,
+    "enabled": True,
+    "verified": True,
+    "success": True,
+    "deleted": False,
+    "archived": False,
+    "disabled": False,
+    "paid": True,
+    "captured": True,
+    "refunded": False,
 }
 
 
@@ -160,93 +306,264 @@ def _merge_allof(schemas: List[Dict[str, Any]]) -> Dict[str, Any]:
     return merged
 
 
-# ---------------------------------------------------------------------------
-# Value generators
-# ---------------------------------------------------------------------------
+def _normalize_token(token: Optional[str]) -> str:
+    if not token:
+        return ""
+    return "".join(ch for ch in token.lower() if ch.isalnum())
 
-def generate_valid_value(
-    schema: Dict[str, Any],
+
+def _normalize_path(path: str) -> str:
+    return "/".join(part for part in (_normalize_token(p) for p in path.split("/")) if part)
+
+
+def _name_parts(token: Optional[str]) -> List[str]:
+    if not token:
+        return []
+    parts = re.split(r"[^a-zA-Z0-9]+|(?<=[a-z])(?=[A-Z])", token)
+    return [p.lower() for p in parts if p]
+
+
+def _token_hints_from_name(norm_name: str) -> Optional[str]:
+    if "email" in norm_name:
+        return "jane.doe@example.com"
+    if "phone" in norm_name or "mobile" in norm_name:
+        return "871234567"
+    if "address" in norm_name and "line1" in norm_name:
+        return "12 River Street"
+    if "address" in norm_name and "line2" in norm_name:
+        return "Suite 5"
+    if "postal" in norm_name or "postcode" in norm_name or "zipcode" in norm_name:
+        return "D02X285"
+    if "country" in norm_name and "code" in norm_name:
+        return "IE"
+    if "currency" in norm_name and "code" in norm_name:
+        return "USD"
+    if "url" in norm_name or "uri" in norm_name:
+        return "https://example.com/resource"
+    if "name" in norm_name and "given" in norm_name:
+        return "Jane"
+    if "name" in norm_name and ("sur" in norm_name or "family" in norm_name or "last" in norm_name):
+        return "Doe"
+    return None
+
+
+def _pattern_based_string_value(
     *,
-    name: Optional[str] = None,
-    skip_example: bool = False,
-) -> Any:
-    """Return a single deterministic valid value for *schema*.
+    name: Optional[str],
+    parent_name: Optional[str],
+    path: str,
+) -> Optional[str]:
+    name_parts = _name_parts(name)
+    parent_parts = _name_parts(parent_name)
+    path_parts = _name_parts(path.replace("/", "_"))
+    parts = set(name_parts + parent_parts + path_parts)
 
-    Priority: example > default > enum[0] > composition > recursive build >
-              name hint > type/format table.
+    if "email" in parts:
+        return "buyer@example.com"
+    if "given" in parts and "name" in parts:
+        return "Jane"
+    if "surname" in parts or ("last" in parts and "name" in parts) or ("family" in parts and "name" in parts):
+        return "Doe"
+    if "full" in parts and "name" in parts:
+        return "Jane Doe"
+    if "phone" in parts and ("number" in parts or "national" in parts):
+        return "871234567"
+    if "address" in parts and ("line1" in parts or ({"line", "1"} <= parts)):
+        return "12 River Street"
+    if "address" in parts and ("line2" in parts or ({"line", "2"} <= parts)):
+        return "Suite 5"
+    if "postal" in parts or "postcode" in parts or "zipcode" in parts:
+        return "D02X285"
+    if "country" in parts and "code" in parts:
+        return "IE"
+    if "currency" in parts and "code" in parts:
+        return "USD"
+    if "url" in parts or "uri" in parts or "callback" in parts:
+        return "https://example.com/resource"
+    if "merchant" in parts and "customer" in parts and "id" in parts:
+        return "MCUST-10001"
+    if "customer" in parts and "id" in parts:
+        return "CUST-10001"
+    if "merchant" in parts and "id" in parts:
+        return "MERCHANT12345"
+    if "payer" in parts and "id" in parts:
+        return "PAYER12345"
+    if "invoice" in parts and "id" in parts:
+        return "INV-10001"
+    if "reference" in parts and "id" in parts:
+        return "REF-10001"
+    if "customer" in parts and "id" in parts:
+        return "CUST-10001"
 
-    When *skip_example* is True the ``example`` key in the schema is ignored,
-    producing a safe fallback value suitable for the minimal happy-path test.
-    """
-    if not skip_example and "example" in schema:
-        return schema["example"]
-    if "default" in schema:
-        return schema["default"]
-    if "enum" in schema:
-        return schema["enum"][0]
+    return None
 
-    # Schema composition: oneOf / anyOf / allOf
-    if "allOf" in schema:
-        return generate_valid_value(_merge_allof(schema["allOf"]), skip_example=skip_example)
-    if "oneOf" in schema:
-        return generate_valid_value(schema["oneOf"][0], skip_example=skip_example)
-    if "anyOf" in schema:
-        return generate_valid_value(schema["anyOf"][0], skip_example=skip_example)
 
-    schema_type = schema.get("type")
-    schema_format = schema.get("format")
+def _realistic_value_from_semantics(
+    schema_type: Optional[str],
+    *,
+    name: Optional[str],
+    parent_name: Optional[str],
+    path: str,
+) -> Optional[Any]:
+    norm_name = _normalize_token(name)
+    norm_parent = _normalize_token(parent_name)
+    norm_path = _normalize_path(path)
 
-    # Implicit object: has properties but no explicit type
-    if schema_type is None and "properties" in schema:
-        schema_type = "object"
-
-    if schema_type == "object":
-        return generate_valid_object(schema, skip_example=skip_example)
-
-    if schema_type == "array":
-        items_schema = schema.get("items", {})
-        return [generate_valid_value(items_schema, skip_example=skip_example)]
-
-    # Respect numeric constraints
-    if schema_type in ("integer", "number"):
-        return _constrained_numeric(schema, schema_type, schema_format)
-
-    # Respect string length constraints
     if schema_type == "string":
-        # Check name hint for realistic defaults
-        if name is not None:
-            hint = FIELD_NAME_HINTS.get(name.lower())
-            if hint is not None:
-                return hint
-        return _constrained_string(schema, schema_format)
+        token_hint = _token_hints_from_name(norm_name)
+        if token_hint is not None:
+            return token_hint
 
-    value = VALID_DEFAULTS.get((schema_type, schema_format))
-    if value is not None:
-        return value
-    value = VALID_DEFAULTS.get((schema_type, None))
-    if value is not None:
-        return value
+        pattern_value = _pattern_based_string_value(
+            name=name,
+            parent_name=parent_name,
+            path=path,
+        )
+        if pattern_value is not None:
+            return pattern_value
 
-    return "unknown"
+        if norm_name in {"id", "resourceid"}:
+            if "order" in norm_path or norm_parent == "order":
+                return "ORDER-10001"
+            if "invoice" in norm_path or norm_parent == "invoice":
+                return "INV-10001"
+            if "payment" in norm_path or norm_parent == "payment":
+                return "PAY-10001"
+            if "user" in norm_path or norm_parent == "user":
+                return "USER-10001"
+            return "RES-10001"
+        if norm_name.endswith("id") and norm_name in SEMANTIC_STRING_VALUES:
+            return SEMANTIC_STRING_VALUES[norm_name]
+        if norm_name.endswith("id"):
+            return f"{norm_name.upper()}-10001"
+        if norm_name in {"createdat", "updatedat", "timestamp"}:
+            return "2026-01-15T10:30:00Z"
+        if norm_name in {"createddate", "updateddate", "duedate"}:
+            return "2026-01-15"
+        if norm_name in {"number", "securitycode", "cvv", "cvc", "expiry", "date", "birthdate", "value", "quantity"}:
+            encoded = _realistic_value_from_string_encoding(name=name, parent_name=parent_name, path=path)
+            if encoded is not None:
+                return encoded
+        if norm_name == "name" and norm_parent in {"tag", "tags", "label", "labels"}:
+            return "friendly"
+        if norm_name == "name" and norm_parent == "category":
+            return "Dogs"
+        if norm_name == "name" and ("tag" in norm_path or "tags" in norm_path):
+            return "friendly"
+        if norm_name == "name" and ("pet" in norm_path or norm_parent == "pet"):
+            return "Buddy"
+        if norm_name == "name" and ("user" in norm_path or norm_parent == "user"):
+            return "Jane Doe"
+        if norm_name == "name":
+            return "Sample Name"
+        if norm_name == "photourls" or "photourl" in norm_path:
+            return "https://example.com/photos/buddy.jpg"
+        if "avatar" in norm_name or "image" in norm_name or "photo" in norm_name:
+            return "https://example.com/images/profile.jpg"
+        if "url" in norm_name or "uri" in norm_name:
+            return "https://example.com/resource"
+        if norm_name in SEMANTIC_STRING_VALUES:
+            return SEMANTIC_STRING_VALUES[norm_name]
+
+    if schema_type == "integer":
+        if norm_name == "id":
+            if "category" in norm_path or norm_parent == "category":
+                return 1
+            if "tag" in norm_path or norm_parent == "tag":
+                return 10
+            if "order" in norm_path or norm_parent == "order":
+                return 5001
+        if norm_name in SEMANTIC_INTEGER_VALUES:
+            return SEMANTIC_INTEGER_VALUES[norm_name]
+        if norm_name.endswith("id"):
+            return 1001
+
+    if schema_type == "number":
+        if norm_name in SEMANTIC_NUMBER_VALUES:
+            return SEMANTIC_NUMBER_VALUES[norm_name]
+
+    if schema_type == "boolean":
+        if norm_name.startswith("is") or norm_name.startswith("has") or norm_name.startswith("can"):
+            return True
+        if norm_name in SEMANTIC_BOOLEAN_VALUES:
+            return SEMANTIC_BOOLEAN_VALUES[norm_name]
+        if norm_name in {"complete", "active", "enabled", "verified", "success"}:
+            return True
+
+    return None
 
 
-def _constrained_numeric(
-    schema: Dict[str, Any], schema_type: str, schema_format: Optional[str]
-) -> Any:
-    """Generate a numeric value that respects minimum/maximum constraints."""
+def _realistic_value_from_string_encoding(
+    *,
+    name: Optional[str],
+    parent_name: Optional[str],
+    path: str,
+) -> Optional[str]:
+    """Deterministic values for string fields that encode numeric/date concepts."""
+    norm_name = _normalize_token(name)
+    norm_parent = _normalize_token(parent_name)
+    norm_path = _normalize_path(path)
+
+    if norm_name == "value":
+        return "100.00"
+    if norm_name in {"amount", "price", "total", "subtotal", "tax", "discount"}:
+        return "19.99"
+    if norm_name == "quantity":
+        return "1"
+    if norm_name in {"securitycode", "cvv", "cvc"}:
+        return "123"
+    if norm_name == "expiry":
+        return "2028-12"
+    if norm_name == "number":
+        if "card" in norm_path or norm_parent == "card":
+            return "4111111111111111"
+        if "phone" in norm_path or norm_parent == "phone":
+            return "871234567"
+        return "100001"
+    if norm_name == "date":
+        if "birth" in norm_path or norm_parent == "person":
+            return "1995-08-21"
+        return "2026-01-15"
+    if norm_name in {"startdate", "enddate", "duedate"}:
+        return "2026-01-15"
+    if norm_name in {"startdatetime", "enddatetime", "timestamp"}:
+        return "2026-01-15T10:30:00Z"
+    if norm_name in {"tokenrequestorid", "merchantcustomerid", "billingagreementid", "vaultid"}:
+        return "ID-10001"
+    if norm_name == "birthdate":
+        return "1995-08-21"
+    return None
+
+
+def _realistic_value_from_format(schema: Dict[str, Any], schema_type: Optional[str]) -> Optional[Any]:
+    fmt = str(schema.get("format", "")).lower()
+    if schema_type != "string" or not fmt:
+        return None
+    if fmt == "email":
+        return "jane.doe@example.com"
+    if fmt == "date":
+        return "2026-01-15"
+    if fmt == "date-time":
+        return "2026-01-15T10:30:00Z"
+    if fmt in {"uri", "url"}:
+        return "https://example.com/resource"
+    if fmt == "uuid":
+        return "123e4567-e89b-12d3-a456-426614174000"
+    if fmt == "byte":
+        return "dGVzdA=="
+    if fmt == "password":
+        return "SecurePass123!"
+    if fmt == "binary":
+        return "binary-content"
+    return None
+
+
+def _apply_numeric_constraints(schema: Dict[str, Any], value: float, *, as_integer: bool) -> Any:
     minimum = schema.get("minimum")
     maximum = schema.get("maximum")
     exclusive_min = schema.get("exclusiveMinimum", False)
     exclusive_max = schema.get("exclusiveMaximum", False)
 
-    # Start from the lookup table default
-    default = VALID_DEFAULTS.get((schema_type, schema_format))
-    if default is None:
-        default = VALID_DEFAULTS.get((schema_type, None), 10)
-
-    value = default
-
-    # Clamp to constraints
     if minimum is not None:
         low = (minimum + 1) if exclusive_min else minimum
         if value < low:
@@ -256,32 +573,237 @@ def _constrained_numeric(
         if value > high:
             value = high
 
-    return value
+    if as_integer:
+        return int(value)
+    return float(value)
 
 
-def _constrained_string(schema: Dict[str, Any], schema_format: Optional[str]) -> str:
-    """Generate a string that respects minLength/maxLength constraints."""
-    lookup = VALID_DEFAULTS.get(("string", schema_format))
-    if lookup is None:
-        lookup = VALID_DEFAULTS[("string", None)]
+def _short_semantic_value(norm_name: str, max_len: int) -> Optional[str]:
+    candidates: Dict[str, List[str]] = {
+        "date": ["2026-01-15", "20260115", "202601", "2026"],
+        "createdat": ["2026-01-15T10:30:00Z", "20260115", "202601", "2026"],
+        "updatedat": ["2026-01-15T10:30:00Z", "20260115", "202601", "2026"],
+        "timestamp": ["2026-01-15T10:30:00Z", "20260115", "202601", "2026"],
+        "expiry": ["2028-12", "1228", "2028"],
+        "quantity": ["1"],
+        "value": ["100.00", "100", "10"],
+        "amount": ["19.99", "19", "10"],
+        "securitycode": ["123"],
+        "cvv": ["123"],
+        "cvc": ["123"],
+    }
+    if norm_name in candidates:
+        for c in candidates[norm_name]:
+            if len(c) <= max_len:
+                return c
+    return None
 
+
+def _apply_string_constraints(schema: Dict[str, Any], value: str, *, name: Optional[str] = None) -> str:
     min_len = schema.get("minLength")
     max_len = schema.get("maxLength")
 
-    result = str(lookup)
+    def _is_valid_length(s: str) -> bool:
+        if min_len is not None and len(s) < min_len:
+            return False
+        if max_len is not None and len(s) > max_len:
+            return False
+        return True
+
+    def _semantic_candidates(src: str) -> List[str]:
+        candidates: List[str] = []
+
+        # Date-like values: degrade into still meaningful compact forms.
+        if "T" in src and "-" in src:
+            candidates.extend(["2026-01-15", "20260115", "202601", "2026"])
+        if src.count("-") == 2 and src[:4].isdigit():
+            candidates.extend(["2026-01-15", "20260115", "202601", "2026"])
+        if src.count("-") == 1 and src[:4].isdigit():
+            candidates.extend(["2028-12", "1228", "2028"])
+
+        # Numeric-like values should remain numeric under short maxLength.
+        if any(ch.isdigit() for ch in src):
+            candidates.extend(["4111111111111111", "123456789012", "12345678", "123456", "1234", "123"])
+
+        # Generic deterministic short-code candidates.
+        candidates.extend(["ABC123", "CODE1", "OK1", "A1"])
+        return candidates
+
+    result = str(value)
+
+    if max_len is not None:
+        short = _short_semantic_value(_normalize_token(name), max_len)
+        if short is not None and _is_valid_length(short):
+            result = short
+
+    # Prefer semantic alternatives before blunt truncation.
+    if max_len is not None and len(result) > max_len:
+        for cand in _semantic_candidates(result):
+            if _is_valid_length(cand):
+                result = cand
+                break
 
     if min_len is not None and len(result) < min_len:
-        result = result + "a" * (min_len - len(result))
+        result = result + ("x" * (min_len - len(result)))
     if max_len is not None and len(result) > max_len:
         result = result[:max_len]
-
     return result
+
+
+def _default_value_from_type_with_constraints(
+    schema: Dict[str, Any],
+    schema_type: Optional[str],
+) -> Any:
+    if schema_type == "string":
+        return _apply_string_constraints(schema, "standard-text")
+    if schema_type == "integer":
+        return _apply_numeric_constraints(schema, 1, as_integer=True)
+    if schema_type == "number":
+        return _apply_numeric_constraints(schema, 1.0, as_integer=False)
+    if schema_type == "boolean":
+        return True
+    return _apply_string_constraints(schema, "standard-text")
+
+
+# ---------------------------------------------------------------------------
+# Value generators
+# ---------------------------------------------------------------------------
+
+def generate_valid_value(
+    schema: Dict[str, Any],
+    *,
+    name: Optional[str] = None,
+    parent_name: Optional[str] = None,
+    path: str = "",
+    skip_example: bool = False,
+    use_realistic: bool = True,
+) -> Any:
+    """Return a single deterministic valid value for *schema*.
+
+    Priority: example > enum[0] > semantics(name/parent/path) > format >
+              type default > recursive structure.
+
+    When *skip_example* is True the ``example`` key in the schema is ignored,
+    producing a safe fallback value suitable for the minimal happy-path test.
+    
+    When *use_realistic* is True, prefers field-name-based hints over generic
+    placeholder values, producing more realistic test data for the first happy path.
+    """
+    if not skip_example and "example" in schema:
+        return schema["example"]
+    if "enum" in schema:
+        return schema["enum"][0]
+    # Schema composition: oneOf / anyOf / allOf
+    if "allOf" in schema:
+        return generate_valid_value(
+            _merge_allof(schema["allOf"]),
+            name=name,
+            parent_name=parent_name,
+            path=path,
+            skip_example=skip_example,
+            use_realistic=use_realistic,
+        )
+    if "oneOf" in schema:
+        return generate_valid_value(
+            schema["oneOf"][0],
+            name=name,
+            parent_name=parent_name,
+            path=path,
+            skip_example=skip_example,
+            use_realistic=use_realistic,
+        )
+    if "anyOf" in schema:
+        return generate_valid_value(
+            schema["anyOf"][0],
+            name=name,
+            parent_name=parent_name,
+            path=path,
+            skip_example=skip_example,
+            use_realistic=use_realistic,
+        )
+
+    schema_type = schema.get("type")
+    schema_format = schema.get("format")
+
+    # Implicit object: has properties but no explicit type
+    if schema_type is None and "properties" in schema:
+        schema_type = "object"
+
+    if schema_type == "object":
+        return generate_valid_object(
+            schema,
+            name=name,
+            parent_name=parent_name,
+            path=path,
+            skip_example=skip_example,
+            use_realistic=use_realistic,
+        )
+
+    if schema_type == "array":
+        items_schema = schema.get("items", {})
+        min_items = schema.get("minItems")
+        max_items = schema.get("maxItems")
+        count = 1
+        if isinstance(min_items, int):
+            count = max(1, min_items)
+        if isinstance(max_items, int):
+            count = min(count, max_items)
+        item_path = f"{path}[]" if path else "[]"
+        return [
+            generate_valid_value(
+                items_schema,
+                name=name,
+                parent_name=parent_name,
+                path=item_path,
+                skip_example=skip_example,
+                use_realistic=use_realistic,
+            )
+            for _ in range(max(0, count))
+        ]
+
+    if use_realistic:
+        semantic = _realistic_value_from_semantics(
+            schema_type,
+            name=name,
+            parent_name=parent_name,
+            path=path,
+        )
+        if semantic is not None:
+            if schema_type == "string":
+                return _apply_string_constraints(schema, str(semantic), name=name)
+            if schema_type == "integer":
+                return _apply_numeric_constraints(schema, float(semantic), as_integer=True)
+            if schema_type == "number":
+                return _apply_numeric_constraints(schema, float(semantic), as_integer=False)
+            return semantic
+
+        if schema_type == "string":
+            encoded = _realistic_value_from_string_encoding(
+                name=name,
+                parent_name=parent_name,
+                path=path,
+            )
+            if encoded is not None:
+                return _apply_string_constraints(schema, encoded, name=name)
+
+        formatted = _realistic_value_from_format(schema, schema_type)
+        if formatted is not None:
+            return _apply_string_constraints(schema, str(formatted), name=name)
+
+    if schema_type == "string" and schema_format in {"date-time", "date", "email", "uri", "url", "uuid", "byte", "binary", "password"}:
+        return _apply_string_constraints(schema, str(VALID_DEFAULTS[("string", schema_format)]), name=name)
+
+    return _default_value_from_type_with_constraints(schema, schema_type)
 
 
 def generate_valid_object(
     schema: Dict[str, Any],
     *,
+    name: Optional[str] = None,
+    parent_name: Optional[str] = None,
+    path: str = "",
     skip_example: bool = False,
+    use_realistic: bool = True,
 ) -> Dict[str, Any]:
     """Build a complete valid object from an object schema.
 
@@ -293,14 +815,28 @@ def generate_valid_object(
     for prop_name, prop_schema in properties.items():
         if prop_schema.get("readOnly"):
             continue
+        child_path = f"{path}/{prop_name}" if path else prop_name
         result[prop_name] = generate_valid_value(
-            prop_schema, name=prop_name, skip_example=skip_example,
+            prop_schema,
+            name=prop_name,
+            parent_name=name,
+            path=child_path,
+            skip_example=skip_example,
+            use_realistic=use_realistic,
         )
 
     if not properties and "additionalProperties" in schema:
         ap = schema["additionalProperties"]
         if isinstance(ap, dict):
-            result["sample_key"] = generate_valid_value(ap, skip_example=skip_example)
+            child_path = f"{path}/metadata_key" if path else "metadata_key"
+            result["metadata_key"] = generate_valid_value(
+                ap,
+                name="metadata_key",
+                parent_name=name,
+                path=child_path,
+                skip_example=skip_example,
+                use_realistic=use_realistic,
+            )
 
     return result
 
