@@ -21,6 +21,7 @@
     "/v2/checkout/orders": {
       "post": {
         "summary": "Create order",
+        "description": "Creates an order. Merchants and partners can add Level 2 and 3 data to payments to reduce risk and payment processing costs. For more information about processing payments, see checkout or multiparty checkout.",
         "operationId": "orders.create",
         "tags": [
           "orders"
@@ -38,12 +39,27 @@
                     "intent": "CAPTURE",
                     "purchase_units": [
                       {
+                        "reference_id": "d9f80740-38f0-11e8-b467-0ed5f89f718b",
                         "amount": {
                           "currency_code": "USD",
                           "value": "10.00"
                         }
                       }
-                    ]
+                    ],
+                    "payment_source": {
+                      "paypal": {
+                        "experience_context": {
+                          "payment_method_preference": "IMMEDIATE_PAYMENT_REQUIRED",
+                          "payment_method_selected": "PAYPAL",
+                          "brand_name": "EXAMPLE INC",
+                          "locale": "en-US",
+                          "landing_page": "LOGIN",
+                          "user_action": "PAY_NOW",
+                          "return_url": "https://example.com/returnUrl",
+                          "cancel_url": "https://example.com/cancelUrl"
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -52,7 +68,7 @@
         },
         "responses": {
           "200": {
-            "description": "Idempotent success.",
+            "description": "A successful response to an idempotent request returns HTTP 200 with order details.",
             "content": {
               "application/json": {
                 "schema": {
@@ -62,7 +78,7 @@
             }
           },
           "201": {
-            "description": "Order created.",
+            "description": "A successful request returns HTTP 201 Created with order details. If you need full representation, send Prefer: return=representation.",
             "content": {
               "application/json": {
                 "schema": {
@@ -118,6 +134,7 @@
     "/v2/checkout/orders/{id}": {
       "get": {
         "summary": "Show order details",
+        "description": "Shows details for an order by ID.",
         "operationId": "orders.get",
         "tags": [
           "orders"
@@ -175,6 +192,7 @@
     "/v2/checkout/orders/{id}/capture": {
       "post": {
         "summary": "Capture payment for order",
+        "description": "Captures payment for an order. To successfully capture, the buyer must first approve the order or a valid payment_source must be provided in the request.",
         "operationId": "orders.capture",
         "tags": [
           "orders"
@@ -196,7 +214,7 @@
         },
         "responses": {
           "200": {
-            "description": "Idempotent success.",
+            "description": "A successful response to an idempotent request returns HTTP 200 with captured payment details.",
             "content": {
               "application/json": {
                 "schema": {
@@ -206,7 +224,7 @@
             }
           },
           "201": {
-            "description": "Capture created.",
+            "description": "A successful response to a non-idempotent request returns HTTP 201 Created with captured payment details.",
             "content": {
               "application/json": {
                 "schema": {
@@ -307,6 +325,16 @@
           "minLength": 1,
           "maxLength": 36,
           "pattern": "^[A-Z0-9]+$"
+        }
+      },
+      "fields": {
+        "name": "fields",
+        "in": "query",
+        "description": "A comma-separated list of fields to return. Valid value includes payment_source.",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-z_]*$"
         }
       }
     },
