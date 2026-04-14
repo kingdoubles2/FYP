@@ -61,11 +61,13 @@ class LlmSettingsEndpointTests(unittest.TestCase):
             patch.object(main, "SessionLocal", self.TestSessionLocal),
             patch.object(main, "load_backend_llm_settings", return_value=_backend_settings()),
             patch.object(main, "load_backend_model_catalog", return_value=_backend_catalog()),
+            patch.object(main, "load_default_failure_system_prompt", return_value="DEFAULT EXPLANATION PROMPT"),
         ):
             payload = main.get_llm_settings(current_user=SimpleNamespace(id=self.user_id))
 
         self.assertEqual(payload["active_model_id"], "builtin:ollama:qwen3-coder:latest")
         self.assertEqual(payload["default_model_id"], "builtin:ollama:qwen3-coder:latest")
+        self.assertEqual(payload["custom_instruction"], "DEFAULT EXPLANATION PROMPT")
         self.assertEqual(len(payload["models"]), 1)
         self.assertEqual(payload["models"][0]["provider"], "ollama")
         self.assertEqual(payload["models"][0]["model"], "qwen3-coder:latest")
@@ -75,6 +77,7 @@ class LlmSettingsEndpointTests(unittest.TestCase):
             patch.object(main, "SessionLocal", self.TestSessionLocal),
             patch.object(main, "load_backend_llm_settings", return_value=_backend_settings()),
             patch.object(main, "load_backend_model_catalog", return_value=_backend_catalog()),
+            patch.object(main, "load_default_failure_system_prompt", return_value="DEFAULT EXPLANATION PROMPT"),
         ):
             added_payload = main.add_llm_model(
                 req=main.AddLLMModelRequest(
@@ -106,6 +109,23 @@ class LlmSettingsEndpointTests(unittest.TestCase):
         remaining_ids = {str(row.get("id")) for row in deleted_payload["models"]}
         self.assertNotIn(str(added_entry["id"]), remaining_ids)
         self.assertEqual(deleted_payload["active_model_id"], "builtin:ollama:qwen3-coder:latest")
+
+    def test_update_prompt_returns_saved_prompt(self) -> None:
+        with (
+            patch.object(main, "SessionLocal", self.TestSessionLocal),
+            patch.object(main, "load_backend_llm_settings", return_value=_backend_settings()),
+            patch.object(main, "load_backend_model_catalog", return_value=_backend_catalog()),
+            patch.object(main, "load_default_failure_system_prompt", return_value="DEFAULT EXPLANATION PROMPT"),
+        ):
+            initial_payload = main.get_llm_settings(current_user=SimpleNamespace(id=self.user_id))
+            self.assertEqual(initial_payload["custom_instruction"], "DEFAULT EXPLANATION PROMPT")
+
+            updated_payload = main.update_llm_settings(
+                req=main.UpdateLLMSettingsRequest(custom_instruction="Use concise bullet points."),
+                current_user=SimpleNamespace(id=self.user_id),
+            )
+
+        self.assertEqual(updated_payload["custom_instruction"], "Use concise bullet points.")
 
     def test_discover_openai_models_returns_normalized_catalog(self) -> None:
         client_mock = SimpleNamespace(

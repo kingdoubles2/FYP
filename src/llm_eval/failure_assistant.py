@@ -42,6 +42,8 @@ EXPLICIT_STATUS_CHANGE_PHRASES = (
     "update expected status to",
     "expectation/status should be changed",
 )
+ONE_SENTENCE_HINT_RE = re.compile(r"\b(?:one|1|single)\s+sentence\b", flags=re.IGNORECASE)
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 def _safe_int(value: Any, default: int, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
@@ -229,6 +231,14 @@ def load_backend_llm_settings(config_path: Optional[str] = None) -> Dict[str, An
         "max_full_context_items": max_full_context_items,
         "ollama_options": ollama_options,
     }
+
+
+def load_default_failure_system_prompt() -> str:
+    system_prompt, _ = core.load_prompt_templates()
+    prompt_text = str(system_prompt or "")
+    if not prompt_text.strip():
+        raise ValueError("Default failure system prompt is empty.")
+    return prompt_text
 
 
 def build_case_evidence(
@@ -438,6 +448,29 @@ def build_suggestion_skip_payload(
 
 def _truncate_words(text: str, max_words: int) -> str:
     return core.truncate_words(str(text or ""), max_words)
+
+
+def _to_single_sentence(text: Any) -> str:
+    compact = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not compact:
+        return ""
+    first = SENTENCE_SPLIT_RE.split(compact, maxsplit=1)[0].strip()
+    if first and first[-1] not in ".!?":
+        first = f"{first}."
+    return first
+
+
+def _apply_explanation_style_from_system_prompt(
+    *,
+    explanation: str,
+    contract: Dict[str, Any],
+    system_prompt: str,
+) -> str:
+    prompt_text = str(system_prompt or "")
+    if not ONE_SENTENCE_HINT_RE.search(prompt_text):
+        return explanation
+    cause_sentence = _to_single_sentence(contract.get("cause"))
+    return cause_sentence or _to_single_sentence(explanation)
 
 
 def _word_count(text: str) -> int:
@@ -962,6 +995,7 @@ def generate_failure_explanation(
     model: str,
     evidence: Dict[str, Any],
     prompt_bundle: Dict[str, Any],
+    system_prompt_override: Optional[str] = None,
     word_target: int,
     word_max: int,
     retry_invalid_output: int,
@@ -981,10 +1015,18 @@ def generate_failure_explanation(
     evidence_view = core.build_prompt_evidence_view(evidence, max_items=max(2, int(max_items_per_section)))
     prompt_evidence_text = json.dumps(evidence_view, ensure_ascii=True)
 
+    def _coerce_prompt_snapshot(raw_snapshot: Any) -> Dict[str, str]:
+        snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else {}
+        return {
+            "system": str(snapshot.get("system") or ""),
+            "user": str(snapshot.get("user") or ""),
+        }
+
     def _failed_payload(
         *,
         llm_error: str,
         attempts: List[Dict[str, Any]],
+        prompt_snapshot: Optional[Dict[str, Any]] = None,
         validation_errors: Optional[List[str]] = None,
         failure_kind: str = "other",
         status_code: Optional[int] = None,
@@ -1003,6 +1045,7 @@ def generate_failure_explanation(
             "auto_scores": {},
             "prompt_evidence": evidence_view,
             "prompt_evidence_text": prompt_evidence_text,
+            "prompt_snapshot": _coerce_prompt_snapshot(prompt_snapshot),
             "attempts": attempts,
             "confidence": None,
             "signal": signal,
@@ -1015,10 +1058,26 @@ def generate_failure_explanation(
             "error_meta": dict(error_meta or {}),
         }
 
+    prompt_snapshot: Dict[str, str] = {"system": "", "user": ""}
     try:
-        system_prompt, user_template = core.load_prompt_templates()
+        default_system_prompt, user_template = core.load_prompt_templates()
     except Exception as exc:
-        return _failed_payload(llm_error=f"prompt_template_error: {exc}", attempts=[], validation_errors=["prompt_template_error"])
+        return _failed_payload(
+            llm_error=f"prompt_template_error: {exc}",
+            attempts=[],
+            prompt_snapshot=prompt_snapshot,
+            validation_errors=["prompt_template_error"],
+        )
+
+    override_text = str(system_prompt_override or "")
+    system_prompt = override_text if override_text.strip() else str(default_system_prompt or "")
+    if not system_prompt.strip():
+        return _failed_payload(
+            llm_error="prompt_template_error: failure system prompt is empty.",
+            attempts=[],
+            prompt_snapshot=prompt_snapshot,
+            validation_errors=["prompt_template_error"],
+        )
 
     base_user_prompt = core.build_user_prompt(user_template, evidence, evidence_view)
     drift_context_preview = _drift_prompt_context(drift_analysis)
@@ -1030,6 +1089,7 @@ def generate_failure_explanation(
         + "Drift context:\n"
         + f"{json.dumps(drift_context_preview, ensure_ascii=True)}"
     )
+    prompt_snapshot = {"system": system_prompt, "user": base_user_prompt}
     attempts: List[Dict[str, Any]] = []
     retries = max(0, int(retry_invalid_output))
     remaining = retries + 1
@@ -1070,6 +1130,7 @@ def generate_failure_explanation(
                 return _failed_payload(
                     llm_error=llm_error_text,
                     attempts=attempts,
+                    prompt_snapshot=prompt_snapshot,
                     validation_errors=last_validation_errors,
                     failure_kind=str(error_meta.get("kind") or "other"),
                     status_code=error_meta.get("status_code"),
@@ -1111,6 +1172,11 @@ def generate_failure_explanation(
             drift_analysis=drift_analysis,
         )
         explanation = core.render_explanation(contract, word_target=int(word_target), word_max=int(word_max))
+        explanation = _apply_explanation_style_from_system_prompt(
+            explanation=explanation,
+            contract=contract,
+            system_prompt=system_prompt,
+        )
         validation_errors = normalize_errors + core.validate_contract_output(contract, explanation, word_max=int(word_max))
         attempt_record["validation_errors"] = validation_errors
         attempts.append(attempt_record)
@@ -1138,6 +1204,7 @@ def generate_failure_explanation(
             return _failed_payload(
                 llm_error=last_error,
                 attempts=attempts,
+                prompt_snapshot=prompt_snapshot,
                 validation_errors=validation_errors,
                 failure_kind="invalid_response",
                 status_code=None,
@@ -1165,6 +1232,7 @@ def generate_failure_explanation(
             "auto_scores": auto_scores,
             "prompt_evidence": evidence_view,
             "prompt_evidence_text": prompt_evidence_text,
+            "prompt_snapshot": _coerce_prompt_snapshot(prompt_snapshot),
             "attempts": attempts,
             "confidence": contract.get("confidence"),
             "signal": signal,
@@ -1177,6 +1245,7 @@ def generate_failure_explanation(
     return _failed_payload(
         llm_error=last_error,
         attempts=attempts,
+        prompt_snapshot=prompt_snapshot,
         validation_errors=last_validation_errors,
         failure_kind=str((last_error_meta or {}).get("kind") or "other"),
         status_code=(last_error_meta or {}).get("status_code"),

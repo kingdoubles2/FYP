@@ -152,11 +152,13 @@ class _StubOllamaClient:
 class FailureExplanationFlowTests(unittest.TestCase):
     def test_generate_explanation_success_on_first_try_uses_sample_prompt_shape(self) -> None:
         client = _StubOllamaClient([( _valid_contract_json(), None )])
+        override_prompt = "You are an explanation assistant. Keep responses grounded."
         output = generate_failure_explanation(
             client=client,
             model="qwen3-coder:latest",
             evidence=_sample_evidence(),
             prompt_bundle={"case_evidence": {"x": 1}, "pipeline_context": {"ignored": True}},
+            system_prompt_override=override_prompt,
             word_target=55,
             word_max=100,
             retry_invalid_output=1,
@@ -177,6 +179,8 @@ class FailureExplanationFlowTests(unittest.TestCase):
         self.assertIn("Task:", prompt_text)
         self.assertIn("Return STRICT JSON", prompt_text)
         self.assertNotIn("pipeline_context", prompt_text)
+        self.assertEqual(output["prompt_snapshot"]["system"], override_prompt)
+        self.assertEqual(output["prompt_snapshot"]["user"], prompt_text)
 
     def test_generate_explanation_retries_after_invalid_json_then_succeeds(self) -> None:
         client = _StubOllamaClient([("not json", None), (_valid_contract_json(), None)])
@@ -297,6 +301,28 @@ class FailureExplanationFlowTests(unittest.TestCase):
         contract = output.get("contract")
         self.assertIsInstance(contract, dict)
         self.assertEqual(contract.get("cause"), model_cause)
+
+    def test_generate_explanation_respects_one_sentence_prompt_directive(self) -> None:
+        client = _StubOllamaClient([(_valid_contract_json(), None)])
+        output = generate_failure_explanation(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle={},
+            system_prompt_override="condense to only 1 sentence",
+            word_target=55,
+            word_max=100,
+            retry_invalid_output=0,
+            max_items_per_section=12,
+            ollama_options={},
+        )
+
+        self.assertTrue(output["ok"])
+        explanation = str(output.get("explanation") or "")
+        self.assertNotIn("Why likely:", explanation)
+        self.assertNotIn("Check next:", explanation)
+        sentence_parts = [part for part in explanation.split(".") if part.strip()]
+        self.assertLessEqual(len(sentence_parts), 1)
 
     def test_load_backend_settings_raises_if_missing_config_and_no_env_model(self) -> None:
         missing = Path("src/backend/tests/_missing_llm_settings.yaml")

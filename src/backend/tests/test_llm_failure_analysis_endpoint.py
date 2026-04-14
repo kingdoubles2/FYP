@@ -56,6 +56,7 @@ class LlmFailureAnalysisEndpointTests(unittest.TestCase):
             "signal": "validation",
             "explanation": "Sample explanation text.",
             "contract": {"cause": "Invalid input"},
+            "prompt_snapshot": {"system": "System prompt text", "user": "User prompt text"},
         }
         suggestion_payload = {
             "mode": "suggest_test",
@@ -123,6 +124,7 @@ class LlmFailureAnalysisEndpointTests(unittest.TestCase):
             "signal": "validation",
             "explanation": "Sample explanation text.",
             "contract": {"cause": "Invalid input"},
+            "prompt_snapshot": {"system": "System prompt text", "user": "User prompt text"},
         }
         suggestion_payload = {
             "mode": "suggest_test",

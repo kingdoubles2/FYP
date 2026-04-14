@@ -94,6 +94,9 @@ class LlmChatEndpointTests(unittest.TestCase):
         self.assertEqual(response["meta"]["provider"], "openai")
         self.assertEqual(response["meta"]["model"], "gpt-4.1-mini")
         self.assertEqual(response["meta"]["test_count"], 1)
+        generate_kwargs = runtime_client.generate.call_args.kwargs
+        self.assertIn("spec-grounded assistant", str(generate_kwargs.get("system", "")).lower())
+        self.assertNotIn("Stay grounded.", str(generate_kwargs.get("system", "")))
 
     def test_chat_rejects_empty_message(self) -> None:
         with self.assertRaises(HTTPException) as ctx:

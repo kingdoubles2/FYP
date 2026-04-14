@@ -41,7 +41,6 @@ const FAILURE_REASON_KEYS = ["message", "detail", "error", "reason", "title", "d
 const CHAT_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
 const DEFAULT_CHAT_RUNTIME_CONFIG = Object.freeze({
   modelId: "qwen3-coder:latest",
-  userInstruction: "",
 });
 const DEFAULT_LLM_SETTINGS = Object.freeze({
   active_model_id: "",
@@ -214,7 +213,6 @@ function normalizeChatContext(context) {
 function normalizeChatRuntimeConfig(runtimeConfig) {
   return {
     modelId: String(runtimeConfig?.modelId || DEFAULT_CHAT_RUNTIME_CONFIG.modelId),
-    userInstruction: String(runtimeConfig?.userInstruction || ""),
   };
 }
 
@@ -785,15 +783,175 @@ function formatExplanationForDisplay(explanationText) {
   return withoutLeadingLabel;
 }
 
+function formatAiInsightModeLabel(mode) {
+  const normalized = String(mode || "").trim().toLowerCase();
+  if (normalized === "analysis") {
+    return "Analysis";
+  }
+  if (normalized === "explanation") {
+    return "Explanation";
+  }
+  if (normalized === "suggest_test") {
+    return "Suggested Test";
+  }
+  return normalized ? normalized.replaceAll("_", " ") : "Insight";
+}
+
+function normalizeAiInsightRecord(row, index = 0) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+  const mode = String(row.mode || "").trim().toLowerCase() || "unknown";
+
+  const explanationPayload = mode === "analysis"
+    ? (payload.explanation && typeof payload.explanation === "object" ? payload.explanation : {})
+    : (payload.explanation && typeof payload.explanation === "object" ? payload.explanation : payload);
+  const suggestionPayload = mode === "analysis"
+    ? (payload.suggestion && typeof payload.suggestion === "object" ? payload.suggestion : {})
+    : (mode === "suggest_test"
+      ? payload
+      : (payload.suggestion && typeof payload.suggestion === "object" ? payload.suggestion : {}));
+
+  const modelCandidates = [
+    row.model,
+    payload.model,
+    explanationPayload?.model,
+    suggestionPayload?.model,
+  ];
+  const model = modelCandidates
+    .map((value) => String(value || "").trim())
+    .find(Boolean) || "Unknown";
+
+  const explanationText = String(explanationPayload?.explanation || "").trim();
+  const promptSnapshot = explanationPayload?.prompt_snapshot && typeof explanationPayload.prompt_snapshot === "object"
+    ? explanationPayload.prompt_snapshot
+    : (payload?.prompt_snapshot && typeof payload.prompt_snapshot === "object" ? payload.prompt_snapshot : {});
+  const promptSystem = String(promptSnapshot?.system || "").trim();
+  const promptUser = String(promptSnapshot?.user || "").trim();
+  const hasPromptSnapshot = Boolean(promptSystem || promptUser);
+
+  const suggestionReason = String(suggestionPayload?.reason || "").trim();
+  const suggestionEligible = typeof suggestionPayload?.eligible_for_generation === "boolean"
+    ? suggestionPayload.eligible_for_generation
+    : null;
+  const suggestionSkipped = typeof suggestionPayload?.skipped === "boolean" ? suggestionPayload.skipped : null;
+  const suggestionCanApply = typeof suggestionPayload?.can_apply === "boolean" ? suggestionPayload.can_apply : null;
+  const hasSuggestion = Boolean(
+    suggestionReason
+    || suggestionEligible !== null
+    || suggestionSkipped !== null
+    || suggestionCanApply !== null,
+  );
+
+  return {
+    id: Number.isFinite(Number(row.id)) ? Number(row.id) : index,
+    mode,
+    modeLabel: formatAiInsightModeLabel(mode),
+    model,
+    explanationText,
+    hasPromptSnapshot,
+    promptSystem,
+    promptUser,
+    hasSuggestion,
+    suggestionReason,
+    suggestionEligible,
+    suggestionSkipped,
+    suggestionCanApply,
+    createdAt: String(row.created_at || row.updated_at || "").trim(),
+    payload,
+  };
+}
+
+function sortAiInsightRecordsNewestFirst(records) {
+  const source = Array.isArray(records) ? records : [];
+  return [...source].sort((left, right) => {
+    const leftTs = Date.parse(String(left?.createdAt || ""));
+    const rightTs = Date.parse(String(right?.createdAt || ""));
+    const safeLeftTs = Number.isNaN(leftTs) ? 0 : leftTs;
+    const safeRightTs = Number.isNaN(rightTs) ? 0 : rightTs;
+    if (safeLeftTs !== safeRightTs) {
+      return safeRightTs - safeLeftTs;
+    }
+    return Number(right?.id || 0) - Number(left?.id || 0);
+  });
+}
+
+function groupAiInsightsByMode(records) {
+  const groupsByMode = {};
+  const orderedModes = [];
+  for (const record of records) {
+    const mode = String(record?.mode || "unknown");
+    if (!groupsByMode[mode]) {
+      groupsByMode[mode] = [];
+      orderedModes.push(mode);
+    }
+    groupsByMode[mode].push(record);
+  }
+  return orderedModes.map((mode) => ({
+    mode,
+    modeLabel: formatAiInsightModeLabel(mode),
+    records: groupsByMode[mode],
+  }));
+}
+
 function getEmptyRunState() {
   return {
     loading: false,
+    loadingMode: "",
+    runningTestId: "",
     error: "",
     result: null,
     baselineTests: null,
     runId: null,
     llmByTestId: {},
   };
+}
+
+function normalizeTestId(value) {
+  return String(value || "").trim();
+}
+
+function mergeRecordsByTestId(existingRows, updatedRows) {
+  const mergedRows = [];
+  const positionByTestId = new Map();
+  const existingSource = Array.isArray(existingRows) ? existingRows : [];
+  const updatedSource = Array.isArray(updatedRows) ? updatedRows : [];
+
+  for (const row of existingSource) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const cloned = cloneJsonValue(row) || row;
+    const testId = normalizeTestId(cloned?.test_id || cloned?.testId);
+    if (testId && positionByTestId.has(testId)) {
+      mergedRows[positionByTestId.get(testId)] = cloned;
+      continue;
+    }
+    if (testId) {
+      positionByTestId.set(testId, mergedRows.length);
+    }
+    mergedRows.push(cloned);
+  }
+
+  for (const row of updatedSource) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const cloned = cloneJsonValue(row) || row;
+    const testId = normalizeTestId(cloned?.test_id || cloned?.testId);
+    if (testId && positionByTestId.has(testId)) {
+      mergedRows[positionByTestId.get(testId)] = cloned;
+      continue;
+    }
+    if (testId) {
+      positionByTestId.set(testId, mergedRows.length);
+    }
+    mergedRows.push(cloned);
+  }
+
+  return mergedRows;
 }
 
 function toSafeCount(value) {
@@ -1525,6 +1683,7 @@ function LogisticsDetailModal({
   onClose,
   onDelete,
   onShowJson,
+  onShowAiDetails,
 }) {
   useEffect(() => {
     if (!open) {
@@ -1669,6 +1828,15 @@ function LogisticsDetailModal({
                         </div>
                       </div>
                       <div className="logistics-test-actions">
+                        {insights.length > 0 ? (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => onShowAiDetails?.(testId, insights)}
+                          >
+                            AI Details
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="secondary-button"
@@ -1684,14 +1852,6 @@ function LogisticsDetailModal({
                         >
                           Result JSON
                         </button>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => onShowJson?.(`AI Payload JSON: ${testId}`, insights)}
-                          disabled={insights.length === 0}
-                        >
-                          AI JSON
-                        </button>
                       </div>
                     </article>
                   );
@@ -1700,6 +1860,154 @@ function LogisticsDetailModal({
             </div>
           </div>
         ) : null}
+      </section>
+    </div>
+  );
+}
+
+function AiDetailsModal({
+  open,
+  title,
+  testId,
+  insights,
+  onClose,
+}) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        onClose?.();
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [onClose, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  const normalizedInsights = sortAiInsightRecordsNewestFirst(
+    (Array.isArray(insights) ? insights : [])
+      .map((row, index) => normalizeAiInsightRecord(row, index))
+      .filter(Boolean),
+  );
+  const groups = groupAiInsightsByMode(normalizedInsights);
+
+  return (
+    <div
+      className="settings-modal-backdrop logistics-ai-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose?.();
+        }
+      }}
+    >
+      <section
+        className="panel settings-modal-card logistics-ai-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logistics-ai-title"
+      >
+        <div className="panel-header settings-modal-header logistics-ai-header">
+          <div>
+            <p className="eyebrow">AI Insight Details</p>
+            <h2 id="logistics-ai-title">{title || "AI Details"}</h2>
+            <p className="muted">Structured view of explanation/suggestion payloads for this test case.</p>
+          </div>
+          <button type="button" className="secondary-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <div className="logistics-ai-body">
+          <div className="logistics-ai-meta-row">
+            <span>Test ID: {String(testId || "Unknown")}</span>
+            <span>Total AI records: {normalizedInsights.length}</span>
+          </div>
+
+          {groups.length === 0 ? (
+            <div className="empty-state">
+              <p>No AI insight records available.</p>
+              <span>This test case does not have saved explanation or suggestion payloads.</span>
+            </div>
+          ) : (
+            <div className="logistics-ai-group-list">
+              {groups.map((group) => (
+                <section key={group.mode} className="logistics-ai-group">
+                  <h3>{group.modeLabel} ({group.records.length})</h3>
+                  <div className="logistics-ai-record-list">
+                    {group.records.map((record) => (
+                      <article key={`${group.mode}-${record.id}`} className="logistics-ai-record">
+                        <div className="logistics-ai-record-header">
+                          <span>{record.createdAt ? formatDate(record.createdAt) : "Timestamp unavailable"}</span>
+                        </div>
+                        <p className="logistics-ai-line"><strong>Model:</strong> {record.model}</p>
+
+                        {record.explanationText ? (
+                          <>
+                            <p className="logistics-ai-label">Explanation</p>
+                            <p className="logistics-ai-line">{formatExplanationForDisplay(record.explanationText)}</p>
+                          </>
+                        ) : null}
+
+                        {record.mode === "analysis" || record.mode === "explanation" ? (
+                          record.hasPromptSnapshot ? (
+                            <details className="run-feedback-details">
+                              <summary>Prompt snapshot</summary>
+                              {record.promptSystem ? (
+                                <>
+                                  <p className="logistics-ai-label">System prompt</p>
+                                  <pre className="run-feedback-pre logistics-ai-pre">{record.promptSystem}</pre>
+                                </>
+                              ) : null}
+                              {record.promptUser ? (
+                                <>
+                                  <p className="logistics-ai-label">User prompt</p>
+                                  <pre className="run-feedback-pre logistics-ai-pre">{record.promptUser}</pre>
+                                </>
+                              ) : null}
+                            </details>
+                          ) : (
+                            <p className="logistics-ai-line muted">
+                              Prompt snapshot not captured for this run.
+                            </p>
+                          )
+                        ) : null}
+
+                        {record.hasSuggestion ? (
+                          <>
+                            <p className="logistics-ai-label">Suggestion</p>
+                            {record.suggestionReason ? (
+                              <p className="logistics-ai-line">{record.suggestionReason}</p>
+                            ) : null}
+                            <p className="logistics-ai-line">
+                              {[
+                                record.suggestionEligible === null ? "" : `Eligible: ${record.suggestionEligible ? "Yes" : "No"}`,
+                                record.suggestionSkipped === null ? "" : `Skipped: ${record.suggestionSkipped ? "Yes" : "No"}`,
+                                record.suggestionCanApply === null ? "" : `Can apply: ${record.suggestionCanApply ? "Yes" : "No"}`,
+                              ].filter(Boolean).join(" | ") || "No suggestion status fields provided."}
+                            </p>
+                          </>
+                        ) : null}
+
+                        <details className="run-feedback-details logistics-ai-raw">
+                          <summary>Raw AI payload</summary>
+                          <pre className="run-feedback-pre logistics-ai-pre">{toPrettyJson(record.payload)}</pre>
+                        </details>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );
@@ -1991,7 +2299,7 @@ function SettingsModal({
           <div>
             <p className="eyebrow">Assistant</p>
             <h2 id="settings-modal-title">LLM Settings</h2>
-            <p className="muted">Pick your model target and save optional custom instructions.</p>
+            <p className="muted">Pick your model target and configure the explanation prompt.</p>
           </div>
           <button
             type="button"
@@ -2016,7 +2324,7 @@ function SettingsModal({
             className={`tab-button ${tab === SETTINGS_TAB_CUSTOM ? "active" : ""}`}
             onClick={() => onTabChange?.(SETTINGS_TAB_CUSTOM)}
           >
-            Custom Instructions
+            Prompt
           </button>
         </div>
 
@@ -2209,20 +2517,20 @@ function SettingsModal({
         ) : (
           <div className="settings-modal-section">
             <div className="settings-custom-block">
-              <label className="field" htmlFor="settings-custom-instruction">
-                <span>What should the assistant know about your preferences?</span>
+              <label className="field" htmlFor="settings-prompt">
+                <span>Prompt used for LLM failure explanations</span>
                 <textarea
-                  id="settings-custom-instruction"
+                  id="settings-prompt"
                   className="settings-custom-textarea"
                   value={customInstructionDraft}
                   onChange={(event) => onCustomInstructionDraftChange?.(event.target.value)}
-                  placeholder="Add your own custom instructions..."
+                  placeholder="Define the explanation prompt..."
                   rows={7}
                   disabled={busy}
                 />
               </label>
               <p className="muted">
-                This instruction profile is applied to spec-grounded assistant chat prompts.
+                This prompt is sent as the system prompt when generating AI failure explanations.
               </p>
               <div className="settings-custom-actions">
                 <button
@@ -2231,7 +2539,7 @@ function SettingsModal({
                   onClick={() => onSaveCustomInstruction?.()}
                   disabled={busy}
                 >
-                  {busy ? "Saving..." : "Save Instructions"}
+                  {busy ? "Saving..." : "Save Prompt"}
                 </button>
                 <button
                   type="button"
@@ -2526,6 +2834,8 @@ function SpecDetails({
   const hasJsonDraftErrors = Object.values(jsonDrafts).some(
     (draft) => Boolean(draft?.inputDataError || draft?.expectedResultError),
   );
+  const runLoadingMode = String(runState?.loadingMode || "");
+  const runningSingleTestId = runLoadingMode === "single" ? normalizeTestId(runState?.runningTestId) : "";
   const latestRunResults = Array.isArray(runState?.result?.results) ? runState.result.results : [];
   const runSummarySource = runState?.result?.summary || entry?.latestRunSummary || null;
   const hasLatestRun = Boolean(runState?.runId !== null || entry?.latestRunId !== null || runSummarySource || latestRunResults.length > 0);
@@ -2564,12 +2874,33 @@ function SpecDetails({
   const isPayloadAtDefault = deepEqual(generatedCases, uploadDefaultCases);
   const isRunDefaultsApplied = isRunConfigAtDefault && isPayloadAtDefault;
 
-  function buildRunPayloadFromDrafts() {
+  function buildRunPayloadFromDrafts(targetIndexes = null) {
+    const selectedIndexSet = (() => {
+      if (!Array.isArray(targetIndexes) || targetIndexes.length === 0) {
+        return null;
+      }
+      const next = new Set();
+      for (const rawIndex of targetIndexes) {
+        const parsedIndex = Number(rawIndex);
+        if (!Number.isFinite(parsedIndex)) {
+          continue;
+        }
+        const normalizedIndex = Math.trunc(parsedIndex);
+        if (normalizedIndex >= 0 && normalizedIndex < generatedCases.length) {
+          next.add(normalizedIndex);
+        }
+      }
+      return next;
+    })();
+
     const nextDrafts = {};
     const nextTestCases = [];
     let hasValidationError = false;
 
     generatedCases.forEach((testCase, testIndex) => {
+      if (selectedIndexSet && !selectedIndexSet.has(testIndex)) {
+        return;
+      }
       const draft = jsonDrafts[testIndex] || {};
       const firstStep = testCase?.steps?.[0] || null;
       const inputDataText = draft.inputDataText ?? toPrettyJson(firstStep?.input_data ?? null);
@@ -2627,6 +2958,9 @@ function SpecDetails({
       setJsonDrafts((current) => ({ ...current, ...nextDrafts }));
       return null;
     }
+    if (nextTestCases.length === 0) {
+      return null;
+    }
 
     const runPayload = {
       spec_id: entry?.id ?? null,
@@ -2651,12 +2985,28 @@ function SpecDetails({
       return;
     }
 
-    const runPayload = buildRunPayloadFromDrafts();
+    const runPayload = buildRunPayloadFromDrafts(null);
     if (!runPayload) {
       return;
     }
 
-    onRunTests(entry.id, runPayload);
+    onRunTests(entry.id, runPayload, { mode: "full" });
+  }
+
+  function handleRunSingleTest(testIndex, testId) {
+    if (!entry || !onRunTests || isBaseUrlMissing || hasAuthInputError) {
+      return;
+    }
+
+    const runPayload = buildRunPayloadFromDrafts([testIndex]);
+    if (!runPayload) {
+      return;
+    }
+
+    onRunTests(entry.id, runPayload, {
+      mode: "single",
+      singleTestId: testId,
+    });
   }
 
   function handleExplainFailureCase(testId) {
@@ -2896,6 +3246,7 @@ function SpecDetails({
                                     const firstStep = testCase.steps?.[0] || null;
                                     const inputData = firstStep?.input_data ?? null;
                                     const expectedResult = testCase.expected_result ?? null;
+                                    const normalizedTestId = normalizeTestId(testCase?.test_id);
                                     const originalCase = baselineCases[testIndex] || {};
                                     const originalFirstStep = originalCase?.steps?.[0] || null;
                                     const originalInputData = originalFirstStep?.input_data ?? null;
@@ -2905,6 +3256,7 @@ function SpecDetails({
                                     const expectedResultText = draft.expectedResultText ?? toPrettyJson(expectedResult);
                                     const inputDataError = draft.inputDataError || "";
                                     const expectedResultError = draft.expectedResultError || "";
+                                    const hasCaseJsonError = Boolean(inputDataError || expectedResultError);
                                     const originalInputDataText = toPrettyJson(originalInputData);
                                     const originalExpectedResultText = toPrettyJson(originalExpectedResult);
                                     const hasParsedEdits =
@@ -2914,10 +3266,33 @@ function SpecDetails({
                                     const shouldShowReset = hasParsedEdits || hasDraftEdits;
                                     const runResult = runResultByTestId[testCase?.test_id || ""] || null;
                                     const testOutcome = runOutcomeByTestId[testCase?.test_id || ""];
+                                    const isRunningThisCase = Boolean(
+                                      runState?.loading
+                                      && runLoadingMode === "single"
+                                      && runningSingleTestId
+                                      && runningSingleTestId === normalizedTestId,
+                                    );
+                                    const isSingleRunDisabled = Boolean(
+                                      runState?.loading || isBaseUrlMissing || hasAuthInputError || hasCaseJsonError,
+                                    );
                                     const llmState = llmByTestId[testCase?.test_id || ""] || {};
                                     const explanationPayload = llmState?.explanation || null;
                                     const explanationDisplayText = formatExplanationForDisplay(
                                       explanationPayload?.explanation || "",
+                                    );
+                                    const explanationPromptSnapshot = explanationPayload?.prompt_snapshot
+                                      && typeof explanationPayload.prompt_snapshot === "object"
+                                      ? explanationPayload.prompt_snapshot
+                                      : null;
+                                    const explanationPromptSystem = typeof explanationPromptSnapshot?.system === "string"
+                                      ? explanationPromptSnapshot.system
+                                      : "";
+                                    const explanationPromptUser = typeof explanationPromptSnapshot?.user === "string"
+                                      ? explanationPromptSnapshot.user
+                                      : "";
+                                    const hasExplanationPromptSnapshot = (
+                                      explanationPromptSystem.trim().length > 0
+                                      || explanationPromptUser.trim().length > 0
                                     );
                                     const suggestionPayload = llmState?.suggestion || null;
                                     const llmAction = String(llmState?.action || "");
@@ -2978,7 +3353,17 @@ function SpecDetails({
                                           </span>
                                         </summary>
                                         <div className="testcase-body">
-                                          <p className="testcase-title">{testCase.title}</p>
+                                          <div className="testcase-head-row">
+                                            <p className="testcase-title">{testCase.title}</p>
+                                            <button
+                                              type="button"
+                                              className="secondary-button test-run-single-button"
+                                              onClick={() => handleRunSingleTest(testIndex, normalizedTestId)}
+                                              disabled={isSingleRunDisabled}
+                                            >
+                                              {isRunningThisCase ? "Running..." : "Run"}
+                                            </button>
+                                          </div>
                                           <p className="testcase-line">
                                             <strong>Action:</strong> {firstStep?.action || "Step details unavailable"}
                                           </p>
@@ -3076,6 +3461,23 @@ function SpecDetails({
                                                     <details className="run-feedback-details">
                                                       <summary>LLM debug details</summary>
                                                       <pre className="run-feedback-pre">{String(explanationPayload.llm_error)}</pre>
+                                                    </details>
+                                                  ) : null}
+                                                  {hasExplanationPromptSnapshot ? (
+                                                    <details className="run-feedback-details">
+                                                      <summary>Prompt sent to model</summary>
+                                                      {explanationPromptSystem.trim() ? (
+                                                        <>
+                                                          <p className="run-feedback-line"><strong>System prompt</strong></p>
+                                                          <pre className="run-feedback-pre">{explanationPromptSystem}</pre>
+                                                        </>
+                                                      ) : null}
+                                                      {explanationPromptUser.trim() ? (
+                                                        <>
+                                                          <p className="run-feedback-line"><strong>User prompt</strong></p>
+                                                          <pre className="run-feedback-pre">{explanationPromptUser}</pre>
+                                                        </>
+                                                      ) : null}
                                                     </details>
                                                   ) : null}
                                                 </div>
@@ -3254,6 +3656,12 @@ export default function App() {
     title: "",
     value: null,
   });
+  const [aiDetailsViewerState, setAiDetailsViewerState] = useState({
+    open: false,
+    title: "",
+    testId: "",
+    insights: [],
+  });
   const providerModelsRequestRef = useRef(0);
   const isDarkTheme = theme === "dark";
 
@@ -3326,6 +3734,7 @@ export default function App() {
       setLogisticsDetailError("");
       setLogisticsDetail(null);
       setJsonViewerState({ open: false, title: "", value: null });
+      setAiDetailsViewerState({ open: false, title: "", testId: "", insights: [] });
       providerModelsRequestRef.current = 0;
       return;
     }
@@ -3371,7 +3780,6 @@ export default function App() {
         setChatRuntimeConfig((current) => normalizeChatRuntimeConfig({
           ...current,
           modelId: String(activeModel?.model || current?.modelId || DEFAULT_CHAT_RUNTIME_CONFIG.modelId),
-          userInstruction: normalized.custom_instruction,
         }));
       } catch (error) {
         if (!cancelled) {
@@ -3797,8 +4205,9 @@ export default function App() {
     workspaceView,
   ]);
 
-  function setRunBaselineForSpec(specId, executedTests) {
+  function setRunBaselineForSpec(specId, executedTests, options = {}) {
     const normalizedTests = Array.isArray(executedTests) ? (cloneJsonValue(executedTests) || []) : [];
+    const mergeOnly = Boolean(options?.mergeOnly);
 
     setSpecHistory((current) =>
       current.map((entry) => {
@@ -3806,7 +4215,10 @@ export default function App() {
           return entry;
         }
 
-        const nextTests = cloneJsonValue(normalizedTests) || [];
+        const baseTests = Array.isArray(entry.generatedTests) ? entry.generatedTests : [];
+        const nextTests = mergeOnly
+          ? mergeRecordsByTestId(baseTests, normalizedTests)
+          : (cloneJsonValue(normalizedTests) || []);
         return {
           ...entry,
           generatedTests: nextTests,
@@ -3829,7 +4241,10 @@ export default function App() {
         return current;
       }
 
-      const nextTests = cloneJsonValue(normalizedTests) || [];
+      const baseTests = Array.isArray(existing.generatedTests) ? existing.generatedTests : [];
+      const nextTests = mergeOnly
+        ? mergeRecordsByTestId(baseTests, normalizedTests)
+        : (cloneJsonValue(normalizedTests) || []);
       userCache[specId] = {
         ...buildSpecCacheEntry({
           ...existing,
@@ -4059,29 +4474,41 @@ export default function App() {
     });
   }
 
-  async function handleRunTests(specId, suitePayload) {
+  async function handleRunTests(specId, suitePayload, options = {}) {
     if (!session?.token) {
       return;
     }
+    const runMode = String(options?.mode || "full").trim().toLowerCase() === "single" ? "single" : "full";
+    const singleTestId = normalizeTestId(options?.singleTestId);
+    const existingRunState = testRunBySpecId[specId] || getEmptyRunState();
+    const existingRunId = Number(existingRunState?.runId);
+    const hasMergeTarget = Number.isFinite(existingRunId) && existingRunId > 0;
+    const mergeIntoRunId = runMode === "single" && hasMergeTarget ? Math.trunc(existingRunId) : null;
+    const requestPayload = mergeIntoRunId !== null
+      ? { ...(suitePayload || {}), merge_into_run_id: mergeIntoRunId }
+      : suitePayload;
+    const sourceEntry = specHistory.find((entry) => entry.id === specId) || null;
 
     setTestRunBySpecId((current) => ({
       ...current,
       [specId]: {
         ...(current[specId] || getEmptyRunState()),
         loading: true,
+        loadingMode: runMode,
+        runningTestId: runMode === "single" ? singleTestId : "",
         error: "",
       },
     }));
 
     try {
-      const payload = await runGeneratedTests(session.token, suitePayload);
-      const executedTests = Array.isArray(suitePayload?.test_cases) ? suitePayload.test_cases : [];
+      const payload = await runGeneratedTests(session.token, requestPayload);
+      const executedTests = Array.isArray(requestPayload?.test_cases) ? requestPayload.test_cases : [];
       const latestRunState = buildLatestRunState({
         id: payload?.run_id ?? null,
         created_at: new Date().toISOString(),
         summary: payload?.summary || null,
       });
-      setRunBaselineForSpec(specId, executedTests);
+      setRunBaselineForSpec(specId, executedTests, { mergeOnly: runMode === "single" });
       setSpecHistory((current) =>
         current.map((entry) => (
           entry.id === specId
@@ -4099,12 +4526,21 @@ export default function App() {
         [specId]: {
           ...(current[specId] || getEmptyRunState()),
           loading: false,
+          loadingMode: "",
+          runningTestId: "",
           error: "",
           result: {
             summary: payload?.summary || null,
             results: Array.isArray(payload?.results) ? payload.results : [],
           },
-          baselineTests: cloneJsonValue(executedTests) || [],
+          baselineTests: runMode === "single"
+            ? mergeRecordsByTestId(
+                Array.isArray(current[specId]?.baselineTests)
+                  ? current[specId].baselineTests
+                  : (Array.isArray(sourceEntry?.generatedTests) ? sourceEntry.generatedTests : []),
+                executedTests,
+              )
+            : (cloneJsonValue(executedTests) || []),
           runId: payload?.run_id ?? null,
           llmByTestId: {},
         },
@@ -4123,6 +4559,8 @@ export default function App() {
         [specId]: {
           ...(current[specId] || getEmptyRunState()),
           loading: false,
+          loadingMode: "",
+          runningTestId: "",
           error: error.message,
         },
       }));
@@ -4486,6 +4924,7 @@ export default function App() {
     if (!Number.isFinite(normalizedRunId)) {
       return;
     }
+    handleCloseAiDetailsViewer();
     setLogisticsDetailRunId(normalizedRunId);
     setLogisticsDetailLoading(true);
     setLogisticsDetailError("");
@@ -4505,6 +4944,7 @@ export default function App() {
     setLogisticsDetailLoading(false);
     setLogisticsDetailError("");
     setLogisticsDetail(null);
+    handleCloseAiDetailsViewer();
   }
 
   function handleOpenJsonViewer(title, value) {
@@ -4520,6 +4960,24 @@ export default function App() {
       open: false,
       title: "",
       value: null,
+    });
+  }
+
+  function handleOpenAiDetailsViewer(testId, insights) {
+    setAiDetailsViewerState({
+      open: true,
+      title: `AI Details: ${String(testId || "Unknown Test")}`,
+      testId: String(testId || ""),
+      insights: Array.isArray(insights) ? (cloneJsonValue(insights) || []) : [],
+    });
+  }
+
+  function handleCloseAiDetailsViewer() {
+    setAiDetailsViewerState({
+      open: false,
+      title: "",
+      testId: "",
+      insights: [],
     });
   }
 
@@ -4657,6 +5115,7 @@ export default function App() {
     setLogisticsDetailError("");
     setLogisticsDetail(null);
     setJsonViewerState({ open: false, title: "", value: null });
+    setAiDetailsViewerState({ open: false, title: "", testId: "", insights: [] });
   }
 
   async function handleClearHistory() {
@@ -4846,7 +5305,6 @@ export default function App() {
     setChatRuntimeConfig((current) => normalizeChatRuntimeConfig({
       ...current,
       modelId: String(activeModel?.model || current?.modelId || DEFAULT_CHAT_RUNTIME_CONFIG.modelId),
-      userInstruction: normalized.custom_instruction,
     }));
   }
 
@@ -5309,6 +5767,14 @@ export default function App() {
         onClose={handleCloseLogisticsDetail}
         onDelete={handleDeleteLogisticsRun}
         onShowJson={handleOpenJsonViewer}
+        onShowAiDetails={handleOpenAiDetailsViewer}
+      />
+      <AiDetailsModal
+        open={Boolean(aiDetailsViewerState?.open)}
+        title={aiDetailsViewerState?.title || "AI Details"}
+        testId={aiDetailsViewerState?.testId || ""}
+        insights={Array.isArray(aiDetailsViewerState?.insights) ? aiDetailsViewerState.insights : []}
+        onClose={handleCloseAiDetailsViewer}
       />
       <JsonViewerModal
         open={Boolean(jsonViewerState?.open)}

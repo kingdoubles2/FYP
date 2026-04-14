@@ -39,6 +39,7 @@ class LlmExplanationEndpointTests(unittest.TestCase):
             "used_fallback": False,
             "llm_error": None,
             "contract": {"cause": "sample"},
+            "prompt_snapshot": {"system": "System prompt text", "user": "User prompt text"},
             "attempts": [{"prompt": "Case:", "raw_response": "{}", "parse_error": None, "validation_errors": []}],
         }
 

@@ -23,6 +23,7 @@ from llm_eval.failure_assistant import (
     is_input_related_signal,
     load_backend_model_catalog,
     load_backend_llm_settings,
+    load_default_failure_system_prompt,
     normalize_suggestion_explanation_context,
     parse_spec_document,
     safe_json_dumps,
@@ -62,6 +63,7 @@ class RunTestsRequest(BaseModel):
     bearer_token: Optional[str] = None
     api_key: Optional[str] = None
     api_key_header: Optional[str] = None
+    merge_into_run_id: Optional[int] = None
 
 
 class AddLLMModelRequest(BaseModel):
@@ -168,6 +170,100 @@ def _normalize_run_summary_counts(summary: Any) -> dict[str, int]:
         "failed": failed,
         "skipped": skipped,
     }
+
+
+def _normalize_test_id(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _collect_unique_test_ids(rows: Any) -> list[str]:
+    source_rows = rows if isinstance(rows, list) else []
+    ordered_ids: list[str] = []
+    seen_ids: set[str] = set()
+    for row in source_rows:
+        if not isinstance(row, dict):
+            continue
+        test_id = _normalize_test_id(row.get("test_id"))
+        if not test_id or test_id in seen_ids:
+            continue
+        seen_ids.add(test_id)
+        ordered_ids.append(test_id)
+    return ordered_ids
+
+
+def _merge_records_by_test_id(existing_rows: Any, updated_rows: Any) -> list[dict[str, Any]]:
+    existing_source = existing_rows if isinstance(existing_rows, list) else []
+    updated_source = updated_rows if isinstance(updated_rows, list) else []
+    merged_rows: list[dict[str, Any]] = []
+    position_by_test_id: dict[str, int] = {}
+
+    for row in existing_source:
+        if not isinstance(row, dict):
+            continue
+        cloned_row = dict(row)
+        test_id = _normalize_test_id(cloned_row.get("test_id"))
+        if test_id and test_id in position_by_test_id:
+            merged_rows[position_by_test_id[test_id]] = cloned_row
+            continue
+        if test_id:
+            position_by_test_id[test_id] = len(merged_rows)
+        merged_rows.append(cloned_row)
+
+    for row in updated_source:
+        if not isinstance(row, dict):
+            continue
+        cloned_row = dict(row)
+        test_id = _normalize_test_id(cloned_row.get("test_id"))
+        if test_id and test_id in position_by_test_id:
+            merged_rows[position_by_test_id[test_id]] = cloned_row
+            continue
+        if test_id:
+            position_by_test_id[test_id] = len(merged_rows)
+        merged_rows.append(cloned_row)
+
+    return merged_rows
+
+
+def _summarize_run_results(rows: Any) -> dict[str, int]:
+    source_rows = rows if isinstance(rows, list) else []
+    summary = {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+    }
+    for row in source_rows:
+        if not isinstance(row, dict):
+            continue
+        summary["total"] += 1
+        outcome = str(row.get("outcome") or "").strip().upper()
+        if outcome == "PASS":
+            summary["passed"] += 1
+        elif outcome == "FAIL":
+            summary["failed"] += 1
+        elif outcome == "SKIP":
+            summary["skipped"] += 1
+    return summary
+
+
+def _merge_suite_snapshot(
+    existing_suite: Any,
+    latest_suite: dict[str, Any],
+    *,
+    resolved_base_url: str,
+) -> dict[str, Any]:
+    existing_source = existing_suite if isinstance(existing_suite, dict) else {}
+    merged_suite: dict[str, Any] = dict(existing_source)
+    latest_api_title = str(latest_suite.get("api_title") or "").strip()
+    latest_api_version = str(latest_suite.get("api_version") or "").strip()
+    merged_suite["api_title"] = latest_api_title or str(merged_suite.get("api_title") or "Generated Test Suite")
+    merged_suite["api_version"] = latest_api_version or str(merged_suite.get("api_version") or "Unknown")
+    merged_suite["base_url"] = str(resolved_base_url or "").strip()
+    merged_suite["test_cases"] = _merge_records_by_test_id(
+        existing_source.get("test_cases"),
+        latest_suite.get("test_cases"),
+    )
+    return merged_suite
 
 
 def _normalize_auth_meta(auth_meta: Any) -> dict[str, Any]:
@@ -529,7 +625,13 @@ def _resolve_effective_llm_settings(
         active_model_id = default_model_id
     active_model = by_id.get(active_model_id) or by_id.get(default_model_id) or (all_models[0] if all_models else None)
 
-    custom_instruction = str(row.custom_instruction or "") if row else ""
+    try:
+        default_prompt = load_default_failure_system_prompt()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"LLM prompt template error: {exc}") from exc
+
+    saved_custom_instruction = str(row.custom_instruction or "") if row else ""
+    custom_instruction = saved_custom_instruction if saved_custom_instruction.strip() else default_prompt
     return {
         "settings": settings,
         "row": row,
@@ -662,6 +764,7 @@ def _generate_failure_explanation_or_raise(
         model=str(runtime["model"]),
         evidence=bundle["evidence"],
         prompt_bundle=bundle["prompt_bundle"],
+        system_prompt_override=str(resolved_settings.get("custom_instruction") or ""),
         word_target=int(settings["word_target"]),
         word_max=int(settings["word_max"]),
         retry_invalid_output=int(settings["retry_invalid_output"]),
@@ -1069,8 +1172,8 @@ def _is_spec_chat_out_of_scope(message: str) -> bool:
     return False
 
 
-def _build_spec_chat_system_prompt(custom_instruction: str) -> str:
-    base = (
+def _build_spec_chat_system_prompt() -> str:
+    return (
         "You are ContractGuard's spec-grounded assistant.\n"
         "Use only the provided grounding context for the selected spec.\n"
         "Never answer general questions unrelated to this spec, generated tests, or run results.\n"
@@ -1078,10 +1181,6 @@ def _build_spec_chat_system_prompt(custom_instruction: str) -> str:
         "Do not invent endpoints, statuses, test cases, or execution outcomes.\n"
         "Keep answers concise and actionable."
     )
-    custom = str(custom_instruction or "").strip()
-    if not custom:
-        return base
-    return f"{base}\n\nUser instruction profile:\n{custom}"
 
 
 def _build_spec_chat_user_prompt(
@@ -1327,7 +1426,7 @@ def update_llm_settings(req: UpdateLLMSettingsRequest, current_user: User = Depe
         if _is_field_provided(req, "custom_instruction"):
             instruction = str(req.custom_instruction or "")
             if len(instruction) > 12000:
-                raise HTTPException(status_code=400, detail="Custom instruction must be 12000 characters or fewer.")
+                raise HTTPException(status_code=400, detail="Prompt must be 12000 characters or fewer.")
             row.custom_instruction = instruction
 
         db.commit()
@@ -1482,7 +1581,7 @@ def chat_with_spec_assistant(
         runtime = _build_runtime_from_active_model(resolved_settings)
         runtime_provider = str(runtime.get("provider") or "")
         runtime_model = str(runtime.get("model") or "")
-        system_prompt = _build_spec_chat_system_prompt(str(resolved_settings.get("custom_instruction") or ""))
+        system_prompt = _build_spec_chat_system_prompt()
         user_prompt = _build_spec_chat_user_prompt(
             message=message,
             thread=thread,
@@ -1669,6 +1768,14 @@ def run_generated_tests(req: RunTestsRequest, current_user: User = Depends(get_c
         spec_id = int(req.spec_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="spec_id must be a valid integer.") from exc
+    merge_into_run_id: Optional[int] = None
+    if req.merge_into_run_id is not None:
+        try:
+            merge_into_run_id = int(req.merge_into_run_id)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="merge_into_run_id must be a valid integer.") from exc
+        if merge_into_run_id <= 0:
+            raise HTTPException(status_code=400, detail="merge_into_run_id must be a positive integer.")
 
     auth_headers: dict[str, str] = {}
     auth_meta: dict[str, Any] = {"mode": "none", "provided": False, "header": None}
@@ -1698,34 +1805,81 @@ def run_generated_tests(req: RunTestsRequest, current_user: User = Depends(get_c
         raise HTTPException(status_code=400, detail=f"Unable to execute test suite. {exc}") from exc
 
     db = SessionLocal()
+    response_run_id: Optional[int] = None
+    response_summary: dict[str, int]
+    response_results: list[dict[str, Any]]
     try:
         _ = _get_owned_spec(db, current_user.id, spec_id)
-        run_row = TestRun(
-            spec_id=spec_id,
-            user_id=current_user.id,
-            api_title=str(suite_data["api_title"]),
-            api_version=str(suite_data["api_version"]),
-            base_url=resolved_base_url,
-            suite_snapshot_json=safe_json_dumps(suite_data),
-            results_json=safe_json_dumps(results),
-            summary_json=safe_json_dumps(summary),
-            auth_meta_json=safe_json_dumps(auth_meta),
-            timeout_seconds=timeout,
-        )
-        db.add(run_row)
-        db.commit()
-        db.refresh(run_row)
+        if merge_into_run_id is None:
+            run_row = TestRun(
+                spec_id=spec_id,
+                user_id=current_user.id,
+                api_title=str(suite_data["api_title"]),
+                api_version=str(suite_data["api_version"]),
+                base_url=resolved_base_url,
+                suite_snapshot_json=safe_json_dumps(suite_data),
+                results_json=safe_json_dumps(results),
+                summary_json=safe_json_dumps(summary),
+                auth_meta_json=safe_json_dumps(auth_meta),
+                timeout_seconds=timeout,
+            )
+            db.add(run_row)
+            db.commit()
+            db.refresh(run_row)
+            response_run_id = int(run_row.id)
+            response_summary = _normalize_run_summary_counts(summary)
+            response_results = [row for row in results if isinstance(row, dict)]
+        else:
+            run_row = _get_owned_run(db, current_user.id, int(merge_into_run_id))
+            if int(run_row.spec_id) != int(spec_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="merge_into_run_id must refer to a run for the same spec_id.",
+                )
+
+            stored_suite = _json_load_or_default(run_row.suite_snapshot_json, {})
+            stored_results = _json_load_or_default(run_row.results_json, [])
+            merged_suite = _merge_suite_snapshot(
+                existing_suite=stored_suite,
+                latest_suite=suite_data,
+                resolved_base_url=resolved_base_url,
+            )
+            merged_results = _merge_records_by_test_id(stored_results, results)
+            merged_summary = _summarize_run_results(merged_results)
+            rerun_test_ids = _collect_unique_test_ids(results)
+
+            run_row.api_title = str(merged_suite.get("api_title") or run_row.api_title or "")
+            run_row.api_version = str(merged_suite.get("api_version") or run_row.api_version or "")
+            run_row.base_url = resolved_base_url
+            run_row.suite_snapshot_json = safe_json_dumps(merged_suite)
+            run_row.results_json = safe_json_dumps(merged_results)
+            run_row.summary_json = safe_json_dumps(merged_summary)
+            run_row.auth_meta_json = safe_json_dumps(auth_meta)
+            run_row.timeout_seconds = timeout
+
+            if rerun_test_ids:
+                db.query(LLMRunInsight).filter(
+                    LLMRunInsight.user_id == int(current_user.id),
+                    LLMRunInsight.run_id == int(run_row.id),
+                    LLMRunInsight.test_id.in_(rerun_test_ids),
+                ).delete(synchronize_session=False)
+
+            db.commit()
+            db.refresh(run_row)
+            response_run_id = int(run_row.id)
+            response_summary = merged_summary
+            response_results = merged_results
     finally:
         db.close()
 
     return {
-        "run_id": run_row.id,
+        "run_id": response_run_id,
         "spec_id": spec_id,
         "api_title": suite_data["api_title"],
         "api_version": suite_data["api_version"],
         "base_url": resolved_base_url,
-        "summary": summary,
-        "results": results,
+        "summary": response_summary,
+        "results": response_results,
     }
 
 

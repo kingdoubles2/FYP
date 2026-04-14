@@ -1532,6 +1532,96 @@ code {
   max-height: calc(100vh - 12rem);
 }
 
+.logistics-ai-backdrop {
+  padding: 1.2rem;
+}
+
+.logistics-ai-card {
+  width: min(1080px, 100%);
+  max-height: calc(100vh - 2.4rem);
+}
+
+.logistics-ai-header {
+  margin-bottom: 0.4rem;
+}
+
+.logistics-ai-body {
+  display: grid;
+  gap: 0.8rem;
+  overflow: auto;
+  max-height: calc(100vh - 12rem);
+  padding-right: 0.2rem;
+}
+
+.logistics-ai-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem 1rem;
+  padding: 0.62rem 0.72rem;
+  border-radius: 0.82rem;
+  border: 1px solid #dde4f0;
+  background: rgba(247, 251, 255, 0.82);
+  color: #485873;
+  font-size: 0.85rem;
+}
+
+.logistics-ai-group-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.logistics-ai-group {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.logistics-ai-group h3 {
+  margin: 0;
+  font-size: 0.93rem;
+  color: #2f4263;
+}
+
+.logistics-ai-record-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.logistics-ai-record {
+  border: 1px solid #dde4f0;
+  border-radius: 0.82rem;
+  padding: 0.62rem 0.72rem;
+  background: rgba(248, 252, 255, 0.92);
+  display: grid;
+  gap: 0.45rem;
+}
+
+.logistics-ai-record-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: space-between;
+  color: #5c6b84;
+  font-size: 0.81rem;
+}
+
+.logistics-ai-label {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #3a4a66;
+}
+
+.logistics-ai-line {
+  margin: 0;
+  color: #263857;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.logistics-ai-pre {
+  margin-top: 0.22rem;
+}
+
 .expandable-list {
   margin-top: 1rem;
   display: grid;
@@ -1908,9 +1998,23 @@ code {
   padding: 0.62rem;
 }
 
+.testcase-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .testcase-title {
   margin: 0 0 0.45rem;
   font-weight: 700;
+}
+
+.test-run-single-button {
+  padding: 0.28rem 0.62rem;
+  font-size: 0.76rem;
+  line-height: 1.2;
+  min-width: 4.5rem;
 }
 
 .testcase-line {
@@ -2434,6 +2538,8 @@ code {
 .app-shell[data-theme="dark"] .logistics-row,
 .app-shell[data-theme="dark"] .logistics-test-row,
 .app-shell[data-theme="dark"] .logistics-modal-meta-row,
+.app-shell[data-theme="dark"] .logistics-ai-meta-row,
+.app-shell[data-theme="dark"] .logistics-ai-record,
 .app-shell[data-theme="dark"] .logistics-json-pre {
   background: #242a33;
   border-color: #424954;
@@ -2441,7 +2547,10 @@ code {
 
 .app-shell[data-theme="dark"] .logistics-row-meta,
 .app-shell[data-theme="dark"] .logistics-test-meta,
-.app-shell[data-theme="dark"] .logistics-modal-meta-row {
+.app-shell[data-theme="dark"] .logistics-modal-meta-row,
+.app-shell[data-theme="dark"] .logistics-ai-meta-row,
+.app-shell[data-theme="dark"] .logistics-ai-record-header,
+.app-shell[data-theme="dark"] .logistics-ai-line {
   color: #bcc6d8;
 }
 
@@ -2456,6 +2565,11 @@ code {
 }
 
 .app-shell[data-theme="dark"] .logistics-json-pre {
+  color: #e8edf7;
+}
+
+.app-shell[data-theme="dark"] .logistics-ai-group h3,
+.app-shell[data-theme="dark"] .logistics-ai-label {
   color: #e8edf7;
 }
 
