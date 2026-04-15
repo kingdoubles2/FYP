@@ -1,7 +1,7 @@
 {
   "api_title": "Swagger Petstore - OpenAPI 3.0",
   "api_version": "1.0.27",
-  "generated_at": "2026-04-11T12:03:41Z",
+  "generated_at": "2026-04-15T23:12:04Z",
   "base_url": "https://petstore.swagger.io/v2/swagger.json",
   "test_cases": [
     {
@@ -812,34 +812,6 @@
     },
     {
       "test_id": "TC-GET-pet-petId-002",
-      "title": "GET /pet/{petId} - Negative type: petId='not_a_number'",
-      "category": "negative_type",
-      "requirement_ref": "GET /pet/{petId}",
-      "method": "GET",
-      "path": "/pet/{petId}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send GET request to /pet/not_a_number with petId as wrong type",
-          "input_data": {
-            "path_params": {
-              "petId": "not_a_number"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: petId has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-GET-pet-petId-003",
       "title": "GET /pet/{petId} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "GET /pet/{petId}",
@@ -866,6 +838,34 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-GET-pet-petId-003",
+      "title": "GET /pet/{petId} - Negative: unsupported HTTP method",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /pet/{petId}",
+      "method": "PATCH",
+      "path": "/pet/{petId}",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /pet/1001 (unsupported method)",
+          "input_data": {
+            "path_params": {
+              "petId": 1001
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 405,
+        "description": "Method not allowed"
       }
     },
     {
@@ -958,37 +958,6 @@
     },
     {
       "test_id": "TC-POST-pet-petId-002",
-      "title": "POST /pet/{petId} - Negative type: petId='not_a_number'",
-      "category": "negative_type",
-      "requirement_ref": "POST /pet/{petId}",
-      "method": "POST",
-      "path": "/pet/{petId}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send POST request to /pet/not_a_number with petId as wrong type",
-          "input_data": {
-            "path_params": {
-              "petId": "not_a_number"
-            },
-            "query_params": {
-              "name": "Sample Name",
-              "status": "active"
-            },
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: petId has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-POST-pet-petId-003",
       "title": "POST /pet/{petId} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "POST /pet/{petId}",
@@ -1018,6 +987,34 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-POST-pet-petId-003",
+      "title": "POST /pet/{petId} - Negative: unsupported HTTP method",
+      "category": "negative_invalid",
+      "requirement_ref": "POST /pet/{petId}",
+      "method": "PATCH",
+      "path": "/pet/{petId}",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /pet/1001 (unsupported method)",
+          "input_data": {
+            "path_params": {
+              "petId": 1001
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 405,
+        "description": "Method not allowed"
       }
     },
     {
@@ -1083,36 +1080,6 @@
     },
     {
       "test_id": "TC-DELETE-pet-petId-002",
-      "title": "DELETE /pet/{petId} - Negative type: petId='not_a_number'",
-      "category": "negative_type",
-      "requirement_ref": "DELETE /pet/{petId}",
-      "method": "DELETE",
-      "path": "/pet/{petId}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send DELETE request to /pet/not_a_number with petId as wrong type",
-          "input_data": {
-            "path_params": {
-              "petId": "not_a_number"
-            },
-            "query_params": {},
-            "headers": {
-              "api_key": "standard-text"
-            },
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: petId has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-DELETE-pet-petId-003",
       "title": "DELETE /pet/{petId} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "DELETE /pet/{petId}",
@@ -1141,6 +1108,36 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-DELETE-pet-petId-003",
+      "title": "DELETE /pet/{petId} - Negative: unsupported HTTP method",
+      "category": "negative_invalid",
+      "requirement_ref": "DELETE /pet/{petId}",
+      "method": "PATCH",
+      "path": "/pet/{petId}",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /pet/1001 (unsupported method)",
+          "input_data": {
+            "path_params": {
+              "petId": 1001
+            },
+            "query_params": {},
+            "headers": {
+              "api_key": "standard-text"
+            },
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 405,
+        "description": "Method not allowed"
       }
     },
     {
@@ -1293,36 +1290,6 @@
     },
     {
       "test_id": "TC-POST-pet-petId-uploadImage-002",
-      "title": "POST /pet/{petId}/uploadImage - Negative type: petId='not_a_number'",
-      "category": "negative_type",
-      "requirement_ref": "POST /pet/{petId}/uploadImage",
-      "method": "POST",
-      "path": "/pet/{petId}/uploadImage",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send POST request to /pet/not_a_number/uploadImage with petId as wrong type",
-          "input_data": {
-            "path_params": {
-              "petId": "not_a_number"
-            },
-            "query_params": {
-              "additionalMetadata": "profile image"
-            },
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: petId has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-POST-pet-petId-uploadImage-003",
       "title": "POST /pet/{petId}/uploadImage - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "POST /pet/{petId}/uploadImage",
@@ -1351,6 +1318,34 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-POST-pet-petId-uploadImage-003",
+      "title": "POST /pet/{petId}/uploadImage - Negative: unsupported HTTP method",
+      "category": "negative_invalid",
+      "requirement_ref": "POST /pet/{petId}/uploadImage",
+      "method": "PATCH",
+      "path": "/pet/{petId}/uploadImage",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /pet/1001/uploadImage (unsupported method)",
+          "input_data": {
+            "path_params": {
+              "petId": 1001
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 405,
+        "description": "Method not allowed"
       }
     },
     {
@@ -1763,34 +1758,6 @@
     },
     {
       "test_id": "TC-GET-store-order-orderId-002",
-      "title": "GET /store/order/{orderId} - Negative type: orderId='not_a_number'",
-      "category": "negative_type",
-      "requirement_ref": "GET /store/order/{orderId}",
-      "method": "GET",
-      "path": "/store/order/{orderId}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send GET request to /store/order/not_a_number with orderId as wrong type",
-          "input_data": {
-            "path_params": {
-              "orderId": "not_a_number"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: orderId has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-GET-store-order-orderId-003",
       "title": "GET /store/order/{orderId} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "GET /store/order/{orderId}",
@@ -1817,6 +1784,34 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-GET-store-order-orderId-003",
+      "title": "GET /store/order/{orderId} - Negative: unsupported HTTP method",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /store/order/{orderId}",
+      "method": "PATCH",
+      "path": "/store/order/{orderId}",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /store/order/5001 (unsupported method)",
+          "input_data": {
+            "path_params": {
+              "orderId": 5001
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 405,
+        "description": "Method not allowed"
       }
     },
     {
@@ -1909,34 +1904,6 @@
     },
     {
       "test_id": "TC-DELETE-store-order-orderId-002",
-      "title": "DELETE /store/order/{orderId} - Negative type: orderId='not_a_number'",
-      "category": "negative_type",
-      "requirement_ref": "DELETE /store/order/{orderId}",
-      "method": "DELETE",
-      "path": "/store/order/{orderId}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send DELETE request to /store/order/not_a_number with orderId as wrong type",
-          "input_data": {
-            "path_params": {
-              "orderId": "not_a_number"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: orderId has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-DELETE-store-order-orderId-003",
       "title": "DELETE /store/order/{orderId} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "DELETE /store/order/{orderId}",
@@ -1963,6 +1930,34 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-DELETE-store-order-orderId-003",
+      "title": "DELETE /store/order/{orderId} - Negative: unsupported HTTP method",
+      "category": "negative_invalid",
+      "requirement_ref": "DELETE /store/order/{orderId}",
+      "method": "PATCH",
+      "path": "/store/order/{orderId}",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /store/order/5001 (unsupported method)",
+          "input_data": {
+            "path_params": {
+              "orderId": 5001
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 405,
+        "description": "Method not allowed"
       }
     },
     {
@@ -2523,34 +2518,6 @@
     },
     {
       "test_id": "TC-GET-user-username-002",
-      "title": "GET /user/{username} - Negative type: username=12345",
-      "category": "negative_type",
-      "requirement_ref": "GET /user/{username}",
-      "method": "GET",
-      "path": "/user/{username}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send GET request to /user/12345 with username as wrong type",
-          "input_data": {
-            "path_params": {
-              "username": 12345
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: username has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-GET-user-username-003",
       "title": "GET /user/{username} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "GET /user/{username}",
@@ -2577,6 +2544,34 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-GET-user-username-003",
+      "title": "GET /user/{username} - Negative: unsupported HTTP method",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /user/{username}",
+      "method": "PATCH",
+      "path": "/user/{username}",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /user/jane_doe (unsupported method)",
+          "input_data": {
+            "path_params": {
+              "username": "jane_doe"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 405,
+        "description": "Method not allowed"
       }
     },
     {
@@ -2689,43 +2684,6 @@
     },
     {
       "test_id": "TC-PUT-user-username-003",
-      "title": "PUT /user/{username} - Negative type: username=12345",
-      "category": "negative_type",
-      "requirement_ref": "PUT /user/{username}",
-      "method": "PUT",
-      "path": "/user/{username}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PUT request to /user/12345 with username as wrong type",
-          "input_data": {
-            "path_params": {
-              "username": 12345
-            },
-            "query_params": {},
-            "headers": {},
-            "body": {
-              "id": 10,
-              "username": "theUser",
-              "firstName": "John",
-              "lastName": "James",
-              "email": "john@email.com",
-              "password": "12345",
-              "phone": "12345",
-              "userStatus": 1
-            }
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: username has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-PUT-user-username-004",
       "title": "PUT /user/{username} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "PUT /user/{username}",
@@ -2761,6 +2719,34 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-PUT-user-username-004",
+      "title": "PUT /user/{username} - Negative: send empty body when body is required",
+      "category": "negative_missing",
+      "requirement_ref": "PUT /user/{username}",
+      "method": "PUT",
+      "path": "/user/{username}",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PUT request with empty body",
+          "input_data": {
+            "path_params": {
+              "username": "jane_doe"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {}
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 400,
+        "description": "Rejected: request body is empty or missing required fields"
       }
     },
     {
@@ -2908,34 +2894,6 @@
     },
     {
       "test_id": "TC-DELETE-user-username-002",
-      "title": "DELETE /user/{username} - Negative type: username=12345",
-      "category": "negative_type",
-      "requirement_ref": "DELETE /user/{username}",
-      "method": "DELETE",
-      "path": "/user/{username}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send DELETE request to /user/12345 with username as wrong type",
-          "input_data": {
-            "path_params": {
-              "username": 12345
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: username has wrong type"
-      }
-    },
-    {
-      "test_id": "TC-DELETE-user-username-003",
       "title": "DELETE /user/{username} - Negative: request non-existent resource",
       "category": "negative_invalid",
       "requirement_ref": "DELETE /user/{username}",
@@ -2962,6 +2920,34 @@
       "expected_result": {
         "status_code": 404,
         "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-DELETE-user-username-003",
+      "title": "DELETE /user/{username} - Negative: unsupported HTTP method",
+      "category": "negative_invalid",
+      "requirement_ref": "DELETE /user/{username}",
+      "method": "PATCH",
+      "path": "/user/{username}",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /user/jane_doe (unsupported method)",
+          "input_data": {
+            "path_params": {
+              "username": "jane_doe"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 405,
+        "description": "Method not allowed"
       }
     },
     {
