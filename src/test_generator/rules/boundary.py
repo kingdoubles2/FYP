@@ -17,6 +17,28 @@ def _render_path(path: str, path_params: Dict[str, Any]) -> str:
     return result
 
 
+def _success_status_kw(response_schemas: Dict[str, Any], method: str) -> Dict[str, Any]:
+    """Pick success expectation from declared 2xx responses (spec-first)."""
+    codes = [c for c in response_schemas.keys() if isinstance(c, str) and c.startswith("2")]
+    if not codes:
+        return {"status_code": 200}
+
+    # Prefer common semantically expected codes per method when declared.
+    preferred: List[str] = []
+    if method == "POST":
+        preferred.append("201")
+    if method == "DELETE":
+        preferred.append("204")
+    preferred.append("200")
+
+    ordered = [c for c in preferred if c in codes]
+    ordered.extend(sorted(c for c in codes if c not in ordered))
+
+    if len(ordered) == 1:
+        return {"status_code": int(ordered[0])}
+    return {"status_code_any_of": [int(c) for c in ordered]}
+
+
 # ---------------------------------------------------------------------------
 # Constraint detection — only generate boundaries when IR has explicit limits
 # ---------------------------------------------------------------------------
@@ -229,10 +251,10 @@ def generate_boundary_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
                 action = f"Send {method} request with body '{target['name']}'={bval!r}"
 
             if is_invalid:
-                status_kw = pick_error_status(resp, ["400", "422"])
+                status_kw = pick_error_status(resp, ["422", "400", "409", "403", "404"])
                 desc = f"Boundary violation: {target['name']} {label} should be rejected"
             else:
-                status_kw = {"status_code": 200}
+                status_kw = _success_status_kw(resp, method)
                 desc = f"Boundary valid: {target['name']} {label} should be accepted"
 
             cases.append(TestCase(
