@@ -155,13 +155,13 @@ def generate_happy_path_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     min_body = None
     req_schema = endpoint.get("request_schema")
     body_required = endpoint.get("request_body_required", False)
-    if req_schema and (body_required or method == "POST"):
+    if req_schema and (body_required or method in {"POST", "PUT", "PATCH"}):
         min_body = generate_valid_value(
             req_schema, skip_example=True, use_realistic=True, required_only=True,
         )
-        # Some APIs reject POST with null/absent payload when a JSON schema exists.
-        if method == "POST" and min_body is None:
-            min_body = {}
+        # Many APIs reject null/absent payload when a request schema exists.
+        if method in {"POST", "PUT", "PATCH"} and min_body is None:
+            min_body = [] if req_schema.get("type") == "array" else {}
 
     min_rendered = _render_path(path, min_path)
     min_preconditions: List[str] = []
