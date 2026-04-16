@@ -3,11 +3,14 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
 from test_generator.models import TestCase, TestStep, InputData, ExpectedResult
-from test_generator.sample_data import generate_valid_value, pick_error_status
+from test_generator.sample_data import generate_valid_value, pick_error_status, should_autofill_header_param
 
 
-def _build_valid_params(params: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {p["name"]: generate_valid_value(p["schema"], name=p["name"]) for p in params}
+def _build_valid_params(params: List[Dict[str, Any]], *, is_header: bool = False) -> Dict[str, Any]:
+    selected = params
+    if is_header:
+        selected = [p for p in params if should_autofill_header_param(p)]
+    return {p["name"]: generate_valid_value(p["schema"], name=p["name"]) for p in selected}
 
 
 def _render_path(path: str, path_params: Dict[str, Any]) -> str:
@@ -39,6 +42,23 @@ def _success_status_kw(response_schemas: Dict[str, Any], method: str) -> Dict[st
     return {"status_code_any_of": [int(c) for c in ordered]}
 
 
+def _allow_runtime_404(status_kw: Dict[str, Any]) -> Dict[str, Any]:
+    """Allow 404 as runtime-tolerant fallback even when not declared in spec."""
+    if "status_code_any_of" in status_kw:
+        vals = list(status_kw["status_code_any_of"])
+        if 404 not in vals:
+            vals.append(404)
+        return {"status_code_any_of": sorted(set(vals))}
+
+    if "status_code" in status_kw:
+        code = int(status_kw["status_code"])
+        if code == 404:
+            return {"status_code": 404}
+        return {"status_code_any_of": sorted({code, 404})}
+
+    return {"status_code": 404}
+
+
 # ---------------------------------------------------------------------------
 # Constraint detection — only generate boundaries when IR has explicit limits
 # ---------------------------------------------------------------------------
@@ -47,6 +67,10 @@ _INT_CONSTRAINTS = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"
 _NUM_CONSTRAINTS = _INT_CONSTRAINTS
 _STR_CONSTRAINTS = {"minLength", "maxLength", "pattern"}
 _ARR_CONSTRAINTS = {"minItems", "maxItems"}
+
+# Guardrails for pathological limits in auto-generated OpenAPI specs.
+SAFE_BOUNDARY_STRING_CAP = 1024
+SAFE_BOUNDARY_ARRAY_CAP = 20
 
 
 def _has_explicit_constraints(schema: Dict[str, Any]) -> bool:
@@ -108,6 +132,11 @@ def _boundary_pairs(schema: Dict[str, Any]) -> List[Tuple[str, Any, bool]]:
         min_len = schema.get("minLength")
         max_len = schema.get("maxLength")
 
+        if isinstance(min_len, int):
+            min_len = min(min_len, SAFE_BOUNDARY_STRING_CAP)
+        if isinstance(max_len, int):
+            max_len = min(max_len, SAFE_BOUNDARY_STRING_CAP)
+
         if min_len is not None and min_len > 0:
             pairs.append((f"below_minLength({min_len - 1})", "a" * (min_len - 1), True))
             pairs.append((f"at_minLength({min_len})", "a" * min_len, False))
@@ -119,6 +148,11 @@ def _boundary_pairs(schema: Dict[str, Any]) -> List[Tuple[str, Any, bool]]:
         min_items = schema.get("minItems")
         max_items = schema.get("maxItems")
         items_schema = schema.get("items", {})
+
+        if isinstance(min_items, int):
+            min_items = min(min_items, SAFE_BOUNDARY_ARRAY_CAP)
+        if isinstance(max_items, int):
+            max_items = min(max_items, SAFE_BOUNDARY_ARRAY_CAP)
 
         if min_items is not None and min_items > 0:
             below_count = min_items - 1
@@ -202,10 +236,15 @@ def generate_boundary_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
 
     valid_path = _build_valid_params(endpoint.get("path_params", []))
     valid_query = _build_valid_params(endpoint.get("query_params", []))
-    valid_headers = _build_valid_params(endpoint.get("header_params", []))
+    valid_headers = _build_valid_params(endpoint.get("header_params", []), is_header=True)
     valid_body = None
     if endpoint.get("request_schema"):
-        valid_body = generate_valid_value(endpoint["request_schema"])
+        valid_body = generate_valid_value(
+            endpoint["request_schema"],
+            skip_example=True,
+            use_realistic=True,
+            required_only=True,
+        )
 
     cases: List[TestCase] = []
 
@@ -251,7 +290,9 @@ def generate_boundary_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
                 action = f"Send {method} request with body '{target['name']}'={bval!r}"
 
             if is_invalid:
-                status_kw = pick_error_status(resp, ["422", "400", "409", "403", "404"])
+                status_kw = _allow_runtime_404(
+                    pick_error_status(resp, ["404", "422", "400", "409", "403"])
+                )
                 desc = f"Boundary violation: {target['name']} {label} should be rejected"
             else:
                 status_kw = _success_status_kw(resp, method)
