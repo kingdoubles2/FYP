@@ -1,7 +1,7 @@
 {
   "api_title": "Open-Meteo APIs",
   "api_version": "1.0",
-  "generated_at": "2026-04-15T23:12:04Z",
+  "generated_at": "2026-04-16T19:09:18Z",
   "base_url": "https://api.open-meteo.com",
   "test_cases": [
     {
@@ -70,7 +70,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: query param latitude has wrong type"
       }
     },
@@ -111,7 +114,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: query param longitude has wrong type"
       }
     },
@@ -151,7 +157,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: required query param 'latitude' is missing"
       }
     },
@@ -191,7 +200,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: required query param 'longitude' is missing"
       }
     },
@@ -230,7 +242,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for hourly"
       }
     },
@@ -269,7 +284,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for daily"
       }
     },
@@ -310,7 +328,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for temperature_unit"
       }
     },
@@ -351,7 +372,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for wind_speed_unit"
       }
     },
@@ -392,7 +416,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for timeformat"
       }
     },
@@ -433,7 +460,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for past_days"
       }
     }

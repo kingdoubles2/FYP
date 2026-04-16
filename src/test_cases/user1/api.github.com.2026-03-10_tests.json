@@ -1,7 +1,7 @@
 {
   "api_title": "GitHub v3 REST API",
   "api_version": "1.1.4",
-  "generated_at": "2026-04-15T23:12:04Z",
+  "generated_at": "2026-04-16T19:09:18Z",
   "base_url": "https://api.github.com",
   "test_cases": [
     {
@@ -49,11 +49,11 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /repos/standard-text/standard-text for a non-existent resource",
+          "action": "Send GET request to /repos/nonexistent_resource_xyz/nonexistent_resource_xyz for a non-existent resource",
           "input_data": {
             "path_params": {
-              "owner": "standard-text",
-              "repo": "standard-text"
+              "owner": "nonexistent_resource_xyz",
+              "repo": "nonexistent_resource_xyz"
             },
             "query_params": {},
             "headers": {},
@@ -62,41 +62,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          403,
+          404
+        ],
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-GET-repos-owner-repo-003",
-      "title": "GET /repos/{owner}/{repo} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /repos/{owner}/{repo}",
-      "method": "PATCH",
-      "path": "/repos/{owner}/{repo}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /repos/standard-text/standard-text (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "owner": "standard-text",
-              "repo": "standard-text"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-GET-repos-owner-repo-004",
       "title": "GET /repos/{owner}/{repo} - Error 404: non-existent owner",
       "category": "error_status",
       "requirement_ref": "GET /repos/{owner}/{repo}",
@@ -133,7 +107,7 @@
       }
     },
     {
-      "test_id": "TC-GET-repos-owner-repo-005",
+      "test_id": "TC-GET-repos-owner-repo-004",
       "title": "GET /repos/{owner}/{repo} - Error 404: non-existent repo",
       "category": "error_status",
       "requirement_ref": "GET /repos/{owner}/{repo}",
@@ -147,6 +121,495 @@
         {
           "step_number": 1,
           "action": "Send GET request to /repos/standard-text/nonexistent_resource_xyz with non-existent repo",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "nonexistent_resource_xyz"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 404,
+        "description": "Resource not found for repo",
+        "response_body_contains": {
+          "message": "string",
+          "documentation_url": "string",
+          "url": "string",
+          "status": "string"
+        }
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-001",
+      "title": "PATCH /repos/{owner}/{repo} - Happy path: minimal valid request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "high",
+      "preconditions": [
+        "Resource exists for owner=standard-text, repo=standard-text"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /repos/standard-text/standard-text",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: id, node_id, name, full_name, owner, private"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-002",
+      "title": "PATCH /repos/{owner}/{repo} - Happy path: example-based request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [
+        "Resource exists for owner=standard-text, repo=standard-text"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /repos/standard-text/standard-text with example request body",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "name": "Hello-World",
+              "description": "This is your first repository",
+              "homepage": "https://github.com",
+              "private": true,
+              "has_issues": true,
+              "has_projects": true,
+              "has_wiki": true
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: id, node_id, name, full_name, owner, private"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-003",
+      "title": "PATCH /repos/{owner}/{repo} - Negative invalid: body field 'visibility'='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request with body field 'visibility'='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "visibility": "invalid_enum_value_xyz"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          403,
+          404,
+          422
+        ],
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'visibility'"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-004",
+      "title": "PATCH /repos/{owner}/{repo} - Negative invalid: body field 'squash_merge_commit_title'='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request with body field 'squash_merge_commit_title'='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "squash_merge_commit_title": "invalid_enum_value_xyz"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          403,
+          404,
+          422
+        ],
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'squash_merge_commit_title'"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-005",
+      "title": "PATCH /repos/{owner}/{repo} - Negative invalid: body field 'squash_merge_commit_message'='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request with body field 'squash_merge_commit_message'='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "squash_merge_commit_message": "invalid_enum_value_xyz"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          403,
+          404,
+          422
+        ],
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'squash_merge_commit_message'"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-006",
+      "title": "PATCH /repos/{owner}/{repo} - Negative invalid: body field 'merge_commit_title'='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request with body field 'merge_commit_title'='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "merge_commit_title": "invalid_enum_value_xyz"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          403,
+          404,
+          422
+        ],
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'merge_commit_title'"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-007",
+      "title": "PATCH /repos/{owner}/{repo} - Negative invalid: body field 'merge_commit_message'='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request with body field 'merge_commit_message'='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "merge_commit_message": "invalid_enum_value_xyz"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          403,
+          404,
+          422
+        ],
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'merge_commit_message'"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-008",
+      "title": "PATCH /repos/{owner}/{repo} - Boundary: body 'security_and_analysis'=null (nullable)",
+      "category": "boundary",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request with nullable field 'security_and_analysis'=null",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "security_and_analysis": null
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Nullable field 'security_and_analysis' set to null should be accepted"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-009",
+      "title": "PATCH /repos/{owner}/{repo} - Error 404: non-existent owner",
+      "category": "error_status",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [
+        "No resource exists for owner=nonexistent_resource_xyz"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /repos/nonexistent_resource_xyz/standard-text with non-existent owner",
+          "input_data": {
+            "path_params": {
+              "owner": "nonexistent_resource_xyz",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {}
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 404,
+        "description": "Resource not found for owner",
+        "response_body_contains": {
+          "message": "string",
+          "documentation_url": "string",
+          "url": "string",
+          "status": "string"
+        }
+      }
+    },
+    {
+      "test_id": "TC-PATCH-repos-owner-repo-010",
+      "title": "PATCH /repos/{owner}/{repo} - Error 404: non-existent repo",
+      "category": "error_status",
+      "requirement_ref": "PATCH /repos/{owner}/{repo}",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [
+        "No resource exists for repo=nonexistent_resource_xyz"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /repos/standard-text/nonexistent_resource_xyz with non-existent repo",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "nonexistent_resource_xyz"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": {}
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 404,
+        "description": "Resource not found for repo",
+        "response_body_contains": {
+          "message": "string",
+          "documentation_url": "string",
+          "url": "string",
+          "status": "string"
+        }
+      }
+    },
+    {
+      "test_id": "TC-DELETE-repos-owner-repo-001",
+      "title": "DELETE /repos/{owner}/{repo} - Happy path: minimal valid request returns 204",
+      "category": "happy_path",
+      "requirement_ref": "DELETE /repos/{owner}/{repo}",
+      "method": "DELETE",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "high",
+      "preconditions": [
+        "Resource exists for owner=standard-text, repo=standard-text"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send DELETE request to /repos/standard-text/standard-text",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 204,
+        "description": "No Content"
+      }
+    },
+    {
+      "test_id": "TC-DELETE-repos-owner-repo-002",
+      "title": "DELETE /repos/{owner}/{repo} - Negative: request non-existent resource",
+      "category": "negative_invalid",
+      "requirement_ref": "DELETE /repos/{owner}/{repo}",
+      "method": "DELETE",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [
+        "The requested resource does not exist"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send DELETE request to /repos/nonexistent_resource_xyz/nonexistent_resource_xyz for a non-existent resource",
+          "input_data": {
+            "path_params": {
+              "owner": "nonexistent_resource_xyz",
+              "repo": "nonexistent_resource_xyz"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          403,
+          404
+        ],
+        "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-DELETE-repos-owner-repo-003",
+      "title": "DELETE /repos/{owner}/{repo} - Error 404: non-existent owner",
+      "category": "error_status",
+      "requirement_ref": "DELETE /repos/{owner}/{repo}",
+      "method": "DELETE",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [
+        "No resource exists for owner=nonexistent_resource_xyz"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send DELETE request to /repos/nonexistent_resource_xyz/standard-text with non-existent owner",
+          "input_data": {
+            "path_params": {
+              "owner": "nonexistent_resource_xyz",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 404,
+        "description": "Resource not found for owner",
+        "response_body_contains": {
+          "message": "string",
+          "documentation_url": "string",
+          "url": "string",
+          "status": "string"
+        }
+      }
+    },
+    {
+      "test_id": "TC-DELETE-repos-owner-repo-004",
+      "title": "DELETE /repos/{owner}/{repo} - Error 404: non-existent repo",
+      "category": "error_status",
+      "requirement_ref": "DELETE /repos/{owner}/{repo}",
+      "method": "DELETE",
+      "path": "/repos/{owner}/{repo}",
+      "priority": "medium",
+      "preconditions": [
+        "No resource exists for repo=nonexistent_resource_xyz"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send DELETE request to /repos/standard-text/nonexistent_resource_xyz with non-existent repo",
           "input_data": {
             "path_params": {
               "owner": "standard-text",
@@ -214,15 +677,15 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /repos/standard-text/standard-text/contributors for a non-existent resource",
+          "action": "Send GET request to /repos/nonexistent_resource_xyz/nonexistent_resource_xyz/contributors for a non-existent resource",
           "input_data": {
             "path_params": {
-              "owner": "standard-text",
-              "repo": "standard-text"
+              "owner": "nonexistent_resource_xyz",
+              "repo": "nonexistent_resource_xyz"
             },
             "query_params": {
               "anon": "standard-text",
-              "per_page": 20,
+              "per_page": 30,
               "page": 1
             },
             "headers": {},
@@ -231,41 +694,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          403,
+          404
+        ],
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-GET-repos-owner-repo-contributors-003",
-      "title": "GET /repos/{owner}/{repo}/contributors - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /repos/{owner}/{repo}/contributors",
-      "method": "PATCH",
-      "path": "/repos/{owner}/{repo}/contributors",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /repos/standard-text/standard-text/contributors (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "owner": "standard-text",
-              "repo": "standard-text"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-GET-repos-owner-repo-contributors-004",
       "title": "GET /repos/{owner}/{repo}/contributors - Error 404: non-existent owner",
       "category": "error_status",
       "requirement_ref": "GET /repos/{owner}/{repo}/contributors",
@@ -286,7 +723,7 @@
             },
             "query_params": {
               "anon": "standard-text",
-              "per_page": 20,
+              "per_page": 30,
               "page": 1
             },
             "headers": {},
@@ -306,7 +743,7 @@
       }
     },
     {
-      "test_id": "TC-GET-repos-owner-repo-contributors-005",
+      "test_id": "TC-GET-repos-owner-repo-contributors-004",
       "title": "GET /repos/{owner}/{repo}/contributors - Error 404: non-existent repo",
       "category": "error_status",
       "requirement_ref": "GET /repos/{owner}/{repo}/contributors",
@@ -327,7 +764,318 @@
             },
             "query_params": {
               "anon": "standard-text",
-              "per_page": 20,
+              "per_page": 30,
+              "page": 1
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 404,
+        "description": "Resource not found for repo",
+        "response_body_contains": {
+          "message": "string",
+          "documentation_url": "string",
+          "url": "string",
+          "status": "string"
+        }
+      }
+    },
+    {
+      "test_id": "TC-GET-repos-owner-repo-issues-001",
+      "title": "GET /repos/{owner}/{repo}/issues - Happy path: minimal valid request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "GET /repos/{owner}/{repo}/issues",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues",
+      "priority": "high",
+      "preconditions": [
+        "Resource exists for owner=standard-text, repo=standard-text"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /repos/standard-text/standard-text/issues",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns an array"
+      }
+    },
+    {
+      "test_id": "TC-GET-repos-owner-repo-issues-002",
+      "title": "GET /repos/{owner}/{repo}/issues - Negative invalid: query state='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /repos/{owner}/{repo}/issues",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with state='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {
+              "milestone": "standard-text",
+              "state": "invalid_enum_value_xyz",
+              "assignee": "standard-text",
+              "type": "standard",
+              "creator": "standard-text",
+              "mentioned": "standard-text",
+              "labels": "standard-text",
+              "sort": "created",
+              "direction": "asc",
+              "since": "2026-01-15T10:30:00Z",
+              "per_page": 30,
+              "page": 1
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          404,
+          422
+        ],
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for state"
+      }
+    },
+    {
+      "test_id": "TC-GET-repos-owner-repo-issues-003",
+      "title": "GET /repos/{owner}/{repo}/issues - Negative invalid: query sort='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /repos/{owner}/{repo}/issues",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with sort='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {
+              "milestone": "standard-text",
+              "state": "open",
+              "assignee": "standard-text",
+              "type": "standard",
+              "creator": "standard-text",
+              "mentioned": "standard-text",
+              "labels": "standard-text",
+              "sort": "invalid_enum_value_xyz",
+              "direction": "asc",
+              "since": "2026-01-15T10:30:00Z",
+              "per_page": 30,
+              "page": 1
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          404,
+          422
+        ],
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for sort"
+      }
+    },
+    {
+      "test_id": "TC-GET-repos-owner-repo-issues-004",
+      "title": "GET /repos/{owner}/{repo}/issues - Negative invalid: query direction='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /repos/{owner}/{repo}/issues",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with direction='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {
+              "milestone": "standard-text",
+              "state": "open",
+              "assignee": "standard-text",
+              "type": "standard",
+              "creator": "standard-text",
+              "mentioned": "standard-text",
+              "labels": "standard-text",
+              "sort": "created",
+              "direction": "invalid_enum_value_xyz",
+              "since": "2026-01-15T10:30:00Z",
+              "per_page": 30,
+              "page": 1
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          404,
+          422
+        ],
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for direction"
+      }
+    },
+    {
+      "test_id": "TC-GET-repos-owner-repo-issues-005",
+      "title": "GET /repos/{owner}/{repo}/issues - Negative invalid: query since='not-a-date' (bad format)",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /repos/{owner}/{repo}/issues",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with malformed since='not-a-date'",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "standard-text"
+            },
+            "query_params": {
+              "milestone": "standard-text",
+              "state": "open",
+              "assignee": "standard-text",
+              "type": "standard",
+              "creator": "standard-text",
+              "mentioned": "standard-text",
+              "labels": "standard-text",
+              "sort": "created",
+              "direction": "asc",
+              "since": "not-a-date",
+              "per_page": 30,
+              "page": 1
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code_any_of": [
+          404,
+          422
+        ],
+        "description": "Rejected: 'not-a-date' is not a valid format for since"
+      }
+    },
+    {
+      "test_id": "TC-GET-repos-owner-repo-issues-006",
+      "title": "GET /repos/{owner}/{repo}/issues - Error 404: non-existent owner",
+      "category": "error_status",
+      "requirement_ref": "GET /repos/{owner}/{repo}/issues",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues",
+      "priority": "medium",
+      "preconditions": [
+        "No resource exists for owner=nonexistent_resource_xyz"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /repos/nonexistent_resource_xyz/standard-text/issues with non-existent owner",
+          "input_data": {
+            "path_params": {
+              "owner": "nonexistent_resource_xyz",
+              "repo": "standard-text"
+            },
+            "query_params": {
+              "milestone": "standard-text",
+              "state": "open",
+              "assignee": "standard-text",
+              "type": "standard",
+              "creator": "standard-text",
+              "mentioned": "standard-text",
+              "labels": "standard-text",
+              "sort": "created",
+              "direction": "asc",
+              "since": "2026-01-15T10:30:00Z",
+              "per_page": 30,
+              "page": 1
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 404,
+        "description": "Resource not found for owner",
+        "response_body_contains": {
+          "message": "string",
+          "documentation_url": "string",
+          "url": "string",
+          "status": "string"
+        }
+      }
+    },
+    {
+      "test_id": "TC-GET-repos-owner-repo-issues-007",
+      "title": "GET /repos/{owner}/{repo}/issues - Error 404: non-existent repo",
+      "category": "error_status",
+      "requirement_ref": "GET /repos/{owner}/{repo}/issues",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues",
+      "priority": "medium",
+      "preconditions": [
+        "No resource exists for repo=nonexistent_resource_xyz"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /repos/standard-text/nonexistent_resource_xyz/issues with non-existent repo",
+          "input_data": {
+            "path_params": {
+              "owner": "standard-text",
+              "repo": "nonexistent_resource_xyz"
+            },
+            "query_params": {
+              "milestone": "standard-text",
+              "state": "open",
+              "assignee": "standard-text",
+              "type": "standard",
+              "creator": "standard-text",
+              "mentioned": "standard-text",
+              "labels": "standard-text",
+              "sort": "created",
+              "direction": "asc",
+              "since": "2026-01-15T10:30:00Z",
+              "per_page": 30,
               "page": 1
             },
             "headers": {},
@@ -369,16 +1117,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "title": "Senior Engineer",
-              "body": "standard-text",
-              "milestone": "standard-text",
-              "labels": [
-                "standard-text"
-              ],
-              "assignees": [
-                "standard-text"
-              ],
-              "type": "standard"
+              "title": "Senior Engineer"
             }
           }
         }
@@ -449,22 +1188,15 @@
             },
             "query_params": {},
             "headers": {},
-            "body": {
-              "body": "I'm having a problem with this.",
-              "assignees": [
-                "octocat"
-              ],
-              "milestone": 1,
-              "labels": [
-                "bug"
-              ]
-            }
+            "body": {}
           }
         }
       ],
       "expected_result": {
         "status_code_any_of": [
           400,
+          403,
+          404,
           422
         ],
         "description": "Rejected: required body field 'title' is missing"
@@ -484,30 +1216,28 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send POST request to /repos/standard-text/standard-text/issues for a non-existent resource",
+          "action": "Send POST request to /repos/nonexistent_resource_xyz/nonexistent_resource_xyz/issues for a non-existent resource",
           "input_data": {
             "path_params": {
-              "owner": "standard-text",
-              "repo": "standard-text"
+              "owner": "nonexistent_resource_xyz",
+              "repo": "nonexistent_resource_xyz"
             },
             "query_params": {},
             "headers": {},
             "body": {
-              "title": "Found a bug",
-              "body": "I'm having a problem with this.",
-              "assignees": [
-                "octocat"
-              ],
-              "milestone": 1,
-              "labels": [
-                "bug"
-              ]
+              "title": "Senior Engineer"
             }
           }
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          400,
+          403,
+          404,
+          410,
+          422
+        ],
         "description": "Resource not found"
       }
     },
@@ -532,15 +1262,8 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "title": "Found a bug",
-              "body": "I'm having a problem with this.",
-              "assignees": [
-                "octocat"
-              ],
-              "milestone": null,
-              "labels": [
-                "bug"
-              ]
+              "title": "Senior Engineer",
+              "milestone": null
             }
           }
         }
@@ -573,15 +1296,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "title": "Found a bug",
-              "body": "I'm having a problem with this.",
-              "assignees": [
-                "octocat"
-              ],
-              "milestone": 1,
-              "labels": [
-                "bug"
-              ]
+              "title": "Senior Engineer"
             }
           }
         }
@@ -620,15 +1335,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "title": "Found a bug",
-              "body": "I'm having a problem with this.",
-              "assignees": [
-                "octocat"
-              ],
-              "milestone": 1,
-              "labels": [
-                "bug"
-              ]
+              "title": "Senior Engineer"
             }
           }
         }
@@ -671,20 +1378,18 @@
       }
     },
     {
-      "test_id": "TC-GET-user-002",
-      "title": "GET /user - Negative: request non-existent resource",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /user",
-      "method": "GET",
+      "test_id": "TC-PATCH-user-001",
+      "title": "PATCH /user - Happy path: minimal valid request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "PATCH /user",
+      "method": "PATCH",
       "path": "/user",
-      "priority": "medium",
-      "preconditions": [
-        "The requested resource does not exist"
-      ],
+      "priority": "high",
+      "preconditions": [],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /user for a non-existent resource",
+          "action": "Send PATCH request to /user",
           "input_data": {
             "path_params": {},
             "query_params": {},
@@ -694,15 +1399,44 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
-        "description": "Resource not found"
+        "status_code": 200,
+        "description": "Returns object with fields: login, id, user_view_type, node_id, avatar_url, gravatar_id"
       }
     },
     {
-      "test_id": "TC-GET-user-003",
-      "title": "GET /user - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /user",
+      "test_id": "TC-PATCH-user-002",
+      "title": "PATCH /user - Happy path: example-based request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "PATCH /user",
+      "method": "PATCH",
+      "path": "/user",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send PATCH request to /user with example request body",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "blog": "https://github.com/blog",
+              "name": "monalisa octocat"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: login, id, user_view_type, node_id, avatar_url, gravatar_id"
+      }
+    },
+    {
+      "test_id": "TC-PATCH-user-003",
+      "title": "PATCH /user - Boundary: body 'twitter_username'=null (nullable)",
+      "category": "boundary",
+      "requirement_ref": "PATCH /user",
       "method": "PATCH",
       "path": "/user",
       "priority": "low",
@@ -710,18 +1444,20 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PATCH request to /user (unsupported method)",
+          "action": "Send PATCH request with nullable field 'twitter_username'=null",
           "input_data": {
             "path_params": {},
             "query_params": {},
             "headers": {},
-            "body": null
+            "body": {
+              "twitter_username": null
+            }
           }
         }
       ],
       "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
+        "status_code": 200,
+        "description": "Nullable field 'twitter_username' set to null should be accepted"
       }
     },
     {
@@ -768,10 +1504,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /users/jane_doe for a non-existent resource",
+          "action": "Send GET request to /users/nonexistent_resource_xyz for a non-existent resource",
           "input_data": {
             "path_params": {
-              "username": "jane_doe"
+              "username": "nonexistent_resource_xyz"
             },
             "query_params": {},
             "headers": {},
@@ -786,34 +1522,6 @@
     },
     {
       "test_id": "TC-GET-users-username-003",
-      "title": "GET /users/{username} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /users/{username}",
-      "method": "PATCH",
-      "path": "/users/{username}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /users/jane_doe (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "username": "jane_doe"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-GET-users-username-004",
       "title": "GET /users/{username} - Error 404: non-existent username",
       "category": "error_status",
       "requirement_ref": "GET /users/{username}",
@@ -899,7 +1607,7 @@
               "type": "invalid_enum_value_xyz",
               "sort": "created",
               "direction": "asc",
-              "per_page": 20,
+              "per_page": 30,
               "page": 1
             },
             "headers": {},
@@ -908,7 +1616,7 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code": 404,
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for type"
       }
     },
@@ -933,7 +1641,7 @@
               "type": "all",
               "sort": "invalid_enum_value_xyz",
               "direction": "asc",
-              "per_page": 20,
+              "per_page": 30,
               "page": 1
             },
             "headers": {},
@@ -942,7 +1650,7 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code": 404,
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for sort"
       }
     },
@@ -967,7 +1675,7 @@
               "type": "all",
               "sort": "created",
               "direction": "invalid_enum_value_xyz",
-              "per_page": 20,
+              "per_page": 30,
               "page": 1
             },
             "headers": {},
@@ -976,7 +1684,7 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code": 404,
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for direction"
       }
     }

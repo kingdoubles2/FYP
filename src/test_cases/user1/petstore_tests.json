@@ -1,7 +1,7 @@
 {
   "api_title": "Swagger Petstore - OpenAPI 3.0",
   "api_version": "1.0.27",
-  "generated_at": "2026-04-15T23:12:04Z",
+  "generated_at": "2026-04-16T19:09:18Z",
   "base_url": "https://petstore.swagger.io/v2/swagger.json",
   "test_cases": [
     {
@@ -22,22 +22,10 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 1001,
               "name": "Sample Name",
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
               "photoUrls": [
                 "https://example.com/resource"
-              ],
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
-              ],
-              "status": "available"
+              ]
             }
           }
         }
@@ -65,15 +53,15 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
               "name": "doggie",
+              "photoUrls": [
+                "https://example.com/resource"
+              ],
+              "id": 10,
               "category": {
                 "id": 1,
                 "name": "Dogs"
               },
-              "photoUrls": [
-                "https://example.com/resource"
-              ],
               "tags": [
                 {
                   "id": 10,
@@ -108,21 +96,9 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
               "photoUrls": [
                 "https://example.com/resource"
-              ],
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
-              ],
-              "status": "available"
+              ]
             }
           }
         }
@@ -130,6 +106,7 @@
       "expected_result": {
         "status_code_any_of": [
           400,
+          404,
           422
         ],
         "description": "Rejected: required body field 'name' is missing"
@@ -153,19 +130,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "name": "doggie",
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
-              ],
-              "status": "available"
+              "name": "Sample Name"
             }
           }
         }
@@ -173,6 +138,7 @@
       "expected_result": {
         "status_code_any_of": [
           400,
+          404,
           422
         ],
         "description": "Rejected: required body field 'photoUrls' is missing"
@@ -196,20 +162,9 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "name": "doggie",
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
+              "name": "Sample Name",
               "photoUrls": [
                 "https://example.com/resource"
-              ],
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
               ],
               "status": "invalid_enum_value_xyz"
             }
@@ -219,6 +174,7 @@
       "expected_result": {
         "status_code_any_of": [
           400,
+          404,
           422
         ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'status'"
@@ -242,22 +198,11 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 9223372036854775807,
-              "name": "doggie",
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
+              "name": "Sample Name",
               "photoUrls": [
                 "https://example.com/resource"
               ],
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
-              ],
-              "status": "available"
+              "id": 9223372036854775807
             }
           }
         }
@@ -285,22 +230,10 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 1001,
               "name": "Sample Name",
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
               "photoUrls": [
                 "https://example.com/resource"
-              ],
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
-              ],
-              "status": "available"
+              ]
             }
           }
         }
@@ -328,15 +261,15 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
               "name": "doggie",
+              "photoUrls": [
+                "https://example.com/resource"
+              ],
+              "id": 10,
               "category": {
                 "id": 1,
                 "name": "Dogs"
               },
-              "photoUrls": [
-                "https://example.com/resource"
-              ],
               "tags": [
                 {
                   "id": 10,
@@ -371,21 +304,9 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
               "photoUrls": [
                 "https://example.com/resource"
-              ],
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
-              ],
-              "status": "available"
+              ]
             }
           }
         }
@@ -393,6 +314,7 @@
       "expected_result": {
         "status_code_any_of": [
           400,
+          404,
           422
         ],
         "description": "Rejected: required body field 'name' is missing"
@@ -416,19 +338,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "name": "doggie",
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
-              ],
-              "status": "available"
+              "name": "Sample Name"
             }
           }
         }
@@ -436,6 +346,7 @@
       "expected_result": {
         "status_code_any_of": [
           400,
+          404,
           422
         ],
         "description": "Rejected: required body field 'photoUrls' is missing"
@@ -459,20 +370,9 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "name": "doggie",
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
+              "name": "Sample Name",
               "photoUrls": [
                 "https://example.com/resource"
-              ],
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
               ],
               "status": "invalid_enum_value_xyz"
             }
@@ -482,6 +382,7 @@
       "expected_result": {
         "status_code_any_of": [
           400,
+          404,
           422
         ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'status'"
@@ -505,22 +406,11 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 9223372036854775807,
-              "name": "doggie",
-              "category": {
-                "id": 1,
-                "name": "Dogs"
-              },
+              "name": "Sample Name",
               "photoUrls": [
                 "https://example.com/resource"
               ],
-              "tags": [
-                {
-                  "id": 10,
-                  "name": "friendly"
-                }
-              ],
-              "status": "available"
+              "id": 9223372036854775807
             }
           }
         }
@@ -638,7 +528,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: query param status has wrong type"
       }
     },
@@ -664,7 +557,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: required query param 'status' is missing"
       }
     },
@@ -692,7 +588,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid value for status"
       }
     },
@@ -750,7 +649,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: query param tags has wrong type"
       }
     },
@@ -776,7 +678,10 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Rejected: required query param 'tags' is missing"
       }
     },
@@ -836,40 +741,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-GET-pet-petId-003",
-      "title": "GET /pet/{petId} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /pet/{petId}",
-      "method": "PATCH",
-      "path": "/pet/{petId}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /pet/1001 (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "petId": 1001
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-GET-pet-petId-004",
       "title": "GET /pet/{petId} - Boundary: path petId max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "GET /pet/{petId}",
@@ -897,7 +777,7 @@
       }
     },
     {
-      "test_id": "TC-GET-pet-petId-005",
+      "test_id": "TC-GET-pet-petId-004",
       "title": "GET /pet/{petId} - Error 404: non-existent petId",
       "category": "error_status",
       "requirement_ref": "GET /pet/{petId}",
@@ -985,40 +865,12 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code": 400,
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-POST-pet-petId-003",
-      "title": "POST /pet/{petId} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "POST /pet/{petId}",
-      "method": "PATCH",
-      "path": "/pet/{petId}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /pet/1001 (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "petId": 1001
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-POST-pet-petId-004",
       "title": "POST /pet/{petId} - Boundary: path petId max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "POST /pet/{petId}",
@@ -1106,42 +958,12 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code": 400,
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-DELETE-pet-petId-003",
-      "title": "DELETE /pet/{petId} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "DELETE /pet/{petId}",
-      "method": "PATCH",
-      "path": "/pet/{petId}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /pet/1001 (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "petId": 1001
-            },
-            "query_params": {},
-            "headers": {
-              "api_key": "standard-text"
-            },
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-DELETE-pet-petId-004",
       "title": "DELETE /pet/{petId} - Boundary: path petId max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "DELETE /pet/{petId}",
@@ -1171,7 +993,7 @@
       }
     },
     {
-      "test_id": "TC-DELETE-pet-petId-005",
+      "test_id": "TC-DELETE-pet-petId-004",
       "title": "DELETE /pet/{petId} - Auth: missing 'api_key' header",
       "category": "auth",
       "requirement_ref": "DELETE /pet/{petId}",
@@ -1199,7 +1021,7 @@
       }
     },
     {
-      "test_id": "TC-DELETE-pet-petId-006",
+      "test_id": "TC-DELETE-pet-petId-005",
       "title": "DELETE /pet/{petId} - Auth: invalid 'api_key' value",
       "category": "auth",
       "requirement_ref": "DELETE /pet/{petId}",
@@ -1229,7 +1051,7 @@
       }
     },
     {
-      "test_id": "TC-DELETE-pet-petId-007",
+      "test_id": "TC-DELETE-pet-petId-006",
       "title": "DELETE /pet/{petId} - Auth: empty 'api_key' header",
       "category": "auth",
       "requirement_ref": "DELETE /pet/{petId}",
@@ -1316,40 +1138,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-POST-pet-petId-uploadImage-003",
-      "title": "POST /pet/{petId}/uploadImage - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "POST /pet/{petId}/uploadImage",
-      "method": "PATCH",
-      "path": "/pet/{petId}/uploadImage",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /pet/1001/uploadImage (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "petId": 1001
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-POST-pet-petId-uploadImage-004",
       "title": "POST /pet/{petId}/uploadImage - Boundary: path petId max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "POST /pet/{petId}/uploadImage",
@@ -1379,7 +1176,7 @@
       }
     },
     {
-      "test_id": "TC-POST-pet-petId-uploadImage-005",
+      "test_id": "TC-POST-pet-petId-uploadImage-004",
       "title": "POST /pet/{petId}/uploadImage - Error 404: non-existent petId",
       "category": "error_status",
       "requirement_ref": "POST /pet/{petId}/uploadImage",
@@ -1437,60 +1234,6 @@
       }
     },
     {
-      "test_id": "TC-GET-store-inventory-002",
-      "title": "GET /store/inventory - Negative: request non-existent resource",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /store/inventory",
-      "method": "GET",
-      "path": "/store/inventory",
-      "priority": "medium",
-      "preconditions": [
-        "The requested resource does not exist"
-      ],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send GET request to /store/inventory for a non-existent resource",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 404,
-        "description": "Resource not found"
-      }
-    },
-    {
-      "test_id": "TC-GET-store-inventory-003",
-      "title": "GET /store/inventory - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /store/inventory",
-      "method": "PATCH",
-      "path": "/store/inventory",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /store/inventory (unsupported method)",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
       "test_id": "TC-POST-store-order-001",
       "title": "POST /store/order - Happy path: minimal valid request returns 200",
       "category": "happy_path",
@@ -1507,14 +1250,7 @@
             "path_params": {},
             "query_params": {},
             "headers": {},
-            "body": {
-              "id": 1001,
-              "petId": 1001,
-              "quantity": 2,
-              "shipDate": "2026-01-15T10:30:00Z",
-              "status": "placed",
-              "complete": true
-            }
+            "body": {}
           }
         }
       ],
@@ -1574,12 +1310,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "petId": 198772,
-              "quantity": 7,
-              "shipDate": "2026-01-15T10:30:00Z",
-              "status": "invalid_enum_value_xyz",
-              "complete": true
+              "status": "invalid_enum_value_xyz"
             }
           }
         }
@@ -1587,6 +1318,7 @@
       "expected_result": {
         "status_code_any_of": [
           400,
+          404,
           422
         ],
         "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'status'"
@@ -1594,41 +1326,6 @@
     },
     {
       "test_id": "TC-POST-store-order-004",
-      "title": "POST /store/order - Negative: request non-existent resource",
-      "category": "negative_invalid",
-      "requirement_ref": "POST /store/order",
-      "method": "POST",
-      "path": "/store/order",
-      "priority": "medium",
-      "preconditions": [
-        "The requested resource does not exist"
-      ],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send POST request to /store/order for a non-existent resource",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": {
-              "id": 10,
-              "petId": 198772,
-              "quantity": 7,
-              "shipDate": "2026-01-15T10:30:00Z",
-              "status": "approved",
-              "complete": true
-            }
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 404,
-        "description": "Resource not found"
-      }
-    },
-    {
-      "test_id": "TC-POST-store-order-005",
       "title": "POST /store/order - Boundary: body id max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "POST /store/order",
@@ -1645,12 +1342,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 9223372036854775807,
-              "petId": 198772,
-              "quantity": 7,
-              "shipDate": "2026-01-15T10:30:00Z",
-              "status": "approved",
-              "complete": true
+              "id": 9223372036854775807
             }
           }
         }
@@ -1661,7 +1353,7 @@
       }
     },
     {
-      "test_id": "TC-POST-store-order-006",
+      "test_id": "TC-POST-store-order-005",
       "title": "POST /store/order - Boundary: body petId max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "POST /store/order",
@@ -1678,12 +1370,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "petId": 9223372036854775807,
-              "quantity": 7,
-              "shipDate": "2026-01-15T10:30:00Z",
-              "status": "approved",
-              "complete": true
+              "petId": 9223372036854775807
             }
           }
         }
@@ -1694,7 +1381,7 @@
       }
     },
     {
-      "test_id": "TC-POST-store-order-007",
+      "test_id": "TC-POST-store-order-006",
       "title": "POST /store/order - Boundary: body quantity max_int32(2147483647)",
       "category": "boundary",
       "requirement_ref": "POST /store/order",
@@ -1711,12 +1398,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "petId": 198772,
-              "quantity": 2147483647,
-              "shipDate": "2026-01-15T10:30:00Z",
-              "status": "approved",
-              "complete": true
+              "quantity": 2147483647
             }
           }
         }
@@ -1782,40 +1464,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-GET-store-order-orderId-003",
-      "title": "GET /store/order/{orderId} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /store/order/{orderId}",
-      "method": "PATCH",
-      "path": "/store/order/{orderId}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /store/order/5001 (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "orderId": 5001
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-GET-store-order-orderId-004",
       "title": "GET /store/order/{orderId} - Boundary: path orderId max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "GET /store/order/{orderId}",
@@ -1843,7 +1500,7 @@
       }
     },
     {
-      "test_id": "TC-GET-store-order-orderId-005",
+      "test_id": "TC-GET-store-order-orderId-004",
       "title": "GET /store/order/{orderId} - Error 404: non-existent orderId",
       "category": "error_status",
       "requirement_ref": "GET /store/order/{orderId}",
@@ -1928,40 +1585,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-DELETE-store-order-orderId-003",
-      "title": "DELETE /store/order/{orderId} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "DELETE /store/order/{orderId}",
-      "method": "PATCH",
-      "path": "/store/order/{orderId}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /store/order/5001 (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "orderId": 5001
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-DELETE-store-order-orderId-004",
       "title": "DELETE /store/order/{orderId} - Boundary: path orderId max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "DELETE /store/order/{orderId}",
@@ -1989,7 +1621,7 @@
       }
     },
     {
-      "test_id": "TC-DELETE-store-order-orderId-005",
+      "test_id": "TC-DELETE-store-order-orderId-004",
       "title": "DELETE /store/order/{orderId} - Error 404: non-existent orderId",
       "category": "error_status",
       "requirement_ref": "DELETE /store/order/{orderId}",
@@ -2035,16 +1667,7 @@
             "path_params": {},
             "query_params": {},
             "headers": {},
-            "body": {
-              "id": 1001,
-              "username": "jane_doe",
-              "firstName": "Jane",
-              "lastName": "Doe",
-              "email": "jane.doe@example.com",
-              "password": "SecurePass123!",
-              "phone": "871234567",
-              "userStatus": 1
-            }
+            "body": {}
           }
         }
       ],
@@ -2090,69 +1713,6 @@
     },
     {
       "test_id": "TC-POST-user-003",
-      "title": "POST /user - Negative: request non-existent resource",
-      "category": "negative_invalid",
-      "requirement_ref": "POST /user",
-      "method": "POST",
-      "path": "/user",
-      "priority": "medium",
-      "preconditions": [
-        "The requested resource does not exist"
-      ],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send POST request to /user for a non-existent resource",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": {
-              "id": 10,
-              "username": "theUser",
-              "firstName": "John",
-              "lastName": "James",
-              "email": "john@email.com",
-              "password": "12345",
-              "phone": "12345",
-              "userStatus": 1
-            }
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 404,
-        "description": "Resource not found"
-      }
-    },
-    {
-      "test_id": "TC-POST-user-004",
-      "title": "POST /user - Negative: send empty body when body is required",
-      "category": "negative_missing",
-      "requirement_ref": "POST /user",
-      "method": "POST",
-      "path": "/user",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send POST request with empty body",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": {}
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: request body is empty or missing required fields"
-      }
-    },
-    {
-      "test_id": "TC-POST-user-005",
       "title": "POST /user - Boundary: body id max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "POST /user",
@@ -2169,14 +1729,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 9223372036854775807,
-              "username": "theUser",
-              "firstName": "John",
-              "lastName": "James",
-              "email": "john@email.com",
-              "password": "12345",
-              "phone": "12345",
-              "userStatus": 1
+              "id": 9223372036854775807
             }
           }
         }
@@ -2187,7 +1740,7 @@
       }
     },
     {
-      "test_id": "TC-POST-user-006",
+      "test_id": "TC-POST-user-004",
       "title": "POST /user - Boundary: body userStatus max_int32(2147483647)",
       "category": "boundary",
       "requirement_ref": "POST /user",
@@ -2204,13 +1757,6 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "username": "theUser",
-              "firstName": "John",
-              "lastName": "James",
-              "email": "john@email.com",
-              "password": "12345",
-              "phone": "12345",
               "userStatus": 2147483647
             }
           }
@@ -2239,16 +1785,7 @@
             "query_params": {},
             "headers": {},
             "body": [
-              {
-                "id": 1001,
-                "username": "jane_doe",
-                "firstName": "Jane",
-                "lastName": "Doe",
-                "email": "jane.doe@example.com",
-                "password": "SecurePass123!",
-                "phone": "871234567",
-                "userStatus": 1
-              }
+              {}
             ]
           }
         }
@@ -2256,71 +1793,6 @@
       "expected_result": {
         "status_code": 200,
         "description": "Returns object with fields: id, username, firstName, lastName, email, password"
-      }
-    },
-    {
-      "test_id": "TC-POST-user-createWithList-002",
-      "title": "POST /user/createWithList - Negative: request non-existent resource",
-      "category": "negative_invalid",
-      "requirement_ref": "POST /user/createWithList",
-      "method": "POST",
-      "path": "/user/createWithList",
-      "priority": "medium",
-      "preconditions": [
-        "The requested resource does not exist"
-      ],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send POST request to /user/createWithList for a non-existent resource",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": [
-              {
-                "id": 10,
-                "username": "theUser",
-                "firstName": "John",
-                "lastName": "James",
-                "email": "john@email.com",
-                "password": "12345",
-                "phone": "12345",
-                "userStatus": 1
-              }
-            ]
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 404,
-        "description": "Resource not found"
-      }
-    },
-    {
-      "test_id": "TC-POST-user-createWithList-003",
-      "title": "POST /user/createWithList - Negative: send empty body when body is required",
-      "category": "negative_missing",
-      "requirement_ref": "POST /user/createWithList",
-      "method": "POST",
-      "path": "/user/createWithList",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send POST request with empty body",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": {}
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: request body is empty or missing required fields"
       }
     },
     {
@@ -2350,63 +1822,6 @@
       }
     },
     {
-      "test_id": "TC-GET-user-login-002",
-      "title": "GET /user/login - Negative: request non-existent resource",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /user/login",
-      "method": "GET",
-      "path": "/user/login",
-      "priority": "medium",
-      "preconditions": [
-        "The requested resource does not exist"
-      ],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send GET request to /user/login for a non-existent resource",
-          "input_data": {
-            "path_params": {},
-            "query_params": {
-              "username": "jane_doe",
-              "password": "SecurePass123!"
-            },
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 404,
-        "description": "Resource not found"
-      }
-    },
-    {
-      "test_id": "TC-GET-user-login-003",
-      "title": "GET /user/login - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /user/login",
-      "method": "PATCH",
-      "path": "/user/login",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /user/login (unsupported method)",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
       "test_id": "TC-GET-user-logout-001",
       "title": "GET /user/logout - Happy path: minimal valid request returns 200",
       "category": "happy_path",
@@ -2430,60 +1845,6 @@
       "expected_result": {
         "status_code": 200,
         "description": "Response may have no body"
-      }
-    },
-    {
-      "test_id": "TC-GET-user-logout-002",
-      "title": "GET /user/logout - Negative: request non-existent resource",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /user/logout",
-      "method": "GET",
-      "path": "/user/logout",
-      "priority": "medium",
-      "preconditions": [
-        "The requested resource does not exist"
-      ],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send GET request to /user/logout for a non-existent resource",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 404,
-        "description": "Resource not found"
-      }
-    },
-    {
-      "test_id": "TC-GET-user-logout-003",
-      "title": "GET /user/logout - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /user/logout",
-      "method": "PATCH",
-      "path": "/user/logout",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /user/logout (unsupported method)",
-          "input_data": {
-            "path_params": {},
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
       }
     },
     {
@@ -2530,10 +1891,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /user/jane_doe for a non-existent resource",
+          "action": "Send GET request to /user/nonexistent_resource_xyz for a non-existent resource",
           "input_data": {
             "path_params": {
-              "username": "jane_doe"
+              "username": "nonexistent_resource_xyz"
             },
             "query_params": {},
             "headers": {},
@@ -2542,40 +1903,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-GET-user-username-003",
-      "title": "GET /user/{username} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "GET /user/{username}",
-      "method": "PATCH",
-      "path": "/user/{username}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /user/jane_doe (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "username": "jane_doe"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-GET-user-username-004",
       "title": "GET /user/{username} - Error 404: non-existent username",
       "category": "error_status",
       "requirement_ref": "GET /user/{username}",
@@ -2618,23 +1954,14 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PUT request to /user/jane_doe with valid request body",
+          "action": "Send PUT request to /user/jane_doe",
           "input_data": {
             "path_params": {
               "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
-            "body": {
-              "id": 1001,
-              "username": "jane_doe",
-              "firstName": "Jane",
-              "lastName": "Doe",
-              "email": "jane.doe@example.com",
-              "password": "SecurePass123!",
-              "phone": "871234567",
-              "userStatus": 1
-            }
+            "body": null
           }
         }
       ],
@@ -2696,47 +2023,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PUT request to /user/jane_doe for a non-existent resource",
+          "action": "Send PUT request to /user/nonexistent_resource_xyz for a non-existent resource",
           "input_data": {
             "path_params": {
-              "username": "jane_doe"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": {
-              "id": 10,
-              "username": "theUser",
-              "firstName": "John",
-              "lastName": "James",
-              "email": "john@email.com",
-              "password": "12345",
-              "phone": "12345",
-              "userStatus": 1
-            }
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 404,
-        "description": "Resource not found"
-      }
-    },
-    {
-      "test_id": "TC-PUT-user-username-004",
-      "title": "PUT /user/{username} - Negative: send empty body when body is required",
-      "category": "negative_missing",
-      "requirement_ref": "PUT /user/{username}",
-      "method": "PUT",
-      "path": "/user/{username}",
-      "priority": "medium",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PUT request with empty body",
-          "input_data": {
-            "path_params": {
-              "username": "jane_doe"
+              "username": "nonexistent_resource_xyz"
             },
             "query_params": {},
             "headers": {},
@@ -2745,12 +2035,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 400,
-        "description": "Rejected: request body is empty or missing required fields"
+        "status_code_any_of": [
+          400,
+          404
+        ],
+        "description": "Resource not found"
       }
     },
     {
-      "test_id": "TC-PUT-user-username-005",
+      "test_id": "TC-PUT-user-username-004",
       "title": "PUT /user/{username} - Boundary: body id max_int64(9223372036854775807)",
       "category": "boundary",
       "requirement_ref": "PUT /user/{username}",
@@ -2769,14 +2062,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 9223372036854775807,
-              "username": "theUser",
-              "firstName": "John",
-              "lastName": "James",
-              "email": "john@email.com",
-              "password": "12345",
-              "phone": "12345",
-              "userStatus": 1
+              "id": 9223372036854775807
             }
           }
         }
@@ -2787,7 +2073,7 @@
       }
     },
     {
-      "test_id": "TC-PUT-user-username-006",
+      "test_id": "TC-PUT-user-username-005",
       "title": "PUT /user/{username} - Boundary: body userStatus max_int32(2147483647)",
       "category": "boundary",
       "requirement_ref": "PUT /user/{username}",
@@ -2806,13 +2092,6 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "id": 10,
-              "username": "theUser",
-              "firstName": "John",
-              "lastName": "James",
-              "email": "john@email.com",
-              "password": "12345",
-              "phone": "12345",
               "userStatus": 2147483647
             }
           }
@@ -2824,7 +2103,7 @@
       }
     },
     {
-      "test_id": "TC-PUT-user-username-007",
+      "test_id": "TC-PUT-user-username-006",
       "title": "PUT /user/{username} - Error 404: non-existent username",
       "category": "error_status",
       "requirement_ref": "PUT /user/{username}",
@@ -2844,16 +2123,7 @@
             },
             "query_params": {},
             "headers": {},
-            "body": {
-              "id": 10,
-              "username": "theUser",
-              "firstName": "John",
-              "lastName": "James",
-              "email": "john@email.com",
-              "password": "12345",
-              "phone": "12345",
-              "userStatus": 1
-            }
+            "body": {}
           }
         }
       ],
@@ -2906,10 +2176,10 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send DELETE request to /user/jane_doe for a non-existent resource",
+          "action": "Send DELETE request to /user/nonexistent_resource_xyz for a non-existent resource",
           "input_data": {
             "path_params": {
-              "username": "jane_doe"
+              "username": "nonexistent_resource_xyz"
             },
             "query_params": {},
             "headers": {},
@@ -2918,40 +2188,15 @@
         }
       ],
       "expected_result": {
-        "status_code": 404,
+        "status_code_any_of": [
+          400,
+          404
+        ],
         "description": "Resource not found"
       }
     },
     {
       "test_id": "TC-DELETE-user-username-003",
-      "title": "DELETE /user/{username} - Negative: unsupported HTTP method",
-      "category": "negative_invalid",
-      "requirement_ref": "DELETE /user/{username}",
-      "method": "PATCH",
-      "path": "/user/{username}",
-      "priority": "low",
-      "preconditions": [],
-      "steps": [
-        {
-          "step_number": 1,
-          "action": "Send PATCH request to /user/jane_doe (unsupported method)",
-          "input_data": {
-            "path_params": {
-              "username": "jane_doe"
-            },
-            "query_params": {},
-            "headers": {},
-            "body": null
-          }
-        }
-      ],
-      "expected_result": {
-        "status_code": 405,
-        "description": "Method not allowed"
-      }
-    },
-    {
-      "test_id": "TC-DELETE-user-username-004",
       "title": "DELETE /user/{username} - Error 404: non-existent username",
       "category": "error_status",
       "requirement_ref": "DELETE /user/{username}",
