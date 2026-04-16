@@ -37,6 +37,11 @@ WRONG_TYPE_MAP: Dict[str, Any] = {
     "object":  "not_an_object",
 }
 
+# Guardrails for auto-generated specs that use sentinel huge limits
+# (e.g., maxLength=2147483647) which can otherwise explode generation cost.
+SAFE_STRING_LENGTH_CAP = 1024
+SAFE_ARRAY_ITEMS_CAP = 20
+
 INVALID_FORMAT_MAP: Dict[str, str] = {
     "date-time": "not-a-date",
     "date":      "not-a-date",
@@ -269,6 +274,11 @@ def _boundary_values_for_string(schema: Dict[str, Any]) -> List[Tuple[str, Any]]
     min_len = schema.get("minLength")
     max_len = schema.get("maxLength")
 
+    if isinstance(min_len, int):
+        min_len = min(min_len, SAFE_STRING_LENGTH_CAP)
+    if isinstance(max_len, int):
+        max_len = min(max_len, SAFE_STRING_LENGTH_CAP)
+
     values: List[Tuple[str, Any]] = [("empty_string", ""), ("single_char", "a")]
 
     if min_len is not None and min_len > 0:
@@ -295,14 +305,62 @@ STATIC_BOUNDARY_VALUES: Dict[str, List[Tuple[str, Any]]] = {
 def _merge_allof(schemas: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Merge a list of schemas from an allOf clause into one."""
     merged: Dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+
     for sub in schemas:
-        merged["properties"].update(sub.get("properties", {}))
-        merged["required"].extend(sub.get("required", []))
+        if not isinstance(sub, dict):
+            continue
+
+        current = dict(sub)
+        nested = current.pop("allOf", None)
+        if isinstance(nested, list):
+            nested_merged = _merge_allof(nested)
+
+            nested_props = nested_merged.get("properties", {})
+            current_props = current.get("properties", {})
+            if isinstance(nested_props, dict) or isinstance(current_props, dict):
+                combined_props: Dict[str, Any] = {}
+                if isinstance(nested_props, dict):
+                    combined_props.update(nested_props)
+                if isinstance(current_props, dict):
+                    combined_props.update(current_props)
+                current["properties"] = combined_props
+
+            nested_required = nested_merged.get("required", [])
+            current_required = current.get("required", [])
+            combined_required: List[str] = []
+            if isinstance(nested_required, list):
+                combined_required.extend(nested_required)
+            if isinstance(current_required, list):
+                combined_required.extend(current_required)
+            if combined_required:
+                current["required"] = combined_required
+
+            for key, value in nested_merged.items():
+                if key in {"properties", "required"}:
+                    continue
+                current.setdefault(key, value)
+
+        props = current.get("properties", {})
+        if isinstance(props, dict):
+            merged["properties"].update(props)
+
+        req = current.get("required", [])
+        if isinstance(req, list):
+            merged["required"].extend(req)
+
         for key in ("type", "format", "description"):
-            if key in sub and key not in merged:
-                merged[key] = sub[key]
-    if not merged["required"]:
-        del merged["required"]
+            if key in current and key not in merged:
+                merged[key] = current[key]
+
+    if merged.get("required"):
+        # Preserve order while deduplicating.
+        merged["required"] = list(dict.fromkeys(merged["required"]))
+    else:
+        merged.pop("required", None)
+
+    if not merged.get("properties"):
+        merged.pop("properties", None)
+
     return merged
 
 
@@ -324,6 +382,10 @@ def _name_parts(token: Optional[str]) -> List[str]:
 
 
 def _token_hints_from_name(norm_name: str) -> Optional[str]:
+    if norm_name == "prefer":
+        return "return=minimal"
+    if norm_name == "fields":
+        return "payment_source"
     if "email" in norm_name:
         return "jane.doe@example.com"
     if "phone" in norm_name or "mobile" in norm_name:
@@ -602,6 +664,12 @@ def _short_semantic_value(norm_name: str, max_len: int) -> Optional[str]:
 def _apply_string_constraints(schema: Dict[str, Any], value: str, *, name: Optional[str] = None) -> str:
     min_len = schema.get("minLength")
     max_len = schema.get("maxLength")
+    pattern = schema.get("pattern")
+
+    if isinstance(min_len, int):
+        min_len = min(min_len, SAFE_STRING_LENGTH_CAP)
+    if isinstance(max_len, int):
+        max_len = min(max_len, SAFE_STRING_LENGTH_CAP)
 
     def _is_valid_length(s: str) -> bool:
         if min_len is not None and len(s) < min_len:
@@ -609,6 +677,29 @@ def _apply_string_constraints(schema: Dict[str, Any], value: str, *, name: Optio
         if max_len is not None and len(s) > max_len:
             return False
         return True
+
+    def _matches_pattern(s: str) -> bool:
+        if not pattern:
+            return True
+        try:
+            return re.fullmatch(pattern, s) is not None
+        except re.error:
+            # If pattern is not a valid Python regex, don't block generation.
+            return True
+
+    def _pattern_candidates() -> List[str]:
+        if not pattern:
+            return []
+        # Handle common API patterns deterministically.
+        if pattern == "^[a-z_]*$":
+            return ["payment_source", "field", "value"]
+        if pattern == "^[A-Z0-9]+$":
+            return ["RES10001", "ABC123", "A1"]
+        if pattern == "^[A-Z_]+$":
+            return ["VALUE", "STANDARD_TEXT"]
+        if "[0-9]" in pattern:
+            return ["1", "123", "12345"]
+        return ["value", "sample", "a"]
 
     def _semantic_candidates(src: str) -> List[str]:
         candidates: List[str] = []
@@ -647,6 +738,13 @@ def _apply_string_constraints(schema: Dict[str, Any], value: str, *, name: Optio
         result = result + ("x" * (min_len - len(result)))
     if max_len is not None and len(result) > max_len:
         result = result[:max_len]
+
+    if not _matches_pattern(result):
+        for cand in _pattern_candidates():
+            if _is_valid_length(cand) and _matches_pattern(cand):
+                result = cand
+                break
+
     return result
 
 
@@ -665,6 +763,55 @@ def _default_value_from_type_with_constraints(
     return _apply_string_constraints(schema, "standard-text")
 
 
+_AUTH_LIKE_HEADER_EXACT = {
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "api-key",
+    "apikey",
+    "access-token",
+    "id-token",
+    "paypal-auth-assertion",
+    "paypal-transmission-id",
+    "paypal-transmission-sig",
+    "paypal-transmission-time",
+    "paypal-cert-url",
+}
+
+
+def should_autofill_header_param(param: Dict[str, Any]) -> bool:
+    """Return whether generator should auto-fill this header parameter.
+
+    Design choice:
+    - Always keep required headers.
+    - Skip optional auth/assertion/token-like headers because synthetic values
+      often cause hard failures in real sandbox APIs.
+    """
+    if param.get("required", False):
+        return True
+
+    name = str(param.get("name", "")).strip().lower()
+    if not name:
+        return True
+
+    if name in _AUTH_LIKE_HEADER_EXACT:
+        return False
+
+    auth_like_markers = (
+        "authorization",
+        "auth-assertion",
+        "auth_assertion",
+        "bearer",
+        "oauth",
+        "api-key",
+        "apikey",
+        "token",
+        "signature",
+        "transmission-sig",
+    )
+    return not any(marker in name for marker in auth_like_markers)
+
+
 # ---------------------------------------------------------------------------
 # Value generators
 # ---------------------------------------------------------------------------
@@ -677,6 +824,7 @@ def generate_valid_value(
     path: str = "",
     skip_example: bool = False,
     use_realistic: bool = True,
+    required_only: bool = False,
 ) -> Any:
     """Return a single deterministic valid value for *schema*.
 
@@ -702,6 +850,7 @@ def generate_valid_value(
             path=path,
             skip_example=skip_example,
             use_realistic=use_realistic,
+            required_only=required_only,
         )
     if "oneOf" in schema:
         return generate_valid_value(
@@ -711,6 +860,7 @@ def generate_valid_value(
             path=path,
             skip_example=skip_example,
             use_realistic=use_realistic,
+            required_only=required_only,
         )
     if "anyOf" in schema:
         return generate_valid_value(
@@ -720,6 +870,7 @@ def generate_valid_value(
             path=path,
             skip_example=skip_example,
             use_realistic=use_realistic,
+            required_only=required_only,
         )
 
     schema_type = schema.get("type")
@@ -729,6 +880,17 @@ def generate_valid_value(
     if schema_type is None and "properties" in schema:
         schema_type = "object"
 
+    # Respect explicit defaults from spec for realistic request generation.
+    if "default" in schema:
+        default_value = schema["default"]
+        if schema_type == "string":
+            return _apply_string_constraints(schema, str(default_value), name=name)
+        if schema_type == "integer":
+            return _apply_numeric_constraints(schema, float(default_value), as_integer=True)
+        if schema_type == "number":
+            return _apply_numeric_constraints(schema, float(default_value), as_integer=False)
+        return default_value
+
     if schema_type == "object":
         return generate_valid_object(
             schema,
@@ -737,6 +899,7 @@ def generate_valid_value(
             path=path,
             skip_example=skip_example,
             use_realistic=use_realistic,
+            required_only=required_only,
         )
 
     if schema_type == "array":
@@ -745,9 +908,9 @@ def generate_valid_value(
         max_items = schema.get("maxItems")
         count = 1
         if isinstance(min_items, int):
-            count = max(1, min_items)
+            count = max(1, min(min_items, SAFE_ARRAY_ITEMS_CAP))
         if isinstance(max_items, int):
-            count = min(count, max_items)
+            count = min(count, min(max_items, SAFE_ARRAY_ITEMS_CAP))
         item_path = f"{path}[]" if path else "[]"
         return [
             generate_valid_value(
@@ -757,6 +920,7 @@ def generate_valid_value(
                 path=item_path,
                 skip_example=skip_example,
                 use_realistic=use_realistic,
+                required_only=required_only,
             )
             for _ in range(max(0, count))
         ]
@@ -804,16 +968,20 @@ def generate_valid_object(
     path: str = "",
     skip_example: bool = False,
     use_realistic: bool = True,
+    required_only: bool = False,
 ) -> Dict[str, Any]:
     """Build a complete valid object from an object schema.
 
     Excludes ``readOnly`` fields (they are server-generated, not sent in requests).
     """
     properties = schema.get("properties", {})
+    required_fields = set(schema.get("required", []))
     result: Dict[str, Any] = {}
 
     for prop_name, prop_schema in properties.items():
         if prop_schema.get("readOnly"):
+            continue
+        if required_only and prop_name not in required_fields:
             continue
         child_path = f"{path}/{prop_name}" if path else prop_name
         result[prop_name] = generate_valid_value(
@@ -823,6 +991,7 @@ def generate_valid_object(
             path=child_path,
             skip_example=skip_example,
             use_realistic=use_realistic,
+            required_only=required_only,
         )
 
     if not properties and "additionalProperties" in schema:
