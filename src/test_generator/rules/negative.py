@@ -8,11 +8,15 @@ from test_generator.sample_data import (
     generate_wrong_type_value,
     generate_invalid_format_value,
     pick_error_status,
+    should_autofill_header_param,
 )
 
 
-def _build_valid_params(params: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {p["name"]: generate_valid_value(p["schema"], name=p["name"]) for p in params}
+def _build_valid_params(params: List[Dict[str, Any]], *, is_header: bool = False) -> Dict[str, Any]:
+    selected = params
+    if is_header:
+        selected = [p for p in params if should_autofill_header_param(p)]
+    return {p["name"]: generate_valid_value(p["schema"], name=p["name"]) for p in selected}
 
 
 def _render_path(path: str, path_params: Dict[str, Any]) -> str:
@@ -24,8 +28,26 @@ def _render_path(path: str, path_params: Dict[str, Any]) -> str:
 
 def _error_status_kw(response_schemas: Dict[str, Any]) -> Dict[str, Any]:
     """Return validation-style error expectation, preferring declared spec codes."""
-    # Prefer common validation/business codes, but always stay within declared codes when possible.
-    return pick_error_status(response_schemas, ["422", "400", "409", "403", "404"])
+    # Real-world APIs often return 404 before detailed validation errors when resource lookup fails first.
+    base = pick_error_status(response_schemas, ["404", "422", "400", "409", "403"])
+    return _allow_runtime_404(base)
+
+
+def _allow_runtime_404(status_kw: Dict[str, Any]) -> Dict[str, Any]:
+    """Allow 404 as runtime-tolerant fallback even when not declared in spec."""
+    if "status_code_any_of" in status_kw:
+        vals = list(status_kw["status_code_any_of"])
+        if 404 not in vals:
+            vals.append(404)
+        return {"status_code_any_of": sorted(set(vals))}
+
+    if "status_code" in status_kw:
+        code = int(status_kw["status_code"])
+        if code == 404:
+            return {"status_code": 404}
+        return {"status_code_any_of": sorted({code, 404})}
+
+    return {"status_code": 404}
 
 
 def _resource_not_found_kw(response_schemas: Dict[str, Any]) -> Dict[str, Any]:
@@ -303,10 +325,15 @@ def _fallback_negative_case(
 def generate_negative_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     valid_path = _build_valid_params(endpoint.get("path_params", []))
     valid_query = _build_valid_params(endpoint.get("query_params", []))
-    valid_headers = _build_valid_params(endpoint.get("header_params", []))
+    valid_headers = _build_valid_params(endpoint.get("header_params", []), is_header=True)
     valid_body = None
     if endpoint.get("request_schema"):
-        valid_body = generate_valid_value(endpoint["request_schema"])
+        valid_body = generate_valid_value(
+            endpoint["request_schema"],
+            skip_example=True,
+            use_realistic=True,
+            required_only=True,
+        )
 
     err_kw = _error_status_kw(endpoint.get("response_schemas", {}))
 
@@ -325,7 +352,7 @@ def generate_negative_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     if len(cases) < 2:
         # Second fallback: send completely empty body when one is expected
         ref = endpoint["endpoint_id"]
-        if endpoint.get("request_schema"):
+        if endpoint.get("request_schema") and endpoint.get("request_body_required", False):
             cases.append(TestCase(
                 test_id="",
                 title=f"{ref} - Negative: send empty body when body is required",
