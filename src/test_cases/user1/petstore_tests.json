@@ -1,7 +1,7 @@
 {
   "api_title": "Swagger Petstore - OpenAPI 3.0",
   "api_version": "1.0.27",
-  "generated_at": "2026-04-16T19:09:18Z",
+  "generated_at": "2026-04-16T20:13:15Z",
   "base_url": "https://petstore.swagger.io/v2/swagger.json",
   "test_cases": [
     {
@@ -22,7 +22,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "name": "Sample Name",
+              "name": "Buddy",
               "photoUrls": [
                 "https://example.com/resource"
               ]
@@ -130,7 +130,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "name": "Sample Name"
+              "name": "Buddy"
             }
           }
         }
@@ -162,7 +162,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "name": "Sample Name",
+              "name": "Buddy",
               "photoUrls": [
                 "https://example.com/resource"
               ],
@@ -198,7 +198,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "name": "Sample Name",
+              "name": "Buddy",
               "photoUrls": [
                 "https://example.com/resource"
               ],
@@ -230,7 +230,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "name": "Sample Name",
+              "name": "Buddy",
               "photoUrls": [
                 "https://example.com/resource"
               ]
@@ -338,7 +338,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "name": "Sample Name"
+              "name": "Buddy"
             }
           }
         }
@@ -370,7 +370,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "name": "Sample Name",
+              "name": "Buddy",
               "photoUrls": [
                 "https://example.com/resource"
               ],
@@ -406,7 +406,7 @@
             "query_params": {},
             "headers": {},
             "body": {
-              "name": "Sample Name",
+              "name": "Buddy",
               "photoUrls": [
                 "https://example.com/resource"
               ],
@@ -1954,14 +1954,14 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PUT request to /user/jane_doe",
+          "action": "Send PUT request to /user/jane_doe with valid request body",
           "input_data": {
             "path_params": {
               "username": "jane_doe"
             },
             "query_params": {},
             "headers": {},
-            "body": null
+            "body": {}
           }
         }
       ],

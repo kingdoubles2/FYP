@@ -1,7 +1,7 @@
 {
   "api_title": "GitHub v3 REST API",
   "api_version": "1.1.4",
-  "generated_at": "2026-04-16T19:09:18Z",
+  "generated_at": "2026-04-16T20:13:14Z",
   "base_url": "https://api.github.com",
   "test_cases": [
     {
@@ -157,7 +157,7 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PATCH request to /repos/standard-text/standard-text",
+          "action": "Send PATCH request to /repos/standard-text/standard-text with valid request body",
           "input_data": {
             "path_params": {
               "owner": "standard-text",
@@ -165,7 +165,7 @@
             },
             "query_params": {},
             "headers": {},
-            "body": null
+            "body": {}
           }
         }
       ],
@@ -1389,12 +1389,12 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PATCH request to /user",
+          "action": "Send PATCH request to /user with valid request body",
           "input_data": {
             "path_params": {},
             "query_params": {},
             "headers": {},
-            "body": null
+            "body": {}
           }
         }
       ],

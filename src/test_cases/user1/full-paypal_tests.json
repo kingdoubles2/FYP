@@ -1,7 +1,7 @@
 {
   "api_title": "Orders",
   "api_version": "2.25",
-  "generated_at": "2026-04-16T19:09:18Z",
+  "generated_at": "2026-04-16T20:13:15Z",
   "base_url": "https://api-m.sandbox.paypal.com",
   "test_cases": [
     {
@@ -3180,14 +3180,20 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PATCH request to /v2/checkout/orders/RES10001",
+          "action": "Send PATCH request to /v2/checkout/orders/RES10001 with valid request body",
           "input_data": {
             "path_params": {
               "id": "RES10001"
             },
             "query_params": {},
             "headers": {},
-            "body": null
+            "body": [
+              {
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
+              }
+            ]
           }
         }
       ],
@@ -3219,7 +3225,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -3255,7 +3263,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -3291,7 +3301,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -3323,7 +3335,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -3359,7 +3373,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -3393,7 +3409,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -4610,7 +4628,7 @@
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PATCH request to /v2/checkout/orders/RES10001/trackers/RES10001",
+          "action": "Send PATCH request to /v2/checkout/orders/RES10001/trackers/RES10001 with valid request body",
           "input_data": {
             "path_params": {
               "id": "RES10001",
@@ -4618,7 +4636,13 @@
             },
             "query_params": {},
             "headers": {},
-            "body": null
+            "body": [
+              {
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
+              }
+            ]
           }
         }
       ],
@@ -4695,7 +4719,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -4733,7 +4759,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -4771,7 +4799,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -4804,7 +4834,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -4842,7 +4874,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -4875,7 +4909,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -4915,7 +4951,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }
@@ -4950,7 +4988,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/status",
+                "value": "updated"
               }
             ]
           }

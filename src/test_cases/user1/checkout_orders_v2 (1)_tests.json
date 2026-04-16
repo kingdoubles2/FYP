@@ -1,7 +1,7 @@
 {
   "api_title": "Orders",
   "api_version": "2.32",
-  "generated_at": "2026-04-16T19:09:18Z",
+  "generated_at": "2026-04-16T20:19:21Z",
   "base_url": "https://api-m.paypal.com",
   "test_cases": [
     {
@@ -3595,15 +3595,15 @@
       "path": "/v2/checkout/orders/{id}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=RES10001"
+        "Resource exists for id=5O190127TN364715T"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send GET request to /v2/checkout/orders/RES10001",
+          "action": "Send GET request to /v2/checkout/orders/5O190127TN364715T",
           "input_data": {
             "path_params": {
-              "id": "RES10001"
+              "id": "5O190127TN364715T"
             },
             "query_params": {},
             "headers": {},
@@ -3984,19 +3984,32 @@
       "path": "/v2/checkout/orders/{id}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=RES10001"
+        "Resource exists for id=5O190127TN364715T"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PATCH request to /v2/checkout/orders/RES10001",
+          "action": "Send PATCH request to /v2/checkout/orders/5O190127TN364715T with valid request body",
           "input_data": {
             "path_params": {
-              "id": "RES10001"
+              "id": "5O190127TN364715T"
             },
             "query_params": {},
             "headers": {},
-            "body": null
+            "body": [
+              {
+                "op": "replace",
+                "path": "/purchase_units/@reference_id=='PUHF'/shipping/address",
+                "value": {
+                  "address_line_1": "2211 N First Street",
+                  "address_line_2": "Building 17",
+                  "admin_area_2": "San Jose",
+                  "admin_area_1": "CA",
+                  "postal_code": "95131",
+                  "country_code": "US"
+                }
+              }
+            ]
           }
         }
       ],
@@ -4071,7 +4084,16 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "replace",
+                "path": "/purchase_units/@reference_id=='PUHF'/shipping/address",
+                "value": {
+                  "address_line_1": "2211 N First Street",
+                  "address_line_2": "Building 17",
+                  "admin_area_2": "San Jose",
+                  "admin_area_1": "CA",
+                  "postal_code": "95131",
+                  "country_code": "US"
+                }
               }
             ]
           }
@@ -4108,7 +4130,16 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "replace",
+                "path": "/purchase_units/@reference_id=='PUHF'/shipping/address",
+                "value": {
+                  "address_line_1": "2211 N First Street",
+                  "address_line_2": "Building 17",
+                  "admin_area_2": "San Jose",
+                  "admin_area_1": "CA",
+                  "postal_code": "95131",
+                  "country_code": "US"
+                }
               }
             ]
           }
@@ -4145,7 +4176,16 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "replace",
+                "path": "/purchase_units/@reference_id=='PUHF'/shipping/address",
+                "value": {
+                  "address_line_1": "2211 N First Street",
+                  "address_line_2": "Building 17",
+                  "admin_area_2": "San Jose",
+                  "admin_area_1": "CA",
+                  "postal_code": "95131",
+                  "country_code": "US"
+                }
               }
             ]
           }
@@ -4177,7 +4217,16 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "replace",
+                "path": "/purchase_units/@reference_id=='PUHF'/shipping/address",
+                "value": {
+                  "address_line_1": "2211 N First Street",
+                  "address_line_2": "Building 17",
+                  "admin_area_2": "San Jose",
+                  "admin_area_1": "CA",
+                  "postal_code": "95131",
+                  "country_code": "US"
+                }
               }
             ]
           }
@@ -4214,7 +4263,16 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "replace",
+                "path": "/purchase_units/@reference_id=='PUHF'/shipping/address",
+                "value": {
+                  "address_line_1": "2211 N First Street",
+                  "address_line_2": "Building 17",
+                  "admin_area_2": "San Jose",
+                  "admin_area_1": "CA",
+                  "postal_code": "95131",
+                  "country_code": "US"
+                }
               }
             ]
           }
@@ -4375,7 +4433,16 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "replace",
+                "path": "/purchase_units/@reference_id=='PUHF'/shipping/address",
+                "value": {
+                  "address_line_1": "2211 N First Street",
+                  "address_line_2": "Building 17",
+                  "admin_area_2": "San Jose",
+                  "admin_area_1": "CA",
+                  "postal_code": "95131",
+                  "country_code": "US"
+                }
               }
             ]
           }
@@ -4402,15 +4469,15 @@
       "path": "/v2/checkout/orders/{id}/confirm-payment-source",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=RES10001"
+        "Resource exists for id=5O190127TN364715T"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send POST request to /v2/checkout/orders/RES10001/confirm-payment-source with valid request body",
+          "action": "Send POST request to /v2/checkout/orders/5O190127TN364715T/confirm-payment-source with valid request body",
           "input_data": {
             "path_params": {
-              "id": "RES10001"
+              "id": "5O190127TN364715T"
             },
             "query_params": {},
             "headers": {},
@@ -4860,15 +4927,15 @@
       "path": "/v2/checkout/orders/{id}/authorize",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=RES10001"
+        "Resource exists for id=5O190127TN364715T"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send POST request to /v2/checkout/orders/RES10001/authorize with valid request body",
+          "action": "Send POST request to /v2/checkout/orders/5O190127TN364715T/authorize with valid request body",
           "input_data": {
             "path_params": {
-              "id": "RES10001"
+              "id": "5O190127TN364715T"
             },
             "query_params": {},
             "headers": {},
@@ -5253,15 +5320,15 @@
       "path": "/v2/checkout/orders/{id}/capture",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=RES10001"
+        "Resource exists for id=5O190127TN364715T"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send POST request to /v2/checkout/orders/RES10001/capture with valid request body",
+          "action": "Send POST request to /v2/checkout/orders/5O190127TN364715T/capture with valid request body",
           "input_data": {
             "path_params": {
-              "id": "RES10001"
+              "id": "5O190127TN364715T"
             },
             "query_params": {},
             "headers": {},
@@ -5646,15 +5713,15 @@
       "path": "/v2/checkout/orders/{id}/track",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=RES10001"
+        "Resource exists for id=5O190127TN364715T"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send POST request to /v2/checkout/orders/RES10001/track with valid request body",
+          "action": "Send POST request to /v2/checkout/orders/5O190127TN364715T/track with valid request body",
           "input_data": {
             "path_params": {
-              "id": "RES10001"
+              "id": "5O190127TN364715T"
             },
             "query_params": {},
             "headers": {},
@@ -6124,20 +6191,26 @@
       "path": "/v2/checkout/orders/{id}/trackers/{tracker_id}",
       "priority": "high",
       "preconditions": [
-        "Resource exists for id=RES10001, tracker_id=RES10001"
+        "Resource exists for id=5O190127TN364715T, tracker_id=8MC585209K746392H443844607820"
       ],
       "steps": [
         {
           "step_number": 1,
-          "action": "Send PATCH request to /v2/checkout/orders/RES10001/trackers/RES10001",
+          "action": "Send PATCH request to /v2/checkout/orders/5O190127TN364715T/trackers/8MC585209K746392H443844607820 with valid request body",
           "input_data": {
             "path_params": {
-              "id": "RES10001",
-              "tracker_id": "RES10001"
+              "id": "5O190127TN364715T",
+              "tracker_id": "8MC585209K746392H443844607820"
             },
             "query_params": {},
             "headers": {},
-            "body": null
+            "body": [
+              {
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
+              }
+            ]
           }
         }
       ],
@@ -6207,7 +6280,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
               }
             ]
           }
@@ -6245,7 +6320,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
               }
             ]
           }
@@ -6283,7 +6360,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
               }
             ]
           }
@@ -6316,7 +6395,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
               }
             ]
           }
@@ -6354,7 +6435,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
               }
             ]
           }
@@ -6387,7 +6470,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
               }
             ]
           }
@@ -6536,7 +6621,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
               }
             ]
           }
@@ -6578,7 +6665,9 @@
             "headers": {},
             "body": [
               {
-                "op": "add"
+                "op": "add",
+                "path": "/notify_payer",
+                "value": true
               }
             ]
           }
