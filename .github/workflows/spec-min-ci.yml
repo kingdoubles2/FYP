@@ -19,6 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: src
+      CONTRACTGUARD_BASE_URL: ${{ secrets.CONTRACTGUARD_BASE_URL }}
+      CONTRACTGUARD_BEARER_TOKEN: ${{ secrets.CONTRACTGUARD_BEARER_TOKEN }}
+      CONTRACTGUARD_API_KEY: ${{ secrets.CONTRACTGUARD_API_KEY }}
+      CONTRACTGUARD_API_KEY_HEADER: ${{ secrets.CONTRACTGUARD_API_KEY_HEADER }}
 
     steps:
       - name: Checkout
@@ -45,12 +49,7 @@ jobs:
           python src/generate_tests.py build/ir --pretty -o build/tests
 
       - name: Run generated tests (optional when base URL is configured)
-        if: ${{ secrets.CONTRACTGUARD_BASE_URL != '' }}
-        env:
-          CONTRACTGUARD_BASE_URL: ${{ secrets.CONTRACTGUARD_BASE_URL }}
-          CONTRACTGUARD_BEARER_TOKEN: ${{ secrets.CONTRACTGUARD_BEARER_TOKEN }}
-          CONTRACTGUARD_API_KEY: ${{ secrets.CONTRACTGUARD_API_KEY }}
-          CONTRACTGUARD_API_KEY_HEADER: ${{ secrets.CONTRACTGUARD_API_KEY_HEADER }}
+        if: ${{ env.CONTRACTGUARD_BASE_URL != '' }}
         run: |
           mkdir -p build/results
           python src/test_runner/run_test.py build/tests --timeout 12 --json-output build/results/run-results.json
