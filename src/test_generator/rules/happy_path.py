@@ -45,6 +45,7 @@ def _build_valid_params(
     skip_example: bool = False,
     use_realistic: bool = False,
     is_header: bool = False,
+    prefer_example_for_required: bool = False,
 ) -> Dict[str, Any]:
     """Generate a valid value for every parameter in the list.
 
@@ -59,7 +60,14 @@ def _build_valid_params(
         selected = [p for p in selected if p.get("required", False)]
     return {
         p["name"]: generate_valid_value(
-            p["schema"], name=p["name"], skip_example=skip_example, use_realistic=use_realistic,
+            p["schema"],
+            name=p["name"],
+            skip_example=(
+                False
+                if prefer_example_for_required and p.get("required", False)
+                else skip_example
+            ),
+            use_realistic=use_realistic,
         )
         for p in selected
     }
@@ -144,7 +152,11 @@ def generate_happy_path_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
 
     # ----- Case 1: Minimal valid request (required params only, no examples) -----
     min_path = _build_valid_params(
-        endpoint.get("path_params", []), required_only=True, skip_example=True, use_realistic=True,
+        endpoint.get("path_params", []),
+        required_only=True,
+        skip_example=True,
+        use_realistic=True,
+        prefer_example_for_required=True,
     )
     min_query = _build_valid_params(
         endpoint.get("query_params", []), required_only=True, skip_example=True, use_realistic=True,
@@ -157,7 +169,11 @@ def generate_happy_path_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     body_required = endpoint.get("request_body_required", False)
     if req_schema and (body_required or method in {"POST", "PUT", "PATCH"}):
         min_body = generate_valid_value(
-            req_schema, skip_example=True, use_realistic=True, required_only=True,
+            req_schema,
+            path=path,
+            skip_example=True,
+            use_realistic=True,
+            required_only=True,
         )
         # Many APIs reject null/absent payload when a request schema exists.
         if method in {"POST", "PUT", "PATCH"} and min_body is None:
