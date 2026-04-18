@@ -912,8 +912,16 @@ def generate_valid_value(
         if isinstance(max_items, int):
             count = min(count, min(max_items, SAFE_ARRAY_ITEMS_CAP))
         item_path = f"{path}[]" if path else "[]"
-        return [
-            generate_valid_value(
+        schema_example_item = None
+        schema_example = schema.get("example")
+        if isinstance(schema_example, list) and schema_example:
+            first_item = schema_example[0]
+            if isinstance(first_item, dict):
+                schema_example_item = first_item
+
+        items: List[Any] = []
+        for _ in range(max(0, count)):
+            item_value = generate_valid_value(
                 items_schema,
                 name=name,
                 parent_name=parent_name,
@@ -922,8 +930,33 @@ def generate_valid_value(
                 use_realistic=use_realistic,
                 required_only=required_only,
             )
-            for _ in range(max(0, count))
-        ]
+
+            # For JSON Patch arrays, schema-level examples often carry the only
+            # operation-specific valid pointer. Reuse them as hints when our
+            # minimal fallback produced a generic placeholder.
+            if isinstance(item_value, dict) and isinstance(schema_example_item, dict):
+                is_patch_like = "op" in item_value and ("path" in item_value or "from" in item_value)
+                if is_patch_like:
+                    ex_path = schema_example_item.get("path")
+                    ex_op = schema_example_item.get("op")
+                    path_aligned_to_example = False
+                    if ex_path and item_value.get("path") in {None, "", "/status"}:
+                        item_value["path"] = ex_path
+                        path_aligned_to_example = True
+                        if ex_op:
+                            item_value["op"] = ex_op
+
+                    if item_value.get("op") in {"add", "replace", "test"} and "value" in schema_example_item:
+                        if path_aligned_to_example and item_value.get("value") in {None, "", "updated"}:
+                            item_value["value"] = schema_example_item["value"]
+                        else:
+                            item_value.setdefault("value", schema_example_item["value"])
+                    if item_value.get("op") in {"move", "copy"} and schema_example_item.get("from"):
+                        item_value.setdefault("from", schema_example_item["from"])
+
+            items.append(item_value)
+
+        return items
 
     if use_realistic:
         semantic = _realistic_value_from_semantics(
@@ -1006,6 +1039,54 @@ def generate_valid_object(
                 skip_example=skip_example,
                 use_realistic=use_realistic,
             )
+
+    # JSON Patch objects frequently rely on semantic requirements that are not
+    # always encoded as strict schema-level "required" fields.
+    if isinstance(properties, dict) and "op" in properties and "path" in properties:
+        op_schema = properties.get("op") if isinstance(properties.get("op"), dict) else {}
+        op_enum = op_schema.get("enum") if isinstance(op_schema.get("enum"), list) else []
+
+        op = str(result.get("op") or "")
+        if not op:
+            if "replace" in op_enum:
+                op = "replace"
+            elif op_enum:
+                op = str(op_enum[0])
+            else:
+                op = "replace"
+        if required_only and op not in {"add", "remove", "replace", "move", "copy", "test"}:
+            op = "replace"
+        result["op"] = op
+
+        path_schema = properties.get("path") if isinstance(properties.get("path"), dict) else {}
+        path_default = path_schema.get("example") or path_schema.get("default")
+        if path_default in (None, ""):
+            path_enum = path_schema.get("enum") if isinstance(path_schema.get("enum"), list) else []
+            path_default = path_enum[0] if path_enum else "/status"
+        result.setdefault("path", path_default)
+        if result.get("path") in (None, ""):
+            result["path"] = "/status"
+
+        value_schema = properties.get("value") if isinstance(properties.get("value"), dict) else {}
+        value_default = value_schema.get("example") if isinstance(value_schema, dict) else None
+        if value_default is None and isinstance(value_schema, dict):
+            if "default" in value_schema:
+                value_default = value_schema.get("default")
+            elif isinstance(value_schema.get("enum"), list) and value_schema.get("enum"):
+                value_default = value_schema["enum"][0]
+
+        if op in {"add", "replace", "test"}:
+            if value_default is None:
+                value_default = "updated"
+            result.setdefault("value", value_default)
+
+        from_schema = properties.get("from") if isinstance(properties.get("from"), dict) else {}
+        from_default = from_schema.get("example") or from_schema.get("default")
+        if from_default in (None, ""):
+            from_enum = from_schema.get("enum") if isinstance(from_schema.get("enum"), list) else []
+            from_default = from_enum[0] if from_enum else "/status"
+        if op in {"move", "copy"}:
+            result.setdefault("from", from_default)
 
     return result
 
