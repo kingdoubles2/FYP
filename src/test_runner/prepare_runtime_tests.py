@@ -11,6 +11,20 @@ from typing import Any, Dict, List, Tuple
 PLACEHOLDER_PATTERN = re.compile(r"\{([^{}]+)\}")
 ENV_PREFIX = "CONTRACTGUARD_MAP_"
 RUNTIME_MAPPING_JSON_ENV = "CONTRACTGUARD_RUNTIME_MAPPING_JSON"
+GENERATOR_PLACEHOLDER_VALUES = {
+    "standard-text",
+    "standard_text",
+    "jane_doe",
+    "john_doe",
+    "sample",
+    "sample-text",
+    "sample_text",
+    "example",
+    "example-text",
+    "example_text",
+    "string",
+    "text",
+}
 
 
 def collect_test_files(path: Path) -> List[Path]:
@@ -175,7 +189,11 @@ def is_placeholder_value(value: Any, key: str) -> bool:
         "changeme",
         "todo",
     }
-    return normalized in candidates
+    if normalized in candidates:
+        return True
+    if normalized in GENERATOR_PLACEHOLDER_VALUES:
+        return True
+    return False
 
 
 def to_mapping_dict(value: Any) -> Dict[str, Any]:
