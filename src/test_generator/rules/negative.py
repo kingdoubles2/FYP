@@ -323,6 +323,7 @@ def _fallback_negative_case(
 # ---------------------------------------------------------------------------
 
 def generate_negative_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
+    path = endpoint["path"]
     valid_path = _build_valid_params(endpoint.get("path_params", []))
     valid_query = _build_valid_params(endpoint.get("query_params", []))
     valid_headers = _build_valid_params(endpoint.get("header_params", []), is_header=True)
@@ -330,6 +331,7 @@ def generate_negative_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     if endpoint.get("request_schema"):
         valid_body = generate_valid_value(
             endpoint["request_schema"],
+            path=path,
             skip_example=True,
             use_realistic=True,
             required_only=True,
