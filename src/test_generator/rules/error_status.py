@@ -94,6 +94,7 @@ def _cases_for_404(
 # ---------------------------------------------------------------------------
 
 def generate_error_status_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
+    path = endpoint["path"]
     resp_schemas = endpoint.get("response_schemas", {})
 
     # Only generate 404 cases when the IR actually declares a 404 response
@@ -107,6 +108,7 @@ def generate_error_status_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     if endpoint.get("request_schema"):
         valid_body = generate_valid_value(
             endpoint["request_schema"],
+            path=path,
             skip_example=True,
             use_realistic=True,
             required_only=True,
