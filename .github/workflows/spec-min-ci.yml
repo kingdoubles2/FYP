@@ -1,0 +1,67 @@
+name: Spec Minimal CI
+
+on:
+  pull_request:
+    paths:
+      - "src/specs/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/specs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spec-pipeline:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/backend/requirements.txt
+
+      - name: Build IR from specs
+        run: |
+          mkdir -p build/ir
+          python src/extract_ir.py src/specs --pretty -o build/ir
+
+      - name: Generate tests from IR
+        run: |
+          mkdir -p build/tests
+          python src/generate_tests.py build/ir --pretty -o build/tests
+
+      - name: Run generated tests (optional when base URL is configured)
+        if: ${{ secrets.CONTRACTGUARD_BASE_URL != '' }}
+        env:
+          CONTRACTGUARD_BASE_URL: ${{ secrets.CONTRACTGUARD_BASE_URL }}
+          CONTRACTGUARD_BEARER_TOKEN: ${{ secrets.CONTRACTGUARD_BEARER_TOKEN }}
+          CONTRACTGUARD_API_KEY: ${{ secrets.CONTRACTGUARD_API_KEY }}
+          CONTRACTGUARD_API_KEY_HEADER: ${{ secrets.CONTRACTGUARD_API_KEY_HEADER }}
+        run: |
+          mkdir -p build/results
+          python src/test_runner/run_test.py build/tests --timeout 12 --json-output build/results/run-results.json
+
+      - name: Upload generated artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-pipeline-artifacts
+          path: |
+            build/ir
+            build/tests
+            build/results
+          if-no-files-found: ignore
