@@ -241,6 +241,7 @@ def generate_boundary_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     if endpoint.get("request_schema"):
         valid_body = generate_valid_value(
             endpoint["request_schema"],
+            path=path,
             skip_example=True,
             use_realistic=True,
             required_only=True,
