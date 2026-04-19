@@ -233,6 +233,7 @@ jobs:
           from pathlib import Path
 
           result_dir = Path("build/results")
+          result_dir.mkdir(parents=True, exist_ok=True)
           files = sorted(result_dir.glob("*.json"))
 
           total = passed = failed = skipped = 0
@@ -290,6 +291,10 @@ jobs:
               summary_lines.append("- Hook point ready: feed the failed cases above into your LLM pipeline.")
               summary_lines.append("- Suggested input: build/results/*.json and build/runtime-tests/*.json artifacts.")
               summary_lines.append("- Suggested output: grouped root causes + concrete fix actions per group.")
+            elif not files:
+              summary_lines.append("### No Suite Result Artifacts")
+              summary_lines.append("- No suite-result-*.json files were downloaded in this job.")
+              summary_lines.append("- This usually means run-suite-tests was skipped, or all suite jobs failed before writing JSON output.")
 
           Path("build/results/failure-summary.md").write_text("\n".join(summary_lines), encoding="utf-8")
 
