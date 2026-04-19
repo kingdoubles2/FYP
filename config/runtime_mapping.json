@@ -1,18 +1,18 @@
 {
   "globals": {
-    "owner": "kingdouble",
+    "owner": "kingdoubles2",
     "repo": "",
-    "username": "kingdoubles"
+    "username": "kingdoubles2"
   },
   "suites": {
     "GitHub v3 REST API": {
-      "owner": "kingdouble",
+      "owner": "kingdoubles2",
       "repo": ""
     }
   },
   "tests": {
     "TC-GET-users-username-001": {
-      "username": "kingdou"
+      "username": "kingdoubles2"
     }
   }
 }
