@@ -89,12 +89,44 @@ jobs:
           import json
           from pathlib import Path
 
-          suite_dir = Path("build/runtime-tests")
-          files = sorted(suite_dir.rglob("*.json")) if suite_dir.exists() else []
+          candidate_dirs = [
+            Path("build/runtime-tests"),
+            Path("runtime-tests"),
+            Path("build/tests"),
+          ]
+
+          suite_dir = None
+          files = []
+          for candidate in candidate_dirs:
+            if candidate.exists():
+              candidate_files = sorted(candidate.rglob("*.json"))
+              if candidate_files:
+                suite_dir = candidate
+                files = candidate_files
+                break
+
+          # Last-resort fallback: find any json under a runtime-tests folder.
+          if not files:
+            files = sorted(
+              p for p in Path(".").rglob("*.json")
+              if "/runtime-tests/" in p.as_posix()
+            )
+            if files:
+              suite_dir = None
+
+          if suite_dir is not None:
+            print(f"Suite discovery root: {suite_dir}")
+          else:
+            print("Suite discovery root: <fallback scan>")
+
           include = [
               {
                   "suite_file": str(p).replace("\\\\", "/"),
-                  "suite_name": str(p.relative_to(suite_dir)).replace("/", "__").replace(".json", ""),
+              "suite_name": (
+                str(p.relative_to(suite_dir)).replace("/", "__").replace(".json", "")
+                if suite_dir is not None
+                else p.stem
+              ),
               }
               for p in files
           ]
