@@ -119,12 +119,12 @@ jobs:
           else:
             print("Suite discovery root: <fallback scan>")
 
-            suite_files = [str(p).replace("\\\\", "/") for p in files]
-            matrix = {"suite_file": suite_files}
+          suite_files = [str(p).replace("\\\\", "/") for p in files]
+          matrix = {"suite_file": suite_files}
 
-            print(f"Discovered suite files: {len(suite_files)}")
-            for item in suite_files[:50]:
-              print(" -", item)
+          print(f"Discovered suite files: {len(suite_files)}")
+          for item in suite_files[:50]:
+            print(" -", item)
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"suite_count={len(suite_files)}\\n")
