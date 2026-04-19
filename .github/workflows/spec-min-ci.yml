@@ -104,7 +104,7 @@ jobs:
           for item in include[:50]:
               print(" -", item["suite_file"])
 
-            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"suite_count={len(include)}\\n")
               f.write("matrix<<EOF\\n")
               f.write(json.dumps(matrix))
