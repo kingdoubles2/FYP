@@ -106,9 +106,7 @@ jobs:
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"suite_count={len(include)}\\n")
-              f.write("matrix<<EOF\\n")
-              f.write(json.dumps(matrix))
-              f.write("\\nEOF\\n")
+              f.write(f"matrix={json.dumps(matrix)}\\n")
           PY
 
   run-suite-tests:
@@ -117,7 +115,7 @@ jobs:
     if: ${{ needs.discover-suites.outputs.suite_count != '0' }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.discover-suites.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.discover-suites.outputs.matrix || '{"include":[]}') }}
     env:
       PYTHONPATH: src
       CONTRACTGUARD_AUTH_BY_BASE_URL_JSON: ${{ secrets.CONTRACTGUARD_AUTH_BY_BASE_URL_JSON }}
