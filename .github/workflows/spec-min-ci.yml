@@ -85,6 +85,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import os
           import json
           from pathlib import Path
 
@@ -103,7 +104,7 @@ jobs:
           for item in include[:50]:
               print(" -", item["suite_file"])
 
-          with open("$GITHUB_OUTPUT", "a", encoding="utf-8") as f:
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"suite_count={len(include)}\\n")
               f.write("matrix<<EOF\\n")
               f.write(json.dumps(matrix))
@@ -233,6 +234,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import os
           import json
           from pathlib import Path
 
@@ -302,7 +304,7 @@ jobs:
 
           Path("build/results/failure-summary.md").write_text("\n".join(summary_lines), encoding="utf-8")
 
-          with open("$GITHUB_OUTPUT", "a", encoding="utf-8") as f:
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"has_failed={has_failed}\\n")
           PY
 
