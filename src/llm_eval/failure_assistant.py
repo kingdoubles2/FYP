@@ -20,7 +20,7 @@ from llm_eval.llm_client_types import (
 from test_generator.sample_data import generate_valid_value, generate_wrong_type_value
 
 INPUT_RELATED_SIGNALS = frozenset({"schema_type", "schema_value", "missing_required", "validation"})
-SUGGESTION_TIMEOUT_SECONDS_MAX = 60
+SUGGESTION_TIMEOUT_SECONDS_MAX = 120
 FOLLOWUP_MODE_REPAIR_VALID = "repair_valid"
 FOLLOWUP_MODE_PRESERVE_NEGATIVE = "preserve_negative"
 GENERIC_FOLLOWUP_CATEGORIES = frozenset(
@@ -44,6 +44,22 @@ EXPLICIT_STATUS_CHANGE_PHRASES = (
 )
 ONE_SENTENCE_HINT_RE = re.compile(r"\b(?:one|1|single)\s+sentence\b", flags=re.IGNORECASE)
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+EXTERNAL_FAILURE_WARNING = (
+    "This failure appears external (authentication/network/upstream). "
+    "Validate external dependencies first; AI may defer follow-up test suggestions until ownership is confirmed."
+)
+EXTERNAL_SOFT_DEFER_REASON = (
+    "This failure appears external (authentication/network/upstream). "
+    "AI is deferring a follow-up test suggestion until dependency ownership is confirmed."
+)
+NON_INPUT_SOFT_DEFER_REASON = (
+    "This failure does not appear input-related. "
+    "AI is deferring a follow-up test suggestion for now."
+)
+GENERIC_SOFT_DEFER_REASON = (
+    "AI could not produce a reliable follow-up test suggestion for this case, "
+    "so no extra test is suggested right now."
+)
 
 
 def _safe_int(value: Any, default: int, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
@@ -380,6 +396,32 @@ def is_input_related_signal(signal: Any) -> bool:
     return str(signal or "").strip().lower() in INPUT_RELATED_SIGNALS
 
 
+def _normalize_suggestion_signal(signal: Any) -> str:
+    return str(signal or "status_mismatch").strip().lower() or "status_mismatch"
+
+
+def build_failure_response_policy(signal: Any) -> Dict[str, Any]:
+    normalized_signal = _normalize_suggestion_signal(signal)
+    external = normalized_signal in {"transport", "auth"}
+    input_related = is_input_related_signal(normalized_signal)
+    can_generate_followup = bool(input_related and not external)
+    if external:
+        default_defer_reason = EXTERNAL_SOFT_DEFER_REASON
+    elif not input_related:
+        default_defer_reason = NON_INPUT_SOFT_DEFER_REASON
+    else:
+        default_defer_reason = GENERIC_SOFT_DEFER_REASON
+    warning = EXTERNAL_FAILURE_WARNING if external else ""
+    return {
+        "signal": normalized_signal,
+        "external": external,
+        "input_related": input_related,
+        "can_generate_followup": can_generate_followup,
+        "warning": warning,
+        "default_defer_reason": default_defer_reason,
+    }
+
+
 def normalize_suggestion_explanation_context(
     raw: Any,
     *,
@@ -417,19 +459,27 @@ def build_suggestion_skip_payload(
     *,
     model: str,
     signal: str,
-    reason: str,
+    reason: str = "",
+    llm_error: Optional[str] = None,
+    failure_mode: str = "none",
+    used_fallback: bool = False,
+    eligible_for_generation: Optional[bool] = None,
+    attempts: Optional[Sequence[str]] = None,
+    failure_kind: str = "",
+    status_code: Optional[int] = None,
+    error_meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    normalized_signal = str(signal or "status_mismatch").strip().lower() or "status_mismatch"
-    external = normalized_signal in {"transport", "auth"}
-    warning = (
-        "This failure appears external (authentication/network/upstream). "
-        "No extra test is suggested until backend-contract ownership is confirmed."
-        if external
-        else ""
-    )
+    policy = build_failure_response_policy(signal)
+    normalized_signal = str(policy.get("signal") or "status_mismatch")
+    external = bool(policy.get("external"))
+    warning = str(policy.get("warning") or "")
+    final_reason = str(reason or policy.get("default_defer_reason") or "No suggested test was generated.").strip()
+    if not final_reason:
+        final_reason = "No suggested test was generated."
+    normalized_attempts = [str(item).strip() for item in (attempts or []) if str(item).strip()]
     return {
         "mode": "suggest_test",
-        "reason": str(reason or "No suggested test was generated."),
+        "reason": final_reason,
         "signal": normalized_signal,
         "external_failure": external,
         "warning_external": bool(warning),
@@ -437,12 +487,20 @@ def build_suggestion_skip_payload(
         "can_apply": False,
         "suggested_test_case": None,
         "model": model,
-        "used_fallback": False,
-        "llm_error": None,
-        "failure_mode": "none",
+        "used_fallback": bool(used_fallback),
+        "llm_error": str(llm_error or "").strip() or None,
+        "failure_mode": str(failure_mode or "none"),
+        "attempts": normalized_attempts,
         "skipped": True,
-        "skip_reason": str(reason or "No suggested test was generated."),
-        "eligible_for_generation": False,
+        "skip_reason": final_reason,
+        "eligible_for_generation": (
+            bool(policy.get("can_generate_followup"))
+            if eligible_for_generation is None
+            else bool(eligible_for_generation)
+        ),
+        **({"failure_kind": str(failure_kind).strip()} if str(failure_kind).strip() else {}),
+        **({"status_code": status_code} if status_code is not None else {}),
+        **({"error_meta": dict(error_meta)} if isinstance(error_meta, dict) else {}),
     }
 
 
@@ -1005,13 +1063,9 @@ def generate_failure_explanation(
     _ = prompt_bundle
     signal = classify_failure_signal(evidence)
     drift_analysis = analyze_negative_setup_drift(evidence)
-    external = signal in {"transport", "auth"}
-    warning = (
-        "This failure pattern looks external (authentication/network/upstream). "
-        "Validate external dependencies before treating it as backend logic."
-        if external
-        else ""
-    )
+    response_policy = build_failure_response_policy(signal)
+    external = bool(response_policy.get("external"))
+    warning = str(response_policy.get("warning") or "")
     evidence_view = core.build_prompt_evidence_view(evidence, max_items=max(2, int(max_items_per_section)))
     prompt_evidence_text = json.dumps(evidence_view, ensure_ascii=True)
 
@@ -1644,6 +1698,48 @@ def _coerce_mapping(value: Any) -> Dict[str, Any]:
     return deepcopy(value) if isinstance(value, dict) else {}
 
 
+AUTH_HEADER_KEYS = {
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "api-key",
+    "apikey",
+    "token",
+    "x_auth_token",
+    "x-auth-token",
+    "bearer",
+}
+REDACTED_SENTINEL = "<redacted>"
+
+
+def _is_auth_header_key(key: Any) -> bool:
+    return str(key or "").strip().lower() in AUTH_HEADER_KEYS
+
+
+def _is_redacted_header_value(value: Any) -> bool:
+    return str(value or "").strip().lower() == REDACTED_SENTINEL
+
+
+def _sanitize_headers_for_followup(headers: Any) -> tuple[Dict[str, Any], bool]:
+    source = _coerce_mapping(headers)
+    if not source:
+        return {}, False
+
+    sanitized: Dict[str, Any] = {}
+    saw_redacted_auth = False
+    saw_retained_header = False
+    for key, value in source.items():
+        key_text = str(key or "").strip()
+        if not key_text:
+            continue
+        if _is_auth_header_key(key_text) and _is_redacted_header_value(value):
+            saw_redacted_auth = True
+            continue
+        sanitized[key_text] = deepcopy(value)
+        saw_retained_header = True
+    return sanitized, bool(saw_redacted_auth and not saw_retained_header)
+
+
 def _normalize_field_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
 
@@ -1798,8 +1894,11 @@ def _build_input_data_from_evidence(
 
     headers: Dict[str, Any] = {}
     for source in source_order:
-        headers = _coerce_mapping(source.get("headers"))
-        if headers:
+        candidate_headers, only_redacted_auth = _sanitize_headers_for_followup(source.get("headers"))
+        if only_redacted_auth:
+            continue
+        if candidate_headers:
+            headers = candidate_headers
             break
 
     body: Any = None
@@ -2228,10 +2327,7 @@ def build_deterministic_suggested_test_payload(
         return build_suggestion_skip_payload(
             model=model,
             signal=signal,
-            reason=(
-                "No suggested test was generated because this failure is not input-related. "
-                "Suggested tests are only generated for schema/validation input failures."
-            ),
+            reason="",
         )
 
     drift_analysis = analyze_negative_setup_drift(
@@ -2335,15 +2431,8 @@ def generate_suggested_test(
         fallback_signal=classified_signal,
     )
     signal = str(normalized_context.get("signal") or classified_signal or "status_mismatch").strip().lower()
-    if not is_input_related_signal(signal):
-        return build_suggestion_skip_payload(
-            model=model,
-            signal=signal,
-            reason=(
-                "No suggested test was generated because this failure is not input-related. "
-                "Suggested tests are only generated for schema/validation input failures."
-            ),
-        )
+    response_policy = build_failure_response_policy(signal)
+    allow_followup_generation = bool(response_policy.get("can_generate_followup"))
 
     drift_analysis = analyze_negative_setup_drift(
         evidence,
@@ -2385,11 +2474,17 @@ def generate_suggested_test(
         if bool(drift_analysis.get("drift_detected"))
         else "No negative setup drift was detected from executed request input."
     )
+    capability_rule = (
+        "Signal appears non-input or external. Prefer a soft defer: set suggested_test_case to null."
+        if not allow_followup_generation
+        else "If evidence supports a reliable input-focused follow-up, return one test case; otherwise soft defer with suggested_test_case null."
+    )
 
     context_preview = {
         key: value
         for key, value in (
             ("signal", signal),
+            ("policy_allows_actionable_followup", allow_followup_generation),
             ("followup_mode", followup_mode),
             ("status_policy", status_rule),
             ("negative_setup_drift", _drift_prompt_context(drift_analysis)),
@@ -2404,7 +2499,7 @@ def generate_suggested_test(
     system_prompt = (
         "You are the ContractGuard test assistant. "
         "Return strict JSON only with keys: reason, suggested_test_case. "
-        "suggested_test_case must be exactly one ContractGuard-compatible test case object."
+        "suggested_test_case must be either null (soft defer) or exactly one ContractGuard-compatible test case object."
     )
     base_user_prompt = (
         "Generate exactly one follow-up test suggestion for this failed case.\n"
@@ -2415,9 +2510,10 @@ def generate_suggested_test(
         f"- {status_rule}\n"
         "- Treat execution.request_sent as the authoritative executed input when it conflicts with title/category intent.\n"
         f"- {drift_rule}\n"
+        f"- {capability_rule}\n"
         "- Include concrete expected status in expected_result.\n"
-        "- Only suggest input-focused follow-up coverage aligned to the likely cause.\n"
-        "- Return JSON with keys reason and suggested_test_case.\n\n"
+        "- If you cannot confidently help, set suggested_test_case to null and explain briefly in reason.\n"
+        "- Return JSON with keys reason and suggested_test_case only.\n\n"
         "Explanation context:\n"
         f"{json.dumps(context_preview, ensure_ascii=True, indent=2)}\n\n"
         "Evidence bundle:\n"
@@ -2458,9 +2554,9 @@ def generate_suggested_test(
                     "mode": "suggest_test",
                     "reason": "LLM suggested-test generation could not complete due to provider limits.",
                     "signal": signal,
-                    "external_failure": False,
-                    "warning_external": False,
-                    "warning": "",
+                    "external_failure": bool(response_policy.get("external")),
+                    "warning_external": bool(response_policy.get("warning")),
+                    "warning": str(response_policy.get("warning") or ""),
                     "can_apply": False,
                     "suggested_test_case": None,
                     "model": model,
@@ -2473,7 +2569,7 @@ def generate_suggested_test(
                     "attempts": attempts,
                     "skipped": False,
                     "skip_reason": "",
-                    "eligible_for_generation": True,
+                    "eligible_for_generation": allow_followup_generation,
                 }
             if _is_timeout_llm_error(llm_error_text):
                 break
@@ -2493,6 +2589,10 @@ def generate_suggested_test(
             continue
 
         reason = str(parsed.get("reason") or "").strip()
+        parsed_has_explicit_null = any(
+            key in parsed and parsed.get(key) is None
+            for key in ("suggested_test_case", "suggested_test", "test_case")
+        )
         suggested_case = _normalize_suggested_case(
             _extract_suggested_case_candidate(parsed),
             original_test_case=original_test_case,
@@ -2500,6 +2600,15 @@ def generate_suggested_test(
             existing_test_ids=existing_test_ids,
         )
         if suggested_case:
+            if not allow_followup_generation:
+                attempts.append("policy_defer:non_input_or_external_signal")
+                return build_suggestion_skip_payload(
+                    model=model,
+                    signal=signal,
+                    reason="",
+                    eligible_for_generation=allow_followup_generation,
+                    attempts=attempts,
+                )
             suggested_case, focus_field, focus_value = _apply_followup_policy_to_case(
                 suggested_case=suggested_case,
                 followup_mode=followup_mode,
@@ -2536,13 +2645,14 @@ def generate_suggested_test(
                             f"while keeping expected status {expected_status_text}."
                         )
             reason = re.sub(r"\s+", " ", reason).strip()
+            warning = str(response_policy.get("warning") or "")
             return {
                 "mode": "suggest_test",
                 "reason": reason,
                 "signal": signal,
-                "external_failure": False,
-                "warning_external": False,
-                "warning": "",
+                "external_failure": bool(response_policy.get("external")),
+                "warning_external": bool(warning),
+                "warning": warning,
                 "can_apply": True,
                 "suggested_test_case": suggested_case,
                 "model": model,
@@ -2551,8 +2661,17 @@ def generate_suggested_test(
                 "failure_mode": "none",
                 "skipped": False,
                 "skip_reason": "",
-                "eligible_for_generation": True,
+                "eligible_for_generation": allow_followup_generation,
             }
+
+        if parsed_has_explicit_null or reason:
+            return build_suggestion_skip_payload(
+                model=model,
+                signal=signal,
+                reason=reason if allow_followup_generation else "",
+                eligible_for_generation=allow_followup_generation,
+                attempts=attempts,
+            )
 
         attempts.append("validation_error:invalid_test_case")
         if near_timeout and remaining > 0:
@@ -2563,38 +2682,13 @@ def generate_suggested_test(
             + "\n\nPrevious output did not contain a valid ContractGuard test case object. Return corrected strict JSON."
         )
 
-    fallback_case = _default_suggested_case(
-        original_test_case=original_test_case,
-        status_override=status_override,
-        followup_mode=followup_mode,
-        existing_test_ids=existing_test_ids,
+    return build_suggestion_skip_payload(
+        model=model,
+        signal=signal,
+        reason=str(response_policy.get("default_defer_reason") or ""),
+        llm_error="; ".join(attempts) if attempts else None,
+        failure_mode=_classify_suggestion_failure_mode(attempts),
+        used_fallback=False,
+        eligible_for_generation=allow_followup_generation,
+        attempts=attempts,
     )
-    fallback_case, _, _ = _apply_followup_policy_to_case(
-        suggested_case=fallback_case,
-        followup_mode=followup_mode,
-        evidence=evidence,
-        original_test_case=original_test_case,
-        explanation_context=normalized_context,
-        status_override=status_override,
-        drift_analysis=drift_analysis,
-    )
-    return {
-        "mode": "suggest_test",
-        "reason": (
-            "LLM output was invalid, so this fallback follow-up test applies root-cause targeting policy"
-            " with preserved expected status and drift-aware negative setup handling."
-        ),
-        "signal": signal,
-        "external_failure": False,
-        "warning_external": False,
-        "warning": "",
-        "can_apply": True,
-        "suggested_test_case": fallback_case,
-        "model": model,
-        "used_fallback": True,
-        "llm_error": "; ".join(attempts) if attempts else "fallback_used",
-        "failure_mode": _classify_suggestion_failure_mode(attempts),
-        "skipped": False,
-        "skip_reason": "",
-        "eligible_for_generation": True,
-    }

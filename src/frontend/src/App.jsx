@@ -38,6 +38,18 @@ const SETTINGS_MODEL_PROVIDERS = Object.freeze([
 const SPEC_FILE_EXTENSIONS = [".json", ".yaml", ".yml"];
 const JSON_EDITOR_INDENT = "  ";
 const FAILURE_REASON_KEYS = ["message", "detail", "error", "reason", "title", "description"];
+const REDACTED_SENTINEL = "<redacted>";
+const REDACTED_AUTH_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "x-api-key",
+  "api-key",
+  "apikey",
+  "token",
+  "x_auth_token",
+  "x-auth-token",
+  "bearer",
+]);
 const CHAT_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
 const DEFAULT_CHAT_RUNTIME_CONFIG = Object.freeze({
   modelId: "qwen3-coder:latest",
@@ -627,6 +639,34 @@ function buildUniqueTestId(existingTests, preferredId) {
   }
 }
 
+function isAuthHeaderName(headerName) {
+  return REDACTED_AUTH_HEADER_NAMES.has(String(headerName || "").trim().toLowerCase());
+}
+
+function isRedactedAuthHeader(headerName, headerValue) {
+  return isAuthHeaderName(headerName) && String(headerValue || "").trim().toLowerCase() === REDACTED_SENTINEL;
+}
+
+function sanitizeSuggestedInputData(inputData) {
+  const source = inputData && typeof inputData === "object" && !Array.isArray(inputData)
+    ? inputData
+    : {};
+  const headers = source.headers && typeof source.headers === "object" && !Array.isArray(source.headers)
+    ? source.headers
+    : {};
+  const sanitizedHeaders = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (isRedactedAuthHeader(key, value)) {
+      continue;
+    }
+    sanitizedHeaders[key] = value;
+  }
+  return {
+    ...source,
+    headers: sanitizedHeaders,
+  };
+}
+
 function normalizeSuggestedTestCaseForSuite(suggestedTestCase, existingTests, originCategory = "") {
   if (!suggestedTestCase || typeof suggestedTestCase !== "object" || Array.isArray(suggestedTestCase)) {
     return null;
@@ -635,8 +675,11 @@ function normalizeSuggestedTestCaseForSuite(suggestedTestCase, existingTests, or
   const method = String(copy.method || "GET").toUpperCase();
   const path = String(copy.path || "/");
   const steps = Array.isArray(copy.steps) && copy.steps.length > 0 ? copy.steps : [{ step_number: 1, action: "Execute request", input_data: {} }];
+  const rawInputData = steps[0]?.input_data && typeof steps[0].input_data === "object"
+    ? (cloneJsonValue(steps[0].input_data) || steps[0].input_data)
+    : {};
   const firstStep = steps[0] && typeof steps[0] === "object"
-    ? { ...steps[0], input_data: (steps[0].input_data && typeof steps[0].input_data === "object") ? steps[0].input_data : {} }
+    ? { ...steps[0], input_data: sanitizeSuggestedInputData(rawInputData) }
     : { step_number: 1, action: "Execute request", input_data: {} };
   const expectedResult = copy.expected_result && typeof copy.expected_result === "object"
     ? copy.expected_result
@@ -894,6 +937,73 @@ function groupAiInsightsByMode(records) {
     modeLabel: formatAiInsightModeLabel(mode),
     records: groupsByMode[mode],
   }));
+}
+
+function getLlmOutputSortRank(row) {
+  const updatedAt = Date.parse(String(row?.updated_at || ""));
+  const createdAt = Date.parse(String(row?.created_at || ""));
+  const updatedRank = Number.isNaN(updatedAt) ? 0 : updatedAt;
+  const createdRank = Number.isNaN(createdAt) ? 0 : createdAt;
+  const idRank = Number(row?.id);
+  return {
+    updatedRank,
+    createdRank,
+    idRank: Number.isFinite(idRank) ? idRank : 0,
+  };
+}
+
+function hydrateLlmCaseStateFromOutputs(outputs) {
+  const source = Array.isArray(outputs) ? outputs : [];
+  const sorted = [...source].sort((left, right) => {
+    const leftRank = getLlmOutputSortRank(left);
+    const rightRank = getLlmOutputSortRank(right);
+    if (leftRank.updatedRank !== rightRank.updatedRank) {
+      return leftRank.updatedRank - rightRank.updatedRank;
+    }
+    if (leftRank.createdRank !== rightRank.createdRank) {
+      return leftRank.createdRank - rightRank.createdRank;
+    }
+    return leftRank.idRank - rightRank.idRank;
+  });
+
+  const byTestId = {};
+  for (const row of sorted) {
+    const testId = normalizeTestId(row?.test_id || row?.testId);
+    if (!testId) {
+      continue;
+    }
+    const payload = row?.payload && typeof row.payload === "object" ? row.payload : {};
+    const mode = String(row?.mode || "").trim().toLowerCase();
+    const current = byTestId[testId] && typeof byTestId[testId] === "object" ? byTestId[testId] : {};
+    const next = {
+      ...current,
+      action: "",
+      error: "",
+    };
+
+    if (mode === "analysis") {
+      if (payload.explanation && typeof payload.explanation === "object") {
+        next.explanation = cloneJsonValue(payload.explanation) || payload.explanation;
+      }
+      if (payload.suggestion && typeof payload.suggestion === "object") {
+        next.suggestion = cloneJsonValue(payload.suggestion) || payload.suggestion;
+      }
+    } else if (mode === "explanation") {
+      const explanationPayload = payload.explanation && typeof payload.explanation === "object"
+        ? payload.explanation
+        : payload;
+      if (explanationPayload && typeof explanationPayload === "object") {
+        next.explanation = cloneJsonValue(explanationPayload) || explanationPayload;
+      }
+    } else if (mode === "suggest_test") {
+      if (payload && typeof payload === "object") {
+        next.suggestion = cloneJsonValue(payload) || payload;
+      }
+    }
+
+    byTestId[testId] = next;
+  }
+  return byTestId;
 }
 
 function getEmptyRunState() {
@@ -3298,6 +3408,15 @@ function SpecDetails({
                                     const llmAction = String(llmState?.action || "");
                                     const llmError = String(llmState?.error || "");
                                     const addedMessage = String(llmState?.addedMessage || "");
+                                    const hasLlmStateToDisplay = Boolean(
+                                      explanationDisplayText
+                                      || suggestionPayload
+                                      || llmError
+                                      || addedMessage
+                                      || llmAction,
+                                    );
+                                    const shouldShowFailureDetails = testOutcome === "FAIL";
+                                    const shouldShowLlmFeedback = shouldShowFailureDetails || hasLlmStateToDisplay;
                                     const canApplySuggestion = Boolean(
                                       suggestionPayload?.can_apply && suggestionPayload?.suggested_test_case,
                                     );
@@ -3403,31 +3522,37 @@ function SpecDetails({
                                             {expectedResultError ? <p className="json-error">{expectedResultError}</p> : null}
                                           </div>
 
-                                          {testOutcome === "FAIL" ? (
+                                          {shouldShowLlmFeedback ? (
                                             <div className="run-feedback run-feedback-fail">
-                                              <p className="run-feedback-title">Failure Details</p>
-                                              <p className="run-feedback-line"><strong>Expected status:</strong> {expectedStatusLabel}</p>
-                                              <p className="run-feedback-line"><strong>Actual status:</strong> {actualStatusLabel}</p>
-                                              <p className="run-feedback-line"><strong>Reason:</strong> {failureReason}</p>
-                                              {snippetMeta.documentationUrl ? (
-                                                <p className="run-feedback-line">
-                                                  <strong>Docs:</strong>{" "}
-                                                  <a
-                                                    href={snippetMeta.documentationUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="run-feedback-link"
-                                                  >
-                                                    {snippetMeta.documentationUrl}
-                                                  </a>
-                                                </p>
-                                              ) : null}
-                                              {hasRawResponse ? (
-                                                <details className="run-feedback-details">
-                                                  <summary>Raw response</summary>
-                                                  <pre className="run-feedback-pre">{snippetMeta.raw}</pre>
-                                                </details>
-                                              ) : null}
+                                              {shouldShowFailureDetails ? (
+                                                <>
+                                                  <p className="run-feedback-title">Failure Details</p>
+                                                  <p className="run-feedback-line"><strong>Expected status:</strong> {expectedStatusLabel}</p>
+                                                  <p className="run-feedback-line"><strong>Actual status:</strong> {actualStatusLabel}</p>
+                                                  <p className="run-feedback-line"><strong>Reason:</strong> {failureReason}</p>
+                                                  {snippetMeta.documentationUrl ? (
+                                                    <p className="run-feedback-line">
+                                                      <strong>Docs:</strong>{" "}
+                                                      <a
+                                                        href={snippetMeta.documentationUrl}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="run-feedback-link"
+                                                      >
+                                                        {snippetMeta.documentationUrl}
+                                                      </a>
+                                                    </p>
+                                                  ) : null}
+                                                  {hasRawResponse ? (
+                                                    <details className="run-feedback-details">
+                                                      <summary>Raw response</summary>
+                                                      <pre className="run-feedback-pre">{snippetMeta.raw}</pre>
+                                                    </details>
+                                                  ) : null}
+                                                </>
+                                              ) : (
+                                                <p className="run-feedback-title">AI Analysis</p>
+                                              )}
                                               <div className="llm-actions-row">
                                                 <button
                                                   type="button"
@@ -4056,6 +4181,8 @@ export default function App() {
           ? artifact.generated_suite
           : null;
         const latestRun = payload?.latest_run && typeof payload.latest_run === "object" ? payload.latest_run : null;
+        const llmOutputs = Array.isArray(payload?.llm_outputs) ? payload.llm_outputs : [];
+        const hydratedLlmByTestId = hydrateLlmCaseStateFromOutputs(llmOutputs);
         const latestRunState = buildLatestRunState(latestRun);
 
         setSpecHistory((current) =>
@@ -4119,7 +4246,7 @@ export default function App() {
               runId: null,
               result: null,
               baselineTests: null,
-              llmByTestId: {},
+              llmByTestId: hydratedLlmByTestId,
             },
           }));
           return;
@@ -4141,7 +4268,7 @@ export default function App() {
               : null,
             baselineTests,
             runId: latestRun?.id ?? null,
-            llmByTestId: {},
+            llmByTestId: hydratedLlmByTestId,
           },
         }));
       } catch {
@@ -4542,7 +4669,9 @@ export default function App() {
               )
             : (cloneJsonValue(executedTests) || []),
           runId: payload?.run_id ?? null,
-          llmByTestId: {},
+          llmByTestId: runMode === "single"
+            ? { ...((current[specId] || getEmptyRunState()).llmByTestId || {}) }
+            : {},
         },
       }));
       setLogisticsHydrated(false);
@@ -4790,6 +4919,8 @@ export default function App() {
     try {
       const payload = await fetchLatestRunForSpec(session.token, normalizedSpecId);
       const latestRun = payload?.latest_run && typeof payload.latest_run === "object" ? payload.latest_run : null;
+      const llmOutputs = Array.isArray(payload?.llm_outputs) ? payload.llm_outputs : [];
+      const hydratedLlmByTestId = hydrateLlmCaseStateFromOutputs(llmOutputs);
       const latestRunState = buildLatestRunState(latestRun);
       setSpecHistory((current) =>
         current.map((entry) => (
@@ -4812,7 +4943,7 @@ export default function App() {
               runId: null,
               result: null,
               baselineTests: null,
-              llmByTestId: {},
+              llmByTestId: hydratedLlmByTestId,
             },
           }));
           return;
@@ -4832,7 +4963,7 @@ export default function App() {
               : null,
             baselineTests,
             runId: latestRun?.id ?? null,
-            llmByTestId: {},
+            llmByTestId: hydratedLlmByTestId,
           },
         }));
       }

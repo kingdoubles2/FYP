@@ -371,6 +371,80 @@ class SuggestedTestFlowTests(unittest.TestCase):
         self.assertIsInstance(expected_result, dict)
         self.assertIn("latitude remains invalid", str(expected_result.get("description") or "").lower())
 
+    def test_deterministic_headers_fall_back_when_request_sent_has_only_redacted_auth(self) -> None:
+        evidence = _sample_evidence()
+        evidence["test_context"]["generated_input"] = {
+            "path_params": {},
+            "query_params": {"username": "missing-user"},
+            "headers": {"Accept": "application/json"},
+            "body": None,
+        }
+        evidence["execution"]["request_sent"] = {
+            "path_params": {},
+            "query_params": {"username": "missing-user"},
+            "headers": {"Authorization": "<redacted>"},
+            "body": None,
+        }
+        original_case = _sample_original_test_case()
+        original_case["steps"][0]["input_data"]["headers"] = {"Accept": "application/json"}
+
+        output = build_deterministic_suggested_test_payload(
+            model="qwen3-coder:latest",
+            evidence=evidence,
+            original_test_case=original_case,
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            explanation_context={"signal": "validation"},
+        )
+
+        suggested = output.get("suggested_test_case")
+        self.assertIsInstance(suggested, dict)
+        first_step = suggested.get("steps")[0]
+        self.assertIsInstance(first_step, dict)
+        headers = first_step.get("input_data", {}).get("headers")
+        self.assertIsInstance(headers, dict)
+        self.assertEqual(headers.get("Accept"), "application/json")
+        self.assertNotIn("Authorization", headers)
+
+    def test_deterministic_headers_preserve_non_auth_and_strip_redacted_auth(self) -> None:
+        evidence = _sample_evidence()
+        evidence["test_context"]["generated_input"] = {
+            "path_params": {},
+            "query_params": {"username": "missing-user"},
+            "headers": {"Accept": "application/json"},
+            "body": None,
+        }
+        evidence["execution"]["request_sent"] = {
+            "path_params": {},
+            "query_params": {"username": "missing-user"},
+            "headers": {
+                "Authorization": "<redacted>",
+                "X-API-Key": "<redacted>",
+                "X-Trace-Id": "trace-123",
+            },
+            "body": None,
+        }
+
+        output = build_deterministic_suggested_test_payload(
+            model="qwen3-coder:latest",
+            evidence=evidence,
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            explanation_context={"signal": "validation"},
+        )
+
+        suggested = output.get("suggested_test_case")
+        self.assertIsInstance(suggested, dict)
+        first_step = suggested.get("steps")[0]
+        self.assertIsInstance(first_step, dict)
+        headers = first_step.get("input_data", {}).get("headers")
+        self.assertIsInstance(headers, dict)
+        self.assertEqual(headers.get("X-Trace-Id"), "trace-123")
+        self.assertNotIn("Authorization", headers)
+        self.assertNotIn("X-API-Key", headers)
+        self.assertNotIn("Accept", headers)
+
     def test_deterministic_positive_mode_repairs_failing_field_and_preserves_expected_status(self) -> None:
         evidence = _sample_evidence()
         evidence["spec"] = {
@@ -500,7 +574,7 @@ class SuggestedTestFlowTests(unittest.TestCase):
         self.assertIn("restoring negative setup drift", str(expected_result.get("description") or "").lower())
         self.assertIn("restoring negative setup drift", str(output.get("reason") or "").lower())
 
-    def test_non_input_signal_skips_without_llm_generation(self) -> None:
+    def test_non_input_signal_soft_defers_after_llm_generation(self) -> None:
         client = _StubOllamaClient(responses=[(_valid_case_payload_json(), None)], timeout_seconds=120)
         non_input_evidence = {
             "spec": {"operation": {"method": "GET", "path": "/user"}},
@@ -521,15 +595,59 @@ class SuggestedTestFlowTests(unittest.TestCase):
             ollama_options={},
         )
 
-        self.assertEqual(client.calls, 0)
+        self.assertEqual(client.calls, 1)
         self.assertTrue(bool(output.get("skipped")))
         self.assertFalse(bool(output.get("eligible_for_generation")))
         self.assertFalse(output["can_apply"])
 
-    def test_invalid_schema_returns_fallback_with_single_attempt(self) -> None:
+    def test_external_signal_soft_defers_with_external_warning(self) -> None:
+        client = _StubOllamaClient(responses=[(_valid_case_payload_json(), None)], timeout_seconds=120)
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            retry_invalid_output=0,
+            explanation_context={"signal": "auth"},
+            ollama_options={},
+        )
+
+        self.assertEqual(client.calls, 1)
+        self.assertTrue(bool(output.get("skipped")))
+        self.assertFalse(output["can_apply"])
+        self.assertTrue(bool(output.get("external_failure")))
+        self.assertTrue(bool(output.get("warning_external")))
+        self.assertIn("external", str(output.get("reason") or "").lower())
+
+    def test_parse_error_soft_defers_without_fallback_case(self) -> None:
+        client = _StubOllamaClient(responses=[("not json", None)], timeout_seconds=120)
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            retry_invalid_output=0,
+            ollama_options={},
+        )
+
+        self.assertEqual(client.calls, 1)
+        self.assertFalse(output["used_fallback"])
+        self.assertFalse(output["can_apply"])
+        self.assertTrue(bool(output.get("skipped")))
+        self.assertEqual(output.get("failure_mode"), "invalid_schema")
+        self.assertIn("parse_error", str(output.get("llm_error") or ""))
+        self.assertEqual(output.get("suggested_test_case"), None)
+
+    def test_invalid_schema_soft_defers_with_single_attempt(self) -> None:
         client = _StubOllamaClient(
             responses=[
-                (json.dumps({"reason": "Bad shape output", "summary": "not a test case"}), None),
+                (json.dumps({"summary": "not a test case"}), None),
             ],
             timeout_seconds=120,
         )
@@ -546,11 +664,12 @@ class SuggestedTestFlowTests(unittest.TestCase):
         )
 
         self.assertEqual(client.calls, 1)
-        self.assertTrue(output["used_fallback"])
-        self.assertTrue(output["can_apply"])
+        self.assertFalse(output["used_fallback"])
+        self.assertFalse(output["can_apply"])
+        self.assertTrue(bool(output.get("skipped")))
         self.assertEqual(output["failure_mode"], "invalid_schema")
         self.assertIn("validation_error:invalid_test_case", str(output["llm_error"]))
-        self.assertEqual(client.timeout_seconds, 60)
+        self.assertEqual(client.timeout_seconds, 120)
 
     def test_timeout_on_first_attempt_aborts_retries_and_returns_timeout_mode(self) -> None:
         client = _StubOllamaClient(
@@ -573,9 +692,37 @@ class SuggestedTestFlowTests(unittest.TestCase):
         )
 
         self.assertEqual(client.calls, 1)
-        self.assertTrue(output["used_fallback"])
+        self.assertFalse(output["used_fallback"])
+        self.assertFalse(output["can_apply"])
+        self.assertTrue(bool(output.get("skipped")))
         self.assertEqual(output["failure_mode"], "timeout")
         self.assertIn("ReadTimeout", str(output["llm_error"]))
+
+    def test_explicit_llm_soft_defer_with_null_case_returns_non_actionable_payload(self) -> None:
+        client = _StubOllamaClient(
+            responses=[
+                (json.dumps({"reason": "Insufficient evidence for a reliable extra test.", "suggested_test_case": None}), None),
+            ],
+            timeout_seconds=120,
+        )
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            retry_invalid_output=0,
+            ollama_options={},
+        )
+
+        self.assertEqual(client.calls, 1)
+        self.assertFalse(output["used_fallback"])
+        self.assertFalse(output["can_apply"])
+        self.assertTrue(bool(output.get("skipped")))
+        self.assertEqual(output.get("suggested_test_case"), None)
+        self.assertIn("insufficient evidence", str(output.get("reason") or "").lower())
 
     def test_openai_rate_limit_returns_hard_fail_without_fallback(self) -> None:
         client = _StubOllamaClient(

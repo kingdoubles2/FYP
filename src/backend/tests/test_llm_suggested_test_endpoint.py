@@ -117,7 +117,24 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
         self.assertEqual(response["test_id"], "TC-EX-001")
         self.assertEqual(response["payload"], fallback_payload)
 
-    def test_suggest_test_skips_immediately_when_explanation_signal_is_not_input_related(self) -> None:
+    def test_suggest_test_uses_llm_generation_path_for_non_input_signal(self) -> None:
+        soft_defer_payload = {
+            "mode": "suggest_test",
+            "reason": "This failure does not appear input-related. AI is deferring a follow-up test suggestion for now.",
+            "signal": "status_mismatch",
+            "external_failure": False,
+            "warning_external": False,
+            "warning": "",
+            "can_apply": False,
+            "suggested_test_case": None,
+            "model": "qwen3-coder:latest",
+            "used_fallback": False,
+            "llm_error": None,
+            "failure_mode": "none",
+            "skipped": True,
+            "skip_reason": "This failure does not appear input-related. AI is deferring a follow-up test suggestion for now.",
+            "eligible_for_generation": False,
+        }
         with (
             patch.object(main, "SessionLocal", return_value=_DummySession()),
             patch.object(main, "_load_run_case_bundle", return_value=_bundle()),
@@ -126,8 +143,12 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
                 "_resolve_effective_llm_settings",
                 return_value={"active_model_id": "builtin:ollama:qwen3-coder:latest"},
             ),
-            patch.object(main, "_build_runtime_from_active_model") as build_runtime,
-            patch.object(main, "generate_suggested_test") as generate_suggested_test,
+            patch.object(
+                main,
+                "_build_runtime_from_active_model",
+                return_value={"provider": "ollama", "client": object(), "model": "qwen3-coder:latest", "options": {}},
+            ) as build_runtime,
+            patch.object(main, "generate_suggested_test", return_value=soft_defer_payload) as generate_suggested_test,
         ):
             response = main.suggest_test_for_failure(
                 run_id=10,
@@ -142,9 +163,9 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
         self.assertTrue(bool(payload.get("skipped")))
         self.assertFalse(bool(payload.get("eligible_for_generation")))
         self.assertFalse(payload.get("can_apply"))
-        self.assertIn("not input-related", str(payload.get("reason") or ""))
-        build_runtime.assert_not_called()
-        generate_suggested_test.assert_not_called()
+        self.assertIn("input-related", str(payload.get("reason") or ""))
+        build_runtime.assert_called_once()
+        generate_suggested_test.assert_called_once()
 
 
 if __name__ == "__main__":
