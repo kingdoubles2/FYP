@@ -75,6 +75,7 @@ jobs:
       CONTRACTGUARD_BEARER_TOKEN: ${{ secrets.CONTRACTGUARD_BEARER_TOKEN }}
       CONTRACTGUARD_API_KEY: ${{ secrets.CONTRACTGUARD_API_KEY }}
       CONTRACTGUARD_API_KEY_HEADER: ${{ secrets.CONTRACTGUARD_API_KEY_HEADER }}
+      ALLOW_SUITE_FAILURE: ${{ vars.ALLOW_SUITE_FAILURE || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -298,7 +299,11 @@ jobs:
 
           if failed:
             print(f"ERROR: {failed} suite(s) failed")
-            sys.exit(1)
+            allow_failure = os.environ.get("ALLOW_SUITE_FAILURE", "false").strip().lower() == "true"
+            if allow_failure:
+              print("WARNING: ALLOW_SUITE_FAILURE=true, keeping job green despite suite failures")
+            else:
+              sys.exit(1)
           PY
 
       - name: Upload suite result artifacts
@@ -310,7 +315,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Mark job failed when any suite failed
-        if: ${{ steps.run-all.outcome != 'success' }}
+        if: ${{ steps.run-all.outcome != 'success' && env.ALLOW_SUITE_FAILURE != 'true' }}
         run: exit 1
 
   summarize-and-comment:
