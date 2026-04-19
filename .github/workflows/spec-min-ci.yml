@@ -99,8 +99,8 @@ jobs:
           ]
           matrix = {"include": include}
 
-            print(f"Discovered suite files: {len(include)}")
-            for item in include[:50]:
+          print(f"Discovered suite files: {len(include)}")
+          for item in include[:50]:
               print(" -", item["suite_file"])
 
           with open("$GITHUB_OUTPUT", "a", encoding="utf-8") as f:
@@ -284,18 +284,18 @@ jobs:
               "",
           ]
 
-            if failed_cases:
+          if failed_cases:
               summary_lines.append("### Top Failed Cases")
               for item in failed_cases[:20]:
-                summary_lines.append(
-                  f"- [{item['api_title']}] {item['test_id']} | {item['method']} {item['path']} | expected={item['expected']} got={item['actual']}"
-                )
+                  summary_lines.append(
+                      f"- [{item['api_title']}] {item['test_id']} | {item['method']} {item['path']} | expected={item['expected']} got={item['actual']}"
+                  )
               summary_lines.append("")
               summary_lines.append("### LLM Failure Analysis (Skeleton)")
               summary_lines.append("- Hook point ready: feed the failed cases above into your LLM pipeline.")
               summary_lines.append("- Suggested input: build/results/*.json and build/runtime-tests/*.json artifacts.")
               summary_lines.append("- Suggested output: grouped root causes + concrete fix actions per group.")
-            elif not files:
+          elif not files:
               summary_lines.append("### No Suite Result Artifacts")
               summary_lines.append("- No suite-result-*.json files were downloaded in this job.")
               summary_lines.append("- This usually means run-suite-tests was skipped, or all suite jobs failed before writing JSON output.")
