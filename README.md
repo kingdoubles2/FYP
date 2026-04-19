@@ -28,6 +28,49 @@ You should replace all of this file with a README describing your own project.
 
 ## Additional resources
 
+## Reusable GitHub Actions integration
+
+This repository now exposes a reusable workflow so other repositories can run the ContractGuard pipeline without copying this codebase.
+
+Reusable workflow file:
+
+- `.github/workflows/spec-pipeline-reusable.yml`
+
+Minimal caller workflow example (put this in the consumer repository):
+
+```yaml
+name: ContractGuard API CI
+
+on:
+	pull_request:
+		paths:
+			- "specs/**"
+	workflow_dispatch:
+
+jobs:
+	contractguard:
+		uses: 12134/2026-csc1097-wangc9-siakj2/.github/workflows/spec-pipeline-reusable.yml@main
+		with:
+			specs_path: specs
+			runtime_mapping_path: config/runtime_mapping.json
+			suite_timeout_seconds: 12
+			comment_on_pr: true
+			engine_repository: 12134/2026-csc1097-wangc9-siakj2
+			engine_ref: main
+		secrets:
+			CONTRACTGUARD_AUTH_BY_BASE_URL_JSON: ${{ secrets.CONTRACTGUARD_AUTH_BY_BASE_URL_JSON }}
+			CONTRACTGUARD_RUNTIME_MAPPING_JSON: ${{ secrets.CONTRACTGUARD_RUNTIME_MAPPING_JSON }}
+			CONTRACTGUARD_BEARER_TOKEN: ${{ secrets.CONTRACTGUARD_BEARER_TOKEN }}
+			CONTRACTGUARD_API_KEY: ${{ secrets.CONTRACTGUARD_API_KEY }}
+			CONTRACTGUARD_API_KEY_HEADER: ${{ secrets.CONTRACTGUARD_API_KEY_HEADER }}
+```
+
+Notes:
+
+- `specs_path` and `runtime_mapping_path` are paths in the caller repository.
+- `engine_repository` + `engine_ref` select which ContractGuard engine version is used.
+- Prefer pinning `engine_ref` to a tag or commit SHA for reproducibility.
+
 ## CLI auth test workflow (GitHub sample)
 
 Use this flow to reproduce auth-required behavior with `api.github.com.2026-03-10.yaml`.
