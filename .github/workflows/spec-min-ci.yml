@@ -107,9 +107,65 @@ jobs:
           import subprocess
           import sys
           from pathlib import Path
+          from urllib.parse import urlparse
 
           def slug(name: str) -> str:
             return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "suite"
+
+          def is_full_url(value: str) -> bool:
+            return value.startswith("http://") or value.startswith("https://")
+
+          def to_host(value: str) -> str:
+            text = str(value or "").strip()
+            if not text:
+              return ""
+            if is_full_url(text):
+              return (urlparse(text).netloc or "").lower()
+            return text.lower().split("/")[0]
+
+          def domain_tail(host: str) -> str:
+            labels = [p for p in host.split(".") if p]
+            if len(labels) >= 2:
+              return ".".join(labels[-2:])
+            return host
+
+          def resolve_auth_entry(spec_base_url: str, mapping: dict):
+            if not isinstance(mapping, dict) or not mapping:
+              return None, None
+
+            spec_url = str(spec_base_url or "").strip()
+            spec_host = to_host(spec_url)
+            spec_tail = domain_tail(spec_host)
+
+            # 1) Exact spec URL match
+            if spec_url and isinstance(mapping.get(spec_url), dict):
+              return spec_url, mapping.get(spec_url)
+
+            # 2) Exact host key match
+            if spec_host and isinstance(mapping.get(spec_host), dict):
+              return spec_host, mapping.get(spec_host)
+
+            # 3) URL/host entries that resolve to the same host
+            for key, entry in mapping.items():
+              if key == "__default__" or not isinstance(entry, dict):
+                continue
+              if spec_host and to_host(key) == spec_host:
+                return key, entry
+
+            # 4) Same domain tail (e.g. api-m.paypal.com <-> api.paypal.com)
+            for key, entry in mapping.items():
+              if key == "__default__" or not isinstance(entry, dict):
+                continue
+              key_tail = domain_tail(to_host(key))
+              if spec_tail and key_tail and spec_tail == key_tail:
+                return key, entry
+
+            # 5) Explicit default mapping entry
+            default_entry = mapping.get("__default__")
+            if isinstance(default_entry, dict):
+              return "__default__", default_entry
+
+            return None, None
 
           candidate_dirs = [
             Path("build/runtime-tests"),
@@ -170,7 +226,16 @@ jobs:
           failed = 0
           for suite_file in suites:
             data = json.loads(suite_file.read_text(encoding="utf-8"))
-            base_url = str(data.get("base_url") or "").strip()
+            spec_base_url = str(data.get("base_url") or "").strip()
+            matched_key, matched_entry = resolve_auth_entry(spec_base_url, auth_mapping)
+            matched_entry = matched_entry or {}
+
+            # Secret mapping can override spec base URL.
+            effective_base_url = str(
+              matched_entry.get("base_url")
+              or matched_entry.get("override_base_url")
+              or spec_base_url
+            ).strip()
 
             resolved = {
               "bearer_token": os.environ.get("CONTRACTGUARD_BEARER_TOKEN", ""),
@@ -178,11 +243,10 @@ jobs:
               "api_key_header": os.environ.get("CONTRACTGUARD_API_KEY_HEADER", ""),
             }
 
-            if base_url and isinstance(auth_mapping.get(base_url), dict):
-              entry = auth_mapping[base_url]
-              resolved["bearer_token"] = str(entry.get("bearer_token") or resolved["bearer_token"])
-              resolved["api_key"] = str(entry.get("api_key") or resolved["api_key"])
-              resolved["api_key_header"] = str(entry.get("api_key_header") or resolved["api_key_header"])
+            if isinstance(matched_entry, dict):
+              resolved["bearer_token"] = str(matched_entry.get("bearer_token") or resolved["bearer_token"])
+              resolved["api_key"] = str(matched_entry.get("api_key") or resolved["api_key"])
+              resolved["api_key_header"] = str(matched_entry.get("api_key_header") or resolved["api_key_header"])
 
             suite_name = slug(suite_file.stem)
             out_path = results_dir / f"{suite_name}.json"
@@ -197,20 +261,27 @@ jobs:
               "src/test_runner/run_test.py",
               str(suite_file),
               "--base-url",
-              base_url,
+              effective_base_url,
               "--timeout",
               "12",
               "--json-output",
               str(out_path),
             ]
 
-            print(f"\n=== Running suite: {suite_file.name} | base_url={base_url or '<empty>'}")
+            print(
+              f"\n=== Running suite: {suite_file.name} | "
+              f"spec_base_url={spec_base_url or '<empty>'} | "
+              f"effective_base_url={effective_base_url or '<empty>'} | "
+              f"auth_match={matched_key or '<none>'}"
+            )
             rc = subprocess.run(cmd, env=env).returncode
 
             execution["suites"].append(
               {
                 "suite_file": suite_file.as_posix(),
-                "base_url": base_url,
+                "spec_base_url": spec_base_url,
+                "effective_base_url": effective_base_url,
+                "auth_match": matched_key,
                 "result_file": out_path.as_posix(),
                 "exit_code": rc,
               }
