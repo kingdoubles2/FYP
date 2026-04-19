@@ -89,11 +89,11 @@ jobs:
           from pathlib import Path
 
           suite_dir = Path("build/runtime-tests")
-          files = sorted(suite_dir.glob("*.json")) if suite_dir.exists() else []
+          files = sorted(suite_dir.rglob("*.json")) if suite_dir.exists() else []
           include = [
               {
                   "suite_file": str(p).replace("\\\\", "/"),
-                  "suite_name": p.stem,
+                  "suite_name": str(p.relative_to(suite_dir)).replace("/", "__").replace(".json", ""),
               }
               for p in files
           ]
