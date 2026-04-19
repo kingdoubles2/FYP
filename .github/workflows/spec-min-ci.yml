@@ -66,79 +66,9 @@ jobs:
             build/results
           if-no-files-found: ignore
 
-  discover-suites:
-    runs-on: ubuntu-latest
-    needs: build-runtime-tests
-    if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-      suite_count: ${{ steps.matrix.outputs.suite_count }}
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: spec-pipeline-build
-          path: .
-
-      - name: Build suite matrix
-        id: matrix
-        shell: bash
-        run: |
-          python - <<'PY'
-          import os
-          import json
-          from pathlib import Path
-
-          candidate_dirs = [
-            Path("build/runtime-tests"),
-            Path("runtime-tests"),
-            Path("build/tests"),
-          ]
-
-          suite_dir = None
-          files = []
-          for candidate in candidate_dirs:
-            if candidate.exists():
-              candidate_files = sorted(candidate.rglob("*.json"))
-              if candidate_files:
-                suite_dir = candidate
-                files = candidate_files
-                break
-
-          # Last-resort fallback: find any json under a runtime-tests folder.
-          if not files:
-            files = sorted(
-              p for p in Path(".").rglob("*.json")
-              if "/runtime-tests/" in p.as_posix()
-            )
-            if files:
-              suite_dir = None
-
-          if suite_dir is not None:
-            print(f"Suite discovery root: {suite_dir}")
-          else:
-            print("Suite discovery root: <fallback scan>")
-
-          suite_files = [str(p).replace("\\\\", "/") for p in files]
-          matrix_suite_files = suite_files if suite_files else ["__NO_SUITE__"]
-          matrix = {"suite_file": matrix_suite_files}
-
-          print(f"Discovered suite files: {len(suite_files)}")
-          for item in suite_files[:50]:
-            print(" -", item)
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"suite_count={len(suite_files)}\\n")
-              f.write(f"matrix={json.dumps(matrix)}\\n")
-          PY
-
   run-suite-tests:
     runs-on: ubuntu-latest
-    needs: discover-suites
-    if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.discover-suites.outputs.matrix || '{"suite_file":["__NO_SUITE__"]}') }}
+    needs: build-runtime-tests
     env:
       PYTHONPATH: src
       CONTRACTGUARD_AUTH_BY_BASE_URL_JSON: ${{ secrets.CONTRACTGUARD_AUTH_BY_BASE_URL_JSON }}
@@ -165,76 +95,151 @@ jobs:
           name: spec-pipeline-build
           path: .
 
-      - name: Resolve suite auth by base URL
-        if: ${{ matrix.suite_file != '__NO_SUITE__' }}
+      - name: Run suites sequentially
+        id: run-all
+        continue-on-error: true
         shell: bash
-        env:
-          SUITE_FILE: ${{ matrix.suite_file }}
         run: |
           python - <<'PY'
           import json
           import os
+          import re
+          import subprocess
+          import sys
           from pathlib import Path
 
-          suite_file = Path(os.environ["SUITE_FILE"])
-          suite = json.loads(suite_file.read_text(encoding="utf-8"))
-          base_url = str(suite.get("base_url") or "").strip()
+          def slug(name: str) -> str:
+            return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "suite"
 
-          # Default to global credentials.
-          resolved = {
+          candidate_dirs = [
+            Path("build/runtime-tests"),
+            Path("runtime-tests"),
+            Path("build/tests"),
+          ]
+
+          suites = []
+          for d in candidate_dirs:
+            if d.exists():
+              files = sorted(d.rglob("*.json"))
+              if files:
+                suites = files
+                print(f"Suite discovery root: {d}")
+                break
+
+          if not suites:
+            suites = sorted(
+              p for p in Path(".").rglob("*.json")
+              if "/runtime-tests/" in p.as_posix()
+            )
+            if suites:
+              print("Suite discovery root: <fallback scan>")
+
+          results_dir = Path("build/results")
+          results_dir.mkdir(parents=True, exist_ok=True)
+
+          auth_mapping = {}
+          raw_mapping = os.environ.get("CONTRACTGUARD_AUTH_BY_BASE_URL_JSON", "").strip()
+          if raw_mapping:
+            try:
+              parsed = json.loads(raw_mapping)
+              if isinstance(parsed, dict):
+                auth_mapping = parsed
+              else:
+                print("WARNING: CONTRACTGUARD_AUTH_BY_BASE_URL_JSON is not an object")
+            except Exception as exc:
+              print(f"WARNING: failed to parse CONTRACTGUARD_AUTH_BY_BASE_URL_JSON: {exc}")
+
+          execution = {
+            "suite_count": len(suites),
+            "suites": [],
+            "failed_suites": [],
+          }
+
+          print(f"Discovered suite files: {len(suites)}")
+          for p in suites:
+            print(" -", p.as_posix())
+
+          if not suites:
+            (results_dir / "execution-summary.json").write_text(
+              json.dumps(execution, indent=2),
+              encoding="utf-8",
+            )
+            print("ERROR: No suite JSON found under runtime-tests/build/tests")
+            sys.exit(2)
+
+          failed = 0
+          for suite_file in suites:
+            data = json.loads(suite_file.read_text(encoding="utf-8"))
+            base_url = str(data.get("base_url") or "").strip()
+
+            resolved = {
               "bearer_token": os.environ.get("CONTRACTGUARD_BEARER_TOKEN", ""),
               "api_key": os.environ.get("CONTRACTGUARD_API_KEY", ""),
               "api_key_header": os.environ.get("CONTRACTGUARD_API_KEY_HEADER", ""),
-          }
+            }
 
-          # Override from per-base-url mapping secret when provided.
-          raw_mapping = os.environ.get("CONTRACTGUARD_AUTH_BY_BASE_URL_JSON", "")
-          if raw_mapping.strip() and base_url:
-              try:
-                  mapping = json.loads(raw_mapping)
-              except Exception:
-                  mapping = {}
-              if isinstance(mapping, dict):
-                  entry = mapping.get(base_url)
-                  if isinstance(entry, dict):
-                      resolved["bearer_token"] = str(entry.get("bearer_token") or "")
-                      resolved["api_key"] = str(entry.get("api_key") or "")
-                      resolved["api_key_header"] = str(entry.get("api_key_header") or "")
+            if base_url and isinstance(auth_mapping.get(base_url), dict):
+              entry = auth_mapping[base_url]
+              resolved["bearer_token"] = str(entry.get("bearer_token") or resolved["bearer_token"])
+              resolved["api_key"] = str(entry.get("api_key") or resolved["api_key"])
+              resolved["api_key_header"] = str(entry.get("api_key_header") or resolved["api_key_header"])
 
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-              f.write(f"SUITE_BASE_URL={base_url}\\n")
-              f.write(f"CONTRACTGUARD_BEARER_TOKEN={resolved['bearer_token']}\\n")
-              f.write(f"CONTRACTGUARD_API_KEY={resolved['api_key']}\\n")
-              f.write(f"CONTRACTGUARD_API_KEY_HEADER={resolved['api_key_header']}\\n")
+            suite_name = slug(suite_file.stem)
+            out_path = results_dir / f"{suite_name}.json"
+
+            env = os.environ.copy()
+            env["CONTRACTGUARD_BEARER_TOKEN"] = resolved["bearer_token"]
+            env["CONTRACTGUARD_API_KEY"] = resolved["api_key"]
+            env["CONTRACTGUARD_API_KEY_HEADER"] = resolved["api_key_header"]
+
+            cmd = [
+              sys.executable,
+              "src/test_runner/run_test.py",
+              str(suite_file),
+              "--base-url",
+              base_url,
+              "--timeout",
+              "12",
+              "--json-output",
+              str(out_path),
+            ]
+
+            print(f"\n=== Running suite: {suite_file.name} | base_url={base_url or '<empty>'}")
+            rc = subprocess.run(cmd, env=env).returncode
+
+            execution["suites"].append(
+              {
+                "suite_file": suite_file.as_posix(),
+                "base_url": base_url,
+                "result_file": out_path.as_posix(),
+                "exit_code": rc,
+              }
+            )
+
+            if rc != 0:
+              failed += 1
+              execution["failed_suites"].append(suite_file.as_posix())
+
+          (results_dir / "execution-summary.json").write_text(
+            json.dumps(execution, indent=2),
+            encoding="utf-8",
+          )
+
+          if failed:
+            print(f"ERROR: {failed} suite(s) failed")
+            sys.exit(1)
           PY
 
-      - name: Run suite tests
-        if: ${{ matrix.suite_file != '__NO_SUITE__' }}
-        id: run-suite
-        continue-on-error: true
-        shell: bash
-        env:
-          SUITE_FILE: ${{ matrix.suite_file }}
-        run: |
-          mkdir -p build/results
-          SUITE_NAME="$(basename "$SUITE_FILE" .json | tr ' /' '__')"
-          python src/test_runner/run_test.py "$SUITE_FILE" \
-            --base-url "$SUITE_BASE_URL" \
-            --timeout 12 \
-            --json-output "build/results/${SUITE_NAME}.json"
-
-          echo "SUITE_NAME=$SUITE_NAME" >> "$GITHUB_ENV"
-
-      - name: Upload suite result artifact
-        if: ${{ always() && matrix.suite_file != '__NO_SUITE__' }}
+      - name: Upload suite result artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: suite-result-${{ strategy.job-index }}
-          path: build/results/${{ env.SUITE_NAME }}.json
+          name: suite-results
+          path: build/results
           if-no-files-found: ignore
 
-      - name: Mark job failed when suite failed
-        if: ${{ matrix.suite_file != '__NO_SUITE__' && steps.run-suite.outcome != 'success' }}
+      - name: Mark job failed when any suite failed
+        if: ${{ steps.run-all.outcome != 'success' }}
         run: exit 1
 
   summarize-and-comment:
@@ -250,7 +255,7 @@ jobs:
       - name: Download suite result artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: suite-result-*
+          name: suite-results
           merge-multiple: true
           path: build/results
 
