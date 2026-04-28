@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from test_generator.models import TestCase, TestStep, InputData, ExpectedResult
 from test_generator.sample_data import (
@@ -8,11 +8,15 @@ from test_generator.sample_data import (
     generate_wrong_type_value,
     generate_invalid_format_value,
     pick_error_status,
+    should_autofill_header_param,
 )
 
 
-def _build_valid_params(params: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {p["name"]: generate_valid_value(p["schema"], name=p["name"]) for p in params}
+def _build_valid_params(params: List[Dict[str, Any]], *, is_header: bool = False) -> Dict[str, Any]:
+    selected = params
+    if is_header:
+        selected = [p for p in params if should_autofill_header_param(p)]
+    return {p["name"]: generate_valid_value(p["schema"], name=p["name"]) for p in selected}
 
 
 def _render_path(path: str, path_params: Dict[str, Any]) -> str:
@@ -23,8 +27,32 @@ def _render_path(path: str, path_params: Dict[str, Any]) -> str:
 
 
 def _error_status_kw(response_schemas: Dict[str, Any]) -> Dict[str, Any]:
-    """Return ExpectedResult kwargs using pick_error_status for tolerance."""
-    return pick_error_status(response_schemas, ["400", "422"])
+    """Return validation-style error expectation, preferring declared spec codes."""
+    # Real-world APIs often return 404 before detailed validation errors when resource lookup fails first.
+    base = pick_error_status(response_schemas, ["404", "422", "400", "409", "403"])
+    return _allow_runtime_404(base)
+
+
+def _allow_runtime_404(status_kw: Dict[str, Any]) -> Dict[str, Any]:
+    """Allow 404 as runtime-tolerant fallback even when not declared in spec."""
+    if "status_code_any_of" in status_kw:
+        vals = list(status_kw["status_code_any_of"])
+        if 404 not in vals:
+            vals.append(404)
+        return {"status_code_any_of": sorted(set(vals))}
+
+    if "status_code" in status_kw:
+        code = int(status_kw["status_code"])
+        if code == 404:
+            return {"status_code": 404}
+        return {"status_code_any_of": sorted({code, 404})}
+
+    return {"status_code": 404}
+
+
+def _resource_not_found_kw(response_schemas: Dict[str, Any]) -> Dict[str, Any]:
+    """Return not-found style error expectation, preferring declared spec codes."""
+    return pick_error_status(response_schemas, ["404", "410", "422", "400", "403"])
 
 
 # ---------------------------------------------------------------------------
@@ -44,27 +72,10 @@ def _wrong_type_param_cases(
     method = endpoint["method"]
     path = endpoint["path"]
 
-    # Path params
-    for param in endpoint.get("path_params", []):
-        wrong = generate_wrong_type_value(param["schema"])
-        pp = dict(valid_path)
-        pp[param["name"]] = wrong
-        cases.append(TestCase(
-            test_id="",
-            title=f"{ref} - Negative type: {param['name']}={wrong!r}",
-            category="negative_type",
-            requirement_ref=ref,
-            method=method,
-            path=path,
-            priority="medium",
-            preconditions=[],
-            steps=[TestStep(
-                step_number=1,
-                action=f"Send {method} request to {_render_path(path, pp)} with {param['name']} as wrong type",
-                input_data=InputData(path_params=pp, query_params=valid_query, headers=valid_headers, body=valid_body),
-            )],
-            expected_result=ExpectedResult(description=f"Rejected: {param['name']} has wrong type", **err_kw),
-        ))
+    # Do not generate path "wrong type" cases.
+    # Path params are interpolated into URL strings before request dispatch,
+    # so numeric/boolean values become strings and most APIs return 404/not-found
+    # (or route mismatch) instead of a deterministic 400 type-validation error.
 
     # Query params (required ones first)
     for param in endpoint.get("query_params", []):
@@ -269,16 +280,25 @@ def _fallback_negative_case(
     valid_headers: Dict[str, Any],
     valid_body: Any,
     err_kw: Dict[str, Any],
-) -> TestCase:
-    """Non-existent resource test -- a universal negative case."""
+) -> Optional[TestCase]:
+    """Non-existent resource test for endpoints with path params.
+
+    Returns None when the endpoint has no path params (cannot represent a different resource).
+    """
     ref = endpoint["endpoint_id"]
     method = endpoint["method"]
     path = endpoint["path"]
 
+    if not endpoint.get("path_params"):
+        return None
+
     pp = dict(valid_path)
     for param in endpoint.get("path_params", []):
-        if param["schema"].get("type") in ("integer", "number"):
+        ptype = param["schema"].get("type")
+        if ptype in ("integer", "number"):
             pp[param["name"]] = 9999999
+        else:
+            pp[param["name"]] = "nonexistent_resource_xyz"
 
     return TestCase(
         test_id="",
@@ -294,7 +314,7 @@ def _fallback_negative_case(
             action=f"Send {method} request to {_render_path(path, pp)} for a non-existent resource",
             input_data=InputData(path_params=pp, query_params=valid_query, headers=valid_headers, body=valid_body),
         )],
-        expected_result=ExpectedResult(status_code=404, description="Resource not found"),
+        expected_result=ExpectedResult(description="Resource not found", **err_kw),
     )
 
 
@@ -303,12 +323,19 @@ def _fallback_negative_case(
 # ---------------------------------------------------------------------------
 
 def generate_negative_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
+    path = endpoint["path"]
     valid_path = _build_valid_params(endpoint.get("path_params", []))
     valid_query = _build_valid_params(endpoint.get("query_params", []))
-    valid_headers = _build_valid_params(endpoint.get("header_params", []))
+    valid_headers = _build_valid_params(endpoint.get("header_params", []), is_header=True)
     valid_body = None
     if endpoint.get("request_schema"):
-        valid_body = generate_valid_value(endpoint["request_schema"])
+        valid_body = generate_valid_value(
+            endpoint["request_schema"],
+            path=path,
+            skip_example=True,
+            use_realistic=True,
+            required_only=True,
+        )
 
     err_kw = _error_status_kw(endpoint.get("response_schemas", {}))
 
@@ -317,13 +344,17 @@ def generate_negative_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     cases.extend(_missing_required_cases(endpoint, valid_path, valid_query, valid_headers, valid_body, err_kw))
     cases.extend(_invalid_value_cases(endpoint, valid_path, valid_query, valid_headers, valid_body, err_kw))
 
-    # Guarantee at least 2 negative cases
+    # Prefer semantically valid fallback cases that still align with declared spec responses.
     if len(cases) < 2:
-        cases.append(_fallback_negative_case(endpoint, valid_path, valid_query, valid_headers, valid_body, err_kw))
+        nf_kw = _resource_not_found_kw(endpoint.get("response_schemas", {}))
+        fallback = _fallback_negative_case(endpoint, valid_path, valid_query, valid_headers, valid_body, nf_kw)
+        if fallback is not None:
+            cases.append(fallback)
+
     if len(cases) < 2:
         # Second fallback: send completely empty body when one is expected
         ref = endpoint["endpoint_id"]
-        if endpoint.get("request_schema"):
+        if endpoint.get("request_schema") and endpoint.get("request_body_required", False):
             cases.append(TestCase(
                 test_id="",
                 title=f"{ref} - Negative: send empty body when body is required",
@@ -339,24 +370,6 @@ def generate_negative_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
                     input_data=InputData(path_params=valid_path, query_params=valid_query, headers=valid_headers, body={}),
                 )],
                 expected_result=ExpectedResult(description="Rejected: request body is empty or missing required fields", **err_kw),
-            ))
-        else:
-            # Minimal endpoint -- add an unsupported method test
-            cases.append(TestCase(
-                test_id="",
-                title=f"{ref} - Negative: unsupported HTTP method",
-                category="negative_invalid",
-                requirement_ref=ref,
-                method="PATCH",
-                path=endpoint["path"],
-                priority="low",
-                preconditions=[],
-                steps=[TestStep(
-                    step_number=1,
-                    action=f"Send PATCH request to {_render_path(endpoint['path'], valid_path)} (unsupported method)",
-                    input_data=InputData(path_params=valid_path, query_params={}, headers=valid_headers, body=None),
-                )],
-                expected_result=ExpectedResult(status_code=405, description="Method not allowed"),
             ))
 
     return cases

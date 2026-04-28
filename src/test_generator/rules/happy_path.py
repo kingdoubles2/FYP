@@ -3,7 +3,39 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from test_generator.models import TestCase, TestStep, InputData, ExpectedResult
-from test_generator.sample_data import generate_valid_value
+from test_generator.sample_data import generate_valid_value, should_autofill_header_param
+
+
+def _deep_overlay(base: Any, overlay: Any) -> Any:
+    """Overlay example data on top of generated defaults.
+
+    Dicts merge recursively so required defaults remain when example omits them.
+    Non-dict values (including arrays) are replaced by overlay.
+    """
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged = dict(base)
+        for key, value in overlay.items():
+            if key in merged:
+                merged[key] = _deep_overlay(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+    return overlay
+
+
+def _fill_required_fields_from_schema(schema: Dict[str, Any], body_example: Any) -> Any:
+    """Keep example payload shape while filling missing required fields.
+
+    This is used for example-based happy paths because some specs provide
+    illustrative examples that omit formally required fields.
+    """
+    required_defaults = generate_valid_value(
+        schema,
+        skip_example=True,
+        use_realistic=True,
+        required_only=True,
+    )
+    return _deep_overlay(required_defaults, body_example)
 
 
 def _build_valid_params(
@@ -11,18 +43,31 @@ def _build_valid_params(
     *,
     required_only: bool = False,
     skip_example: bool = False,
+    use_realistic: bool = False,
+    is_header: bool = False,
+    prefer_example_for_required: bool = False,
 ) -> Dict[str, Any]:
     """Generate a valid value for every parameter in the list.
 
     When *required_only* is True, optional parameters are omitted.
     When *skip_example* is True, schema ``example`` values are ignored.
+    When *use_realistic* is True, prefers realistic values over generic placeholders.
     """
     selected = params
+    if is_header:
+        selected = [p for p in selected if should_autofill_header_param(p)]
     if required_only:
-        selected = [p for p in params if p.get("required", False)]
+        selected = [p for p in selected if p.get("required", False)]
     return {
         p["name"]: generate_valid_value(
-            p["schema"], name=p["name"], skip_example=skip_example,
+            p["schema"],
+            name=p["name"],
+            skip_example=(
+                False
+                if prefer_example_for_required and p.get("required", False)
+                else skip_example
+            ),
+            use_realistic=use_realistic,
         )
         for p in selected
     }
@@ -107,19 +152,32 @@ def generate_happy_path_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
 
     # ----- Case 1: Minimal valid request (required params only, no examples) -----
     min_path = _build_valid_params(
-        endpoint.get("path_params", []), required_only=True, skip_example=True,
+        endpoint.get("path_params", []),
+        required_only=True,
+        skip_example=True,
+        use_realistic=True,
+        prefer_example_for_required=True,
     )
     min_query = _build_valid_params(
-        endpoint.get("query_params", []), required_only=True, skip_example=True,
+        endpoint.get("query_params", []), required_only=True, skip_example=True, use_realistic=True,
     )
     min_headers = _build_valid_params(
-        endpoint.get("header_params", []), required_only=True, skip_example=True,
+        endpoint.get("header_params", []), required_only=True, skip_example=True, use_realistic=True, is_header=True,
     )
     min_body = None
-    if endpoint.get("request_schema"):
+    req_schema = endpoint.get("request_schema")
+    body_required = endpoint.get("request_body_required", False)
+    if req_schema and (body_required or method in {"POST", "PUT", "PATCH"}):
         min_body = generate_valid_value(
-            endpoint["request_schema"], skip_example=True,
+            req_schema,
+            path=path,
+            skip_example=True,
+            use_realistic=True,
+            required_only=True,
         )
+        # Many APIs reject null/absent payload when a request schema exists.
+        if method in {"POST", "PUT", "PATCH"} and min_body is None:
+            min_body = [] if req_schema.get("type") == "array" else {}
 
     min_rendered = _render_path(path, min_path)
     min_preconditions: List[str] = []
@@ -167,10 +225,11 @@ def generate_happy_path_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
     if _has_examples(endpoint):
         ex_path = _build_valid_params(endpoint.get("path_params", []))
         ex_query = _build_valid_params(endpoint.get("query_params", []))
-        ex_headers = _build_valid_params(endpoint.get("header_params", []))
+        ex_headers = _build_valid_params(endpoint.get("header_params", []), is_header=True)
         ex_body = None
         if endpoint.get("request_schema"):
             ex_body = generate_valid_value(endpoint["request_schema"])
+            ex_body = _fill_required_fields_from_schema(endpoint["request_schema"], ex_body)
 
         ex_rendered = _render_path(path, ex_path)
         ex_preconditions: List[str] = []

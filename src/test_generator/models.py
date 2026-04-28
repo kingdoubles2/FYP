@@ -82,11 +82,15 @@ class TestSuite:
     api_version: str
     generated_at: str
     test_cases: List[TestCase]
+    base_url: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "api_title": self.api_title,
             "api_version": self.api_version,
             "generated_at": self.generated_at,
-            "test_cases": [tc.to_dict() for tc in self.test_cases],
         }
+        if self.base_url:
+            d["base_url"] = self.base_url
+        d["test_cases"] = [tc.to_dict() for tc in self.test_cases]
+        return d

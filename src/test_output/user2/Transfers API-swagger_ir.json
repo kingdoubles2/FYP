@@ -1,6 +1,7 @@
 {
   "title": "Transfers API",
   "version": "3",
+  "base_url": "https://balanceplatform-api-test.adyen.com/btl/v3",
   "endpoints": [
     {
       "endpoint_id": "GET /transactions",
@@ -14,7 +15,8 @@
           "location": "query",
           "required": false,
           "schema": {
-            "type": "string"
+            "type": "string",
+            "example": "YOUR_BALANCE_PLATFORM"
           }
         },
         {
@@ -30,7 +32,8 @@
           "location": "query",
           "required": false,
           "schema": {
-            "type": "string"
+            "type": "string",
+            "example": "AHA1B2C3D4E5F6G7H8I9J0"
           }
         },
         {
@@ -38,7 +41,8 @@
           "location": "query",
           "required": false,
           "schema": {
-            "type": "string"
+            "type": "string",
+            "example": "BAB8B2C3D4E5F6G7H8D9J6GD4"
           }
         },
         {
@@ -1281,7 +1285,8 @@
           "location": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "type": "string",
+            "example": "IZK7C25U7DYVX03Y"
           }
         }
       ],
@@ -3159,7 +3164,39 @@
           "amount",
           "counterparty"
         ],
-        "type": "object"
+        "type": "object",
+        "example": {
+          "amount": {
+            "currency": "EUR",
+            "value": 110000
+          },
+          "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+          "category": "bank",
+          "counterparty": {
+            "bankAccount": {
+              "accountHolder": {
+                "address": {
+                  "city": "San Francisco",
+                  "country": "US",
+                  "postalCode": "94678",
+                  "stateOrProvince": "CA",
+                  "street": "Brannan Street",
+                  "street2": "274"
+                },
+                "fullName": "A. Klaassen"
+              },
+              "accountIdentification": {
+                "accountNumber": "123456789",
+                "bic": "BOFAUS3NXXX",
+                "type": "numberAndBic"
+              }
+            }
+          },
+          "description": "Your description for the transfer",
+          "priority": "crossBorder",
+          "reference": "Your internal reference for the transfer",
+          "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+        }
       },
       "response_schemas": {
         "200": {

@@ -62,4 +62,5 @@ def generate_test_cases(ir_data: Dict[str, Any]) -> TestSuite:
         api_version=ir_data.get("version", ""),
         generated_at=timestamp,
         test_cases=all_cases,
+        base_url=ir_data.get("base_url"),
     )

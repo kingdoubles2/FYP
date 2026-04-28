@@ -3,11 +3,14 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from test_generator.models import TestCase, TestStep, InputData, ExpectedResult
-from test_generator.sample_data import generate_valid_value
+from test_generator.sample_data import generate_valid_value, should_autofill_header_param
 
 
-def _build_valid_params(params: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {p["name"]: generate_valid_value(p["schema"], name=p["name"]) for p in params}
+def _build_valid_params(params: List[Dict[str, Any]], *, is_header: bool = False) -> Dict[str, Any]:
+    selected = params
+    if is_header:
+        selected = [p for p in params if should_autofill_header_param(p)]
+    return {p["name"]: generate_valid_value(p["schema"], name=p["name"]) for p in selected}
 
 
 def _render_path(path: str, path_params: Dict[str, Any]) -> str:
@@ -91,6 +94,7 @@ def _cases_for_404(
 # ---------------------------------------------------------------------------
 
 def generate_error_status_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
+    path = endpoint["path"]
     resp_schemas = endpoint.get("response_schemas", {})
 
     # Only generate 404 cases when the IR actually declares a 404 response
@@ -99,10 +103,16 @@ def generate_error_status_cases(endpoint: Dict[str, Any]) -> List[TestCase]:
 
     valid_path = _build_valid_params(endpoint.get("path_params", []))
     valid_query = _build_valid_params(endpoint.get("query_params", []))
-    valid_headers = _build_valid_params(endpoint.get("header_params", []))
+    valid_headers = _build_valid_params(endpoint.get("header_params", []), is_header=True)
     valid_body = None
     if endpoint.get("request_schema"):
-        valid_body = generate_valid_value(endpoint["request_schema"])
+        valid_body = generate_valid_value(
+            endpoint["request_schema"],
+            path=path,
+            skip_example=True,
+            use_realistic=True,
+            required_only=True,
+        )
 
     schema_404 = resp_schemas.get("404")
     return _cases_for_404(endpoint, valid_path, valid_query, valid_headers, valid_body, schema_404)

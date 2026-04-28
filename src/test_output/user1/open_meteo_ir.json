@@ -1,6 +1,7 @@
 {
   "title": "Open-Meteo APIs",
   "version": "1.0",
+  "base_url": "https://api.open-meteo.com",
   "endpoints": [
     {
       "endpoint_id": "GET /v1/forecast",
@@ -613,7 +614,17 @@
             }
           }
         }
-      }
+      },
+      "summary": "7 day weather forecast for coordinates",
+      "description": "7 day weather variables in hourly and daily resolution for given WGS84 latitude and longitude coordinates. Available worldwide.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "OK",
+        "400": "Bad Request"
+      },
+      "response_examples": {}
     }
   ]
 }

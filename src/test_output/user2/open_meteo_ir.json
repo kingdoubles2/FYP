@@ -1,6 +1,7 @@
 {
   "title": "Open-Meteo APIs",
   "version": "1.0",
+  "base_url": "https://api.open-meteo.com",
   "endpoints": [
     {
       "endpoint_id": "GET /v1/forecast",
