@@ -8,6 +8,7 @@ ContractGuard is a project for checking whether an API behaves the way its contr
 - Generates and runs contract-based API tests.
 - Reports failures and test results through a web interface.
 - Uses LLM support to help explain complex failures.
+- GitHub Actions integration.
 
 ## Technologies
 
