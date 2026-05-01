@@ -1,0 +1,39 @@
+name: ContractGuard API CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "specs/**"
+      - "config/**"
+      - ".github/workflows/contractguard.yml"
+  pull_request:
+    paths:
+      - "specs/**"
+      - "config/**"
+      - ".github/workflows/contractguard.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  contractguard:
+    uses: kingdoubles2/FYP/.github/workflows/spec-pipeline-reusable.yml@Github_action_integration
+    with:
+      specs_path: specs
+      runtime_mapping_path: config/runtime_mapping.json
+      python_version: "3.11"
+      suite_timeout_seconds: 12
+      allow_suite_failure: false
+      comment_on_pr: true
+      engine_repository: kingdoubles2/FYP
+      engine_ref: Github_action_integration
+    secrets:
+      CONTRACTGUARD_BEARER_TOKEN: ${{ secrets.CONTRACTGUARD_BEARER_TOKEN }}
+      CONTRACTGUARD_API_KEY: ${{ secrets.CONTRACTGUARD_API_KEY }}
+      CONTRACTGUARD_API_KEY_HEADER: ${{ secrets.CONTRACTGUARD_API_KEY_HEADER }}
+      CONTRACTGUARD_AUTH_BY_BASE_URL_JSON: ${{ secrets.CONTRACTGUARD_AUTH_BY_BASE_URL_JSON }}
+      CONTRACTGUARD_RUNTIME_MAPPING_JSON: ${{ secrets.CONTRACTGUARD_RUNTIME_MAPPING_JSON }}

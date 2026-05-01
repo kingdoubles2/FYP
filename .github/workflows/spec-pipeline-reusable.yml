@@ -1,0 +1,523 @@
+name: ContractGuard Reusable Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      specs_path:
+        description: Path in caller repo that contains OpenAPI specs
+        required: false
+        type: string
+        default: src/specs
+      runtime_mapping_path:
+        description: Path in caller repo for runtime mapping JSON
+        required: false
+        type: string
+        default: config/runtime_mapping.json
+      python_version:
+        description: Python version used in CI
+        required: false
+        type: string
+        default: "3.11"
+      suite_timeout_seconds:
+        description: Timeout per HTTP request in test runner
+        required: false
+        type: number
+        default: 12
+      allow_suite_failure:
+        description: Keep pipeline green when suite execution fails
+        required: false
+        type: boolean
+        default: false
+      comment_on_pr:
+        description: Post failure summary comment on PR
+        required: false
+        type: boolean
+        default: true
+      engine_repository:
+        description: Repository that hosts ContractGuard engine code
+        required: false
+        type: string
+        default: kingdoubles2/FYP
+      engine_ref:
+        description: Git ref for engine repository
+        required: false
+        type: string
+        default: main
+    secrets:
+      CONTRACTGUARD_RUNTIME_MAPPING_JSON:
+        required: false
+      CONTRACTGUARD_AUTH_BY_BASE_URL_JSON:
+        required: false
+      CONTRACTGUARD_BEARER_TOKEN:
+        required: false
+      CONTRACTGUARD_API_KEY:
+        required: false
+      CONTRACTGUARD_API_KEY_HEADER:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build-runtime-tests:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: engine/src
+      CONTRACTGUARD_RUNTIME_MAPPING_JSON: ${{ secrets.CONTRACTGUARD_RUNTIME_MAPPING_JSON }}
+
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          path: caller
+
+      - name: Checkout ContractGuard engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.engine_repository }}
+          ref: ${{ inputs.engine_ref }}
+          path: engine
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r engine/src/backend/requirements.txt
+
+      - name: Build IR from specs
+        run: |
+          mkdir -p build/ir
+          python engine/src/extract_ir.py caller/${{ inputs.specs_path }} --pretty -o build/ir
+
+      - name: Generate tests from IR
+        run: |
+          mkdir -p build/tests
+          python engine/src/generate_tests.py build/ir --pretty -o build/tests
+
+      - name: Prepare runtime tests with mapping injection
+        run: |
+          mkdir -p build/runtime-tests build/results
+          python engine/src/test_runner/prepare_runtime_tests.py build/tests \
+            --output-dir build/runtime-tests \
+            --mapping caller/${{ inputs.runtime_mapping_path }} \
+            --skip-report build/results/runtime-skip-report.json
+
+      - name: Upload generated artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-pipeline-build
+          path: |
+            build/ir
+            build/tests
+            build/runtime-tests
+            build/results
+          if-no-files-found: ignore
+
+  run-suite-tests:
+    runs-on: ubuntu-latest
+    needs: build-runtime-tests
+    env:
+      PYTHONPATH: engine/src
+      CONTRACTGUARD_AUTH_BY_BASE_URL_JSON: ${{ secrets.CONTRACTGUARD_AUTH_BY_BASE_URL_JSON }}
+      CONTRACTGUARD_BEARER_TOKEN: ${{ secrets.CONTRACTGUARD_BEARER_TOKEN }}
+      CONTRACTGUARD_API_KEY: ${{ secrets.CONTRACTGUARD_API_KEY }}
+      CONTRACTGUARD_API_KEY_HEADER: ${{ secrets.CONTRACTGUARD_API_KEY_HEADER }}
+      ALLOW_SUITE_FAILURE: ${{ inputs.allow_suite_failure && 'true' || 'false' }}
+      SUITE_TIMEOUT_SECONDS: ${{ inputs.suite_timeout_seconds }}
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          path: caller
+
+      - name: Checkout ContractGuard engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.engine_repository }}
+          ref: ${{ inputs.engine_ref }}
+          path: engine
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r engine/src/backend/requirements.txt
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: spec-pipeline-build
+          path: .
+
+      - name: Run suites sequentially
+        id: run-all
+        continue-on-error: true
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          def slug(name: str) -> str:
+            return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "suite"
+
+          def is_full_url(value: str) -> bool:
+            return value.startswith("http://") or value.startswith("https://")
+
+          def to_host(value: str) -> str:
+            text = str(value or "").strip()
+            if not text:
+              return ""
+            if is_full_url(text):
+              return (urlparse(text).netloc or "").lower()
+            return text.lower().split("/")[0]
+
+          def domain_tail(host: str) -> str:
+            labels = [p for p in host.split(".") if p]
+            if len(labels) >= 2:
+              return ".".join(labels[-2:])
+            return host
+
+          def resolve_auth_entry(spec_base_url: str, mapping: dict):
+            if not isinstance(mapping, dict) or not mapping:
+              return None, None
+
+            spec_url = str(spec_base_url or "").strip()
+            spec_host = to_host(spec_url)
+            spec_tail = domain_tail(spec_host)
+
+            # 1) Exact spec URL match
+            if spec_url and isinstance(mapping.get(spec_url), dict):
+              return spec_url, mapping.get(spec_url)
+
+            # 2) Exact host key match
+            if spec_host and isinstance(mapping.get(spec_host), dict):
+              return spec_host, mapping.get(spec_host)
+
+            # 3) URL/host entries that resolve to the same host
+            for key, entry in mapping.items():
+              if key == "__default__" or not isinstance(entry, dict):
+                continue
+              if spec_host and to_host(key) == spec_host:
+                return key, entry
+
+            # 4) Same domain tail (e.g. api-m.paypal.com <-> api.paypal.com)
+            for key, entry in mapping.items():
+              if key == "__default__" or not isinstance(entry, dict):
+                continue
+              key_tail = domain_tail(to_host(key))
+              if spec_tail and key_tail and spec_tail == key_tail:
+                return key, entry
+
+            # 5) Explicit default mapping entry
+            default_entry = mapping.get("__default__")
+            if isinstance(default_entry, dict):
+              return "__default__", default_entry
+
+            return None, None
+
+          candidate_dirs = [
+            Path("build/runtime-tests"),
+            Path("runtime-tests"),
+            Path("build/tests"),
+          ]
+
+          suites = []
+          for d in candidate_dirs:
+            if d.exists():
+              files = sorted(d.rglob("*.json"))
+              if files:
+                suites = files
+                print(f"Suite discovery root: {d}")
+                break
+
+          if not suites:
+            suites = sorted(
+              p for p in Path(".").rglob("*.json")
+              if "/runtime-tests/" in p.as_posix()
+            )
+            if suites:
+              print("Suite discovery root: <fallback scan>")
+
+          results_dir = Path("build/results")
+          results_dir.mkdir(parents=True, exist_ok=True)
+
+          auth_mapping = {}
+          raw_mapping = os.environ.get("CONTRACTGUARD_AUTH_BY_BASE_URL_JSON", "").strip()
+          if raw_mapping:
+            try:
+              parsed = json.loads(raw_mapping)
+              if isinstance(parsed, dict):
+                auth_mapping = parsed
+              else:
+                print("WARNING: CONTRACTGUARD_AUTH_BY_BASE_URL_JSON is not an object")
+            except Exception as exc:
+              print(f"WARNING: failed to parse CONTRACTGUARD_AUTH_BY_BASE_URL_JSON: {exc}")
+
+          execution = {
+            "suite_count": len(suites),
+            "suites": [],
+            "failed_suites": [],
+          }
+
+          print(f"Discovered suite files: {len(suites)}")
+          for p in suites:
+            print(" -", p.as_posix())
+
+          if not suites:
+            (results_dir / "execution-summary.json").write_text(
+              json.dumps(execution, indent=2),
+              encoding="utf-8",
+            )
+            print("ERROR: No suite JSON found under runtime-tests/build/tests")
+            sys.exit(2)
+
+          failed = 0
+          timeout = str(os.environ.get("SUITE_TIMEOUT_SECONDS") or "12")
+          for suite_file in suites:
+            data = json.loads(suite_file.read_text(encoding="utf-8"))
+            spec_base_url = str(data.get("base_url") or "").strip()
+            matched_key, matched_entry = resolve_auth_entry(spec_base_url, auth_mapping)
+            matched_entry = matched_entry or {}
+
+            # Secret mapping can override spec base URL.
+            effective_base_url = str(
+              matched_entry.get("base_url")
+              or matched_entry.get("override_base_url")
+              or spec_base_url
+            ).strip()
+
+            resolved = {
+              "bearer_token": os.environ.get("CONTRACTGUARD_BEARER_TOKEN", ""),
+              "api_key": os.environ.get("CONTRACTGUARD_API_KEY", ""),
+              "api_key_header": os.environ.get("CONTRACTGUARD_API_KEY_HEADER", ""),
+            }
+
+            if isinstance(matched_entry, dict):
+              resolved["bearer_token"] = str(matched_entry.get("bearer_token") or resolved["bearer_token"])
+              resolved["api_key"] = str(matched_entry.get("api_key") or resolved["api_key"])
+              resolved["api_key_header"] = str(matched_entry.get("api_key_header") or resolved["api_key_header"])
+
+            suite_name = slug(suite_file.stem)
+            out_path = results_dir / f"{suite_name}.json"
+
+            env = os.environ.copy()
+            env["CONTRACTGUARD_BEARER_TOKEN"] = resolved["bearer_token"]
+            env["CONTRACTGUARD_API_KEY"] = resolved["api_key"]
+            env["CONTRACTGUARD_API_KEY_HEADER"] = resolved["api_key_header"]
+
+            cmd = [
+              sys.executable,
+              "engine/src/test_runner/run_test.py",
+              str(suite_file),
+              "--base-url",
+              effective_base_url,
+              "--timeout",
+              timeout,
+              "--json-output",
+              str(out_path),
+            ]
+
+            print(
+              f"\n=== Running suite: {suite_file.name} | "
+              f"spec_base_url={spec_base_url or '<empty>'} | "
+              f"effective_base_url={effective_base_url or '<empty>'} | "
+              f"auth_match={matched_key or '<none>'}"
+            )
+            rc = subprocess.run(cmd, env=env).returncode
+
+            execution["suites"].append(
+              {
+                "suite_file": suite_file.as_posix(),
+                "spec_base_url": spec_base_url,
+                "effective_base_url": effective_base_url,
+                "auth_match": matched_key,
+                "result_file": out_path.as_posix(),
+                "exit_code": rc,
+              }
+            )
+
+            if rc != 0:
+              failed += 1
+              execution["failed_suites"].append(suite_file.as_posix())
+
+          (results_dir / "execution-summary.json").write_text(
+            json.dumps(execution, indent=2),
+            encoding="utf-8",
+          )
+
+          if failed:
+            print(f"ERROR: {failed} suite(s) failed")
+            allow_failure = os.environ.get("ALLOW_SUITE_FAILURE", "false").strip().lower() == "true"
+            if allow_failure:
+              print("WARNING: ALLOW_SUITE_FAILURE=true, keeping job green despite suite failures")
+            else:
+              sys.exit(1)
+          PY
+
+      - name: Upload suite result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-results
+          path: build/results
+          if-no-files-found: ignore
+
+      - name: Mark job failed when any suite failed
+        if: ${{ steps.run-all.outcome != 'success' && env.ALLOW_SUITE_FAILURE != 'true' }}
+        run: exit 1
+
+  summarize-and-comment:
+    runs-on: ubuntu-latest
+    needs:
+      - build-runtime-tests
+      - run-suite-tests
+    if: always()
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          path: caller
+
+      - name: Download suite result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: suite-results
+          merge-multiple: true
+          path: build/results
+
+      - name: Build failure summary
+        id: summary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          from pathlib import Path
+
+          result_dir = Path("build/results")
+          result_dir.mkdir(parents=True, exist_ok=True)
+          files = sorted(result_dir.glob("*.json"))
+
+          total = passed = failed = skipped = 0
+          failed_cases = []
+
+          for p in files:
+              try:
+                  data = json.loads(p.read_text(encoding="utf-8"))
+              except Exception:
+                  continue
+              summary = data.get("summary") or {}
+              suites = data.get("suites") or []
+
+              total += int(summary.get("total", 0))
+              passed += int(summary.get("passed", 0))
+              failed += int(summary.get("failed", 0))
+              skipped += int(summary.get("skipped", 0))
+
+              for suite in suites:
+                  api_title = suite.get("api_title", p.stem)
+                  for row in suite.get("results", []):
+                      if row.get("outcome") != "FAIL":
+                          continue
+                      failed_cases.append(
+                          {
+                              "api_title": api_title,
+                              "test_id": row.get("test_id"),
+                              "method": row.get("method"),
+                              "path": row.get("path"),
+                              "expected": row.get("expected_status_any_of") or row.get("expected_status"),
+                              "actual": row.get("actual_status"),
+                              "snippet": (row.get("response_snippet") or "")[:200],
+                          }
+                      )
+
+          has_failed = "true" if failed > 0 else "false"
+          summary_lines = [
+              "<!-- contractguard-failure-summary -->",
+              "## ContractGuard CI Summary",
+              f"- Total: {total}",
+              f"- Passed: {passed}",
+              f"- Failed: {failed}",
+              f"- Skipped: {skipped}",
+              "",
+          ]
+
+          if failed_cases:
+              summary_lines.append("### Top Failed Cases")
+              for item in failed_cases[:20]:
+                  summary_lines.append(
+                      f"- [{item['api_title']}] {item['test_id']} | {item['method']} {item['path']} | expected={item['expected']} got={item['actual']}"
+                  )
+              summary_lines.append("")
+              summary_lines.append("### LLM Failure Analysis (Skeleton)")
+              summary_lines.append("- Hook point ready: feed the failed cases above into your LLM pipeline.")
+              summary_lines.append("- Suggested input: build/results/*.json and build/runtime-tests/*.json artifacts.")
+              summary_lines.append("- Suggested output: grouped root causes + concrete fix actions per group.")
+          elif not files:
+              summary_lines.append("### No Suite Result Artifacts")
+              summary_lines.append("- No suite-result-*.json files were downloaded in this job.")
+              summary_lines.append("- This usually means run-suite-tests was skipped, or all suite jobs failed before writing JSON output.")
+
+          Path("build/results/failure-summary.md").write_text("\n".join(summary_lines), encoding="utf-8")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"has_failed={has_failed}\\n")
+          PY
+
+      - name: Upload summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-pipeline-summary
+          path: build/results/failure-summary.md
+          if-no-files-found: ignore
+
+      - name: Comment summary on pull request
+        if: ${{ github.event_name == 'pull_request' && inputs.comment_on_pr && steps.summary.outputs.has_failed == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- contractguard-failure-summary -->';
+            const body = fs.readFileSync('build/results/failure-summary.md', 'utf8');
+            const issue_number = context.payload.pull_request.number;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c => (c.body || '').includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                body,
+              });
+            }

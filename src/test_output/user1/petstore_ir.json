@@ -1,0 +1,1798 @@
+{
+  "title": "Swagger Petstore - OpenAPI 3.0",
+  "version": "1.0.27",
+  "base_url": "https://petstore.swagger.io/v2/swagger.json",
+  "security_schemes": {
+    "petstore_auth": {
+      "type": "oauth2",
+      "flows": {
+        "implicit": {
+          "authorizationUrl": "https://petstore3.swagger.io/oauth/authorize",
+          "scopes": {
+            "write:pets": "modify pets in your account",
+            "read:pets": "read your pets"
+          }
+        }
+      }
+    },
+    "api_key": {
+      "type": "apiKey",
+      "name": "api_key",
+      "in": "header"
+    }
+  },
+  "endpoints": [
+    {
+      "endpoint_id": "PUT /pet",
+      "method": "PUT",
+      "path": "/pet",
+      "operation_id": "updatePet",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": {
+        "required": [
+          "name",
+          "photoUrls"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 10
+          },
+          "name": {
+            "type": "string",
+            "example": "doggie"
+          },
+          "category": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "example": 1
+              },
+              "name": {
+                "type": "string",
+                "example": "Dogs"
+              }
+            },
+            "xml": {
+              "name": "category"
+            }
+          },
+          "photoUrls": {
+            "type": "array",
+            "xml": {
+              "wrapped": true
+            },
+            "items": {
+              "type": "string",
+              "xml": {
+                "name": "photoUrl"
+              }
+            }
+          },
+          "tags": {
+            "type": "array",
+            "xml": {
+              "wrapped": true
+            },
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "xml": {
+                "name": "tag"
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "description": "pet status in the store",
+            "enum": [
+              "available",
+              "pending",
+              "sold"
+            ]
+          }
+        },
+        "xml": {
+          "name": "pet"
+        }
+      },
+      "response_schemas": {
+        "200": {
+          "required": [
+            "name",
+            "photoUrls"
+          ],
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "name": {
+              "type": "string",
+              "example": "doggie"
+            },
+            "category": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "example": 1
+                },
+                "name": {
+                  "type": "string",
+                  "example": "Dogs"
+                }
+              },
+              "xml": {
+                "name": "category"
+              }
+            },
+            "photoUrls": {
+              "type": "array",
+              "xml": {
+                "wrapped": true
+              },
+              "items": {
+                "type": "string",
+                "xml": {
+                  "name": "photoUrl"
+                }
+              }
+            },
+            "tags": {
+              "type": "array",
+              "xml": {
+                "wrapped": true
+              },
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "xml": {
+                  "name": "tag"
+                }
+              }
+            },
+            "status": {
+              "type": "string",
+              "description": "pet status in the store",
+              "enum": [
+                "available",
+                "pending",
+                "sold"
+              ]
+            }
+          },
+          "xml": {
+            "name": "pet"
+          }
+        },
+        "400": null,
+        "404": null,
+        "422": null,
+        "default": null
+      },
+      "summary": "Update an existing pet.",
+      "description": "Update an existing pet by Id.",
+      "request_body_required": true,
+      "request_examples": [],
+      "security": [
+        {
+          "petstore_auth": [
+            "write:pets",
+            "read:pets"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "Successful operation",
+        "400": "Invalid ID supplied",
+        "404": "Pet not found",
+        "422": "Validation exception",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "POST /pet",
+      "method": "POST",
+      "path": "/pet",
+      "operation_id": "addPet",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": {
+        "required": [
+          "name",
+          "photoUrls"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 10
+          },
+          "name": {
+            "type": "string",
+            "example": "doggie"
+          },
+          "category": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "example": 1
+              },
+              "name": {
+                "type": "string",
+                "example": "Dogs"
+              }
+            },
+            "xml": {
+              "name": "category"
+            }
+          },
+          "photoUrls": {
+            "type": "array",
+            "xml": {
+              "wrapped": true
+            },
+            "items": {
+              "type": "string",
+              "xml": {
+                "name": "photoUrl"
+              }
+            }
+          },
+          "tags": {
+            "type": "array",
+            "xml": {
+              "wrapped": true
+            },
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "xml": {
+                "name": "tag"
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "description": "pet status in the store",
+            "enum": [
+              "available",
+              "pending",
+              "sold"
+            ]
+          }
+        },
+        "xml": {
+          "name": "pet"
+        }
+      },
+      "response_schemas": {
+        "200": {
+          "required": [
+            "name",
+            "photoUrls"
+          ],
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "name": {
+              "type": "string",
+              "example": "doggie"
+            },
+            "category": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "example": 1
+                },
+                "name": {
+                  "type": "string",
+                  "example": "Dogs"
+                }
+              },
+              "xml": {
+                "name": "category"
+              }
+            },
+            "photoUrls": {
+              "type": "array",
+              "xml": {
+                "wrapped": true
+              },
+              "items": {
+                "type": "string",
+                "xml": {
+                  "name": "photoUrl"
+                }
+              }
+            },
+            "tags": {
+              "type": "array",
+              "xml": {
+                "wrapped": true
+              },
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "xml": {
+                  "name": "tag"
+                }
+              }
+            },
+            "status": {
+              "type": "string",
+              "description": "pet status in the store",
+              "enum": [
+                "available",
+                "pending",
+                "sold"
+              ]
+            }
+          },
+          "xml": {
+            "name": "pet"
+          }
+        },
+        "400": null,
+        "422": null,
+        "default": null
+      },
+      "summary": "Add a new pet to the store.",
+      "description": "Add a new pet to the store.",
+      "request_body_required": true,
+      "request_examples": [],
+      "security": [
+        {
+          "petstore_auth": [
+            "write:pets",
+            "read:pets"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "Successful operation",
+        "400": "Invalid input",
+        "422": "Validation exception",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /pet/findByStatus",
+      "method": "GET",
+      "path": "/pet/findByStatus",
+      "operation_id": "findPetsByStatus",
+      "path_params": [],
+      "query_params": [
+        {
+          "name": "status",
+          "location": "query",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "default": "available",
+            "enum": [
+              "available",
+              "pending",
+              "sold"
+            ]
+          }
+        }
+      ],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "array",
+          "items": {
+            "required": [
+              "name",
+              "photoUrls"
+            ],
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "example": 10
+              },
+              "name": {
+                "type": "string",
+                "example": "doggie"
+              },
+              "category": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "example": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "example": "Dogs"
+                  }
+                },
+                "xml": {
+                  "name": "category"
+                }
+              },
+              "photoUrls": {
+                "type": "array",
+                "xml": {
+                  "wrapped": true
+                },
+                "items": {
+                  "type": "string",
+                  "xml": {
+                    "name": "photoUrl"
+                  }
+                }
+              },
+              "tags": {
+                "type": "array",
+                "xml": {
+                  "wrapped": true
+                },
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "xml": {
+                    "name": "tag"
+                  }
+                }
+              },
+              "status": {
+                "type": "string",
+                "description": "pet status in the store",
+                "enum": [
+                  "available",
+                  "pending",
+                  "sold"
+                ]
+              }
+            },
+            "xml": {
+              "name": "pet"
+            }
+          }
+        },
+        "400": null,
+        "default": null
+      },
+      "summary": "Finds Pets by status.",
+      "description": "Multiple status values can be provided with comma separated strings.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "petstore_auth": [
+            "write:pets",
+            "read:pets"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "Invalid status value",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /pet/findByTags",
+      "method": "GET",
+      "path": "/pet/findByTags",
+      "operation_id": "findPetsByTags",
+      "path_params": [],
+      "query_params": [
+        {
+          "name": "tags",
+          "location": "query",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "array",
+          "items": {
+            "required": [
+              "name",
+              "photoUrls"
+            ],
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "example": 10
+              },
+              "name": {
+                "type": "string",
+                "example": "doggie"
+              },
+              "category": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "example": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "example": "Dogs"
+                  }
+                },
+                "xml": {
+                  "name": "category"
+                }
+              },
+              "photoUrls": {
+                "type": "array",
+                "xml": {
+                  "wrapped": true
+                },
+                "items": {
+                  "type": "string",
+                  "xml": {
+                    "name": "photoUrl"
+                  }
+                }
+              },
+              "tags": {
+                "type": "array",
+                "xml": {
+                  "wrapped": true
+                },
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "xml": {
+                    "name": "tag"
+                  }
+                }
+              },
+              "status": {
+                "type": "string",
+                "description": "pet status in the store",
+                "enum": [
+                  "available",
+                  "pending",
+                  "sold"
+                ]
+              }
+            },
+            "xml": {
+              "name": "pet"
+            }
+          }
+        },
+        "400": null,
+        "default": null
+      },
+      "summary": "Finds Pets by tags.",
+      "description": "Multiple tags can be provided with comma separated strings. Use tag1, tag2, tag3 for testing.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "petstore_auth": [
+            "write:pets",
+            "read:pets"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "Invalid tag value",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /pet/{petId}",
+      "method": "GET",
+      "path": "/pet/{petId}",
+      "operation_id": "getPetById",
+      "path_params": [
+        {
+          "name": "petId",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "required": [
+            "name",
+            "photoUrls"
+          ],
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "name": {
+              "type": "string",
+              "example": "doggie"
+            },
+            "category": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "example": 1
+                },
+                "name": {
+                  "type": "string",
+                  "example": "Dogs"
+                }
+              },
+              "xml": {
+                "name": "category"
+              }
+            },
+            "photoUrls": {
+              "type": "array",
+              "xml": {
+                "wrapped": true
+              },
+              "items": {
+                "type": "string",
+                "xml": {
+                  "name": "photoUrl"
+                }
+              }
+            },
+            "tags": {
+              "type": "array",
+              "xml": {
+                "wrapped": true
+              },
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "xml": {
+                  "name": "tag"
+                }
+              }
+            },
+            "status": {
+              "type": "string",
+              "description": "pet status in the store",
+              "enum": [
+                "available",
+                "pending",
+                "sold"
+              ]
+            }
+          },
+          "xml": {
+            "name": "pet"
+          }
+        },
+        "400": null,
+        "404": null,
+        "default": null
+      },
+      "summary": "Find pet by ID.",
+      "description": "Returns a single pet.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "api_key": []
+        },
+        {
+          "petstore_auth": [
+            "write:pets",
+            "read:pets"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "Invalid ID supplied",
+        "404": "Pet not found",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "POST /pet/{petId}",
+      "method": "POST",
+      "path": "/pet/{petId}",
+      "operation_id": "updatePetWithForm",
+      "path_params": [
+        {
+          "name": "petId",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "query_params": [
+        {
+          "name": "name",
+          "location": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "status",
+          "location": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "required": [
+            "name",
+            "photoUrls"
+          ],
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "name": {
+              "type": "string",
+              "example": "doggie"
+            },
+            "category": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int64",
+                  "example": 1
+                },
+                "name": {
+                  "type": "string",
+                  "example": "Dogs"
+                }
+              },
+              "xml": {
+                "name": "category"
+              }
+            },
+            "photoUrls": {
+              "type": "array",
+              "xml": {
+                "wrapped": true
+              },
+              "items": {
+                "type": "string",
+                "xml": {
+                  "name": "photoUrl"
+                }
+              }
+            },
+            "tags": {
+              "type": "array",
+              "xml": {
+                "wrapped": true
+              },
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "xml": {
+                  "name": "tag"
+                }
+              }
+            },
+            "status": {
+              "type": "string",
+              "description": "pet status in the store",
+              "enum": [
+                "available",
+                "pending",
+                "sold"
+              ]
+            }
+          },
+          "xml": {
+            "name": "pet"
+          }
+        },
+        "400": null,
+        "default": null
+      },
+      "summary": "Updates a pet in the store with form data.",
+      "description": "Updates a pet resource based on the form data.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "petstore_auth": [
+            "write:pets",
+            "read:pets"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "Invalid input",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "DELETE /pet/{petId}",
+      "method": "DELETE",
+      "path": "/pet/{petId}",
+      "operation_id": "deletePet",
+      "path_params": [
+        {
+          "name": "petId",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [
+        {
+          "name": "api_key",
+          "location": "header",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "request_schema": null,
+      "response_schemas": {
+        "200": null,
+        "400": null,
+        "default": null
+      },
+      "summary": "Deletes a pet.",
+      "description": "Delete a pet.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "petstore_auth": [
+            "write:pets",
+            "read:pets"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "Pet deleted",
+        "400": "Invalid pet value",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "POST /pet/{petId}/uploadImage",
+      "method": "POST",
+      "path": "/pet/{petId}/uploadImage",
+      "operation_id": "uploadFile",
+      "path_params": [
+        {
+          "name": "petId",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "query_params": [
+        {
+          "name": "additionalMetadata",
+          "location": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "type": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "xml": {
+            "name": "##default"
+          }
+        },
+        "400": null,
+        "404": null,
+        "default": null
+      },
+      "summary": "Uploads an image.",
+      "description": "Upload image of the pet.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "petstore_auth": [
+            "write:pets",
+            "read:pets"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "No file uploaded",
+        "404": "Pet not found",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /store/inventory",
+      "method": "GET",
+      "path": "/store/inventory",
+      "operation_id": "getInventory",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "default": null
+      },
+      "summary": "Returns pet inventories by status.",
+      "description": "Returns a map of status codes to quantities.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "api_key": []
+        }
+      ],
+      "response_descriptions": {
+        "200": "successful operation",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "POST /store/order",
+      "method": "POST",
+      "path": "/store/order",
+      "operation_id": "placeOrder",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 10
+          },
+          "petId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 198772
+          },
+          "quantity": {
+            "type": "integer",
+            "format": "int32",
+            "example": 7
+          },
+          "shipDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "description": "Order Status",
+            "example": "approved",
+            "enum": [
+              "placed",
+              "approved",
+              "delivered"
+            ]
+          },
+          "complete": {
+            "type": "boolean"
+          }
+        },
+        "xml": {
+          "name": "order"
+        }
+      },
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "petId": {
+              "type": "integer",
+              "format": "int64",
+              "example": 198772
+            },
+            "quantity": {
+              "type": "integer",
+              "format": "int32",
+              "example": 7
+            },
+            "shipDate": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "status": {
+              "type": "string",
+              "description": "Order Status",
+              "example": "approved",
+              "enum": [
+                "placed",
+                "approved",
+                "delivered"
+              ]
+            },
+            "complete": {
+              "type": "boolean"
+            }
+          },
+          "xml": {
+            "name": "order"
+          }
+        },
+        "400": null,
+        "422": null,
+        "default": null
+      },
+      "summary": "Place an order for a pet.",
+      "description": "Place a new order in the store.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "Invalid input",
+        "422": "Validation exception",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /store/order/{orderId}",
+      "method": "GET",
+      "path": "/store/order/{orderId}",
+      "operation_id": "getOrderById",
+      "path_params": [
+        {
+          "name": "orderId",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "petId": {
+              "type": "integer",
+              "format": "int64",
+              "example": 198772
+            },
+            "quantity": {
+              "type": "integer",
+              "format": "int32",
+              "example": 7
+            },
+            "shipDate": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "status": {
+              "type": "string",
+              "description": "Order Status",
+              "example": "approved",
+              "enum": [
+                "placed",
+                "approved",
+                "delivered"
+              ]
+            },
+            "complete": {
+              "type": "boolean"
+            }
+          },
+          "xml": {
+            "name": "order"
+          }
+        },
+        "400": null,
+        "404": null,
+        "default": null
+      },
+      "summary": "Find purchase order by ID.",
+      "description": "For valid response try integer IDs with value <= 5 or > 10. Other values will generate exceptions.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "Invalid ID supplied",
+        "404": "Order not found",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "DELETE /store/order/{orderId}",
+      "method": "DELETE",
+      "path": "/store/order/{orderId}",
+      "operation_id": "deleteOrder",
+      "path_params": [
+        {
+          "name": "orderId",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": null,
+        "400": null,
+        "404": null,
+        "default": null
+      },
+      "summary": "Delete purchase order by identifier.",
+      "description": "For valid response try integer IDs with value < 1000. Anything above 1000 or non-integers will generate API errors.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "order deleted",
+        "400": "Invalid ID supplied",
+        "404": "Order not found",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "POST /user",
+      "method": "POST",
+      "path": "/user",
+      "operation_id": "createUser",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 10
+          },
+          "username": {
+            "type": "string",
+            "example": "theUser"
+          },
+          "firstName": {
+            "type": "string",
+            "example": "John"
+          },
+          "lastName": {
+            "type": "string",
+            "example": "James"
+          },
+          "email": {
+            "type": "string",
+            "example": "john@email.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "12345"
+          },
+          "phone": {
+            "type": "string",
+            "example": "12345"
+          },
+          "userStatus": {
+            "type": "integer",
+            "description": "User Status",
+            "format": "int32",
+            "example": 1
+          }
+        },
+        "xml": {
+          "name": "user"
+        }
+      },
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "username": {
+              "type": "string",
+              "example": "theUser"
+            },
+            "firstName": {
+              "type": "string",
+              "example": "John"
+            },
+            "lastName": {
+              "type": "string",
+              "example": "James"
+            },
+            "email": {
+              "type": "string",
+              "example": "john@email.com"
+            },
+            "password": {
+              "type": "string",
+              "example": "12345"
+            },
+            "phone": {
+              "type": "string",
+              "example": "12345"
+            },
+            "userStatus": {
+              "type": "integer",
+              "description": "User Status",
+              "format": "int32",
+              "example": 1
+            }
+          },
+          "xml": {
+            "name": "user"
+          }
+        },
+        "default": null
+      },
+      "summary": "Create user.",
+      "description": "This can only be done by the logged in user.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "successful operation",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "POST /user/createWithList",
+      "method": "POST",
+      "path": "/user/createWithList",
+      "operation_id": "createUsersWithListInput",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "username": {
+              "type": "string",
+              "example": "theUser"
+            },
+            "firstName": {
+              "type": "string",
+              "example": "John"
+            },
+            "lastName": {
+              "type": "string",
+              "example": "James"
+            },
+            "email": {
+              "type": "string",
+              "example": "john@email.com"
+            },
+            "password": {
+              "type": "string",
+              "example": "12345"
+            },
+            "phone": {
+              "type": "string",
+              "example": "12345"
+            },
+            "userStatus": {
+              "type": "integer",
+              "description": "User Status",
+              "format": "int32",
+              "example": 1
+            }
+          },
+          "xml": {
+            "name": "user"
+          }
+        }
+      },
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "username": {
+              "type": "string",
+              "example": "theUser"
+            },
+            "firstName": {
+              "type": "string",
+              "example": "John"
+            },
+            "lastName": {
+              "type": "string",
+              "example": "James"
+            },
+            "email": {
+              "type": "string",
+              "example": "john@email.com"
+            },
+            "password": {
+              "type": "string",
+              "example": "12345"
+            },
+            "phone": {
+              "type": "string",
+              "example": "12345"
+            },
+            "userStatus": {
+              "type": "integer",
+              "description": "User Status",
+              "format": "int32",
+              "example": 1
+            }
+          },
+          "xml": {
+            "name": "user"
+          }
+        },
+        "default": null
+      },
+      "summary": "Creates list of users with given input array.",
+      "description": "Creates list of users with given input array.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "Successful operation",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /user/login",
+      "method": "GET",
+      "path": "/user/login",
+      "operation_id": "loginUser",
+      "path_params": [],
+      "query_params": [
+        {
+          "name": "username",
+          "location": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "password",
+          "location": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "string"
+        },
+        "400": null,
+        "default": null
+      },
+      "summary": "Logs user into the system.",
+      "description": "Log into the system.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "Invalid username/password supplied",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /user/logout",
+      "method": "GET",
+      "path": "/user/logout",
+      "operation_id": "logoutUser",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": null,
+        "default": null
+      },
+      "summary": "Logs out current logged in user session.",
+      "description": "Log user out of the system.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "successful operation",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /user/{username}",
+      "method": "GET",
+      "path": "/user/{username}",
+      "operation_id": "getUserByName",
+      "path_params": [
+        {
+          "name": "username",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "int64",
+              "example": 10
+            },
+            "username": {
+              "type": "string",
+              "example": "theUser"
+            },
+            "firstName": {
+              "type": "string",
+              "example": "John"
+            },
+            "lastName": {
+              "type": "string",
+              "example": "James"
+            },
+            "email": {
+              "type": "string",
+              "example": "john@email.com"
+            },
+            "password": {
+              "type": "string",
+              "example": "12345"
+            },
+            "phone": {
+              "type": "string",
+              "example": "12345"
+            },
+            "userStatus": {
+              "type": "integer",
+              "description": "User Status",
+              "format": "int32",
+              "example": 1
+            }
+          },
+          "xml": {
+            "name": "user"
+          }
+        },
+        "400": null,
+        "404": null,
+        "default": null
+      },
+      "summary": "Get user by user name.",
+      "description": "Get user detail based on username.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "Invalid username supplied",
+        "404": "User not found",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "PUT /user/{username}",
+      "method": "PUT",
+      "path": "/user/{username}",
+      "operation_id": "updateUser",
+      "path_params": [
+        {
+          "name": "username",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 10
+          },
+          "username": {
+            "type": "string",
+            "example": "theUser"
+          },
+          "firstName": {
+            "type": "string",
+            "example": "John"
+          },
+          "lastName": {
+            "type": "string",
+            "example": "James"
+          },
+          "email": {
+            "type": "string",
+            "example": "john@email.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "12345"
+          },
+          "phone": {
+            "type": "string",
+            "example": "12345"
+          },
+          "userStatus": {
+            "type": "integer",
+            "description": "User Status",
+            "format": "int32",
+            "example": 1
+          }
+        },
+        "xml": {
+          "name": "user"
+        }
+      },
+      "response_schemas": {
+        "200": null,
+        "400": null,
+        "404": null,
+        "default": null
+      },
+      "summary": "Update user resource.",
+      "description": "This can only be done by the logged in user.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "successful operation",
+        "400": "bad request",
+        "404": "user not found",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "DELETE /user/{username}",
+      "method": "DELETE",
+      "path": "/user/{username}",
+      "operation_id": "deleteUser",
+      "path_params": [
+        {
+          "name": "username",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": null,
+        "400": null,
+        "404": null,
+        "default": null
+      },
+      "summary": "Delete user resource.",
+      "description": "This can only be done by the logged in user.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [],
+      "response_descriptions": {
+        "200": "User deleted",
+        "400": "Invalid username supplied",
+        "404": "User not found",
+        "default": "Unexpected error"
+      },
+      "response_examples": {}
+    }
+  ]
+}

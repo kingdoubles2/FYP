@@ -1,0 +1,1060 @@
+{
+  "api_title": "Transfers API",
+  "api_version": "3",
+  "generated_at": "2026-04-11T11:16:38Z",
+  "base_url": "https://balanceplatform-api-test.adyen.com/btl/v3",
+  "test_cases": [
+    {
+      "test_id": "TC-GET-transactions-001",
+      "title": "GET /transactions - Happy path: minimal valid request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "high",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions with query params {'createdSince': '2026-01-15T10:30:00Z', 'createdUntil': '2026-01-15T10:30:00Z'}",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "createdSince": "2026-01-15T10:30:00Z",
+              "createdUntil": "2026-01-15T10:30:00Z"
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: _links, data"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-002",
+      "title": "GET /transactions - Happy path: example-based request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions with query params {'balancePlatform': 'YOUR_BALANCE_PLATFORM', 'paymentInstrumentId': 'standard-text', 'accountHolderId': 'AHA1B2C3D4E5F6G7H8I9J0', 'balanceAccountId': 'BAB8B2C3D4E5F6G7H8D9J6GD4', 'cursor': 'standard-text', 'createdSince': '2026-01-15T10:30:00Z', 'createdUntil': '2026-01-15T10:30:00Z', 'limit': 1}",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
+              "paymentInstrumentId": "standard-text",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "cursor": "standard-text",
+              "createdSince": "2026-01-15T10:30:00Z",
+              "createdUntil": "2026-01-15T10:30:00Z",
+              "limit": 1
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: _links, data"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-003",
+      "title": "GET /transactions - Negative type: query createdSince=12345",
+      "category": "negative_type",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with query param createdSince as wrong type",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
+              "paymentInstrumentId": "standard-text",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "cursor": "standard-text",
+              "createdSince": 12345,
+              "createdUntil": "2026-01-15T10:30:00Z",
+              "limit": 20
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: query param createdSince has wrong type"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-004",
+      "title": "GET /transactions - Negative type: query createdUntil=12345",
+      "category": "negative_type",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with query param createdUntil as wrong type",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
+              "paymentInstrumentId": "standard-text",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "cursor": "standard-text",
+              "createdSince": "2026-01-15T10:30:00Z",
+              "createdUntil": 12345,
+              "limit": 20
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: query param createdUntil has wrong type"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-005",
+      "title": "GET /transactions - Negative missing: required query param 'createdSince' omitted",
+      "category": "negative_missing",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions without required query param 'createdSince'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
+              "paymentInstrumentId": "standard-text",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "cursor": "standard-text",
+              "createdUntil": "2026-01-15T10:30:00Z",
+              "limit": 20
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: required query param 'createdSince' is missing"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-006",
+      "title": "GET /transactions - Negative missing: required query param 'createdUntil' omitted",
+      "category": "negative_missing",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions without required query param 'createdUntil'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
+              "paymentInstrumentId": "standard-text",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "cursor": "standard-text",
+              "createdSince": "2026-01-15T10:30:00Z",
+              "limit": 20
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: required query param 'createdUntil' is missing"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-007",
+      "title": "GET /transactions - Negative invalid: query createdSince='not-a-date' (bad format)",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with malformed createdSince='not-a-date'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
+              "paymentInstrumentId": "standard-text",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "cursor": "standard-text",
+              "createdSince": "not-a-date",
+              "createdUntil": "2026-01-15T10:30:00Z",
+              "limit": 20
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: 'not-a-date' is not a valid format for createdSince"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-008",
+      "title": "GET /transactions - Negative invalid: query createdUntil='not-a-date' (bad format)",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with malformed createdUntil='not-a-date'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
+              "paymentInstrumentId": "standard-text",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "cursor": "standard-text",
+              "createdSince": "2026-01-15T10:30:00Z",
+              "createdUntil": "not-a-date",
+              "limit": 20
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: 'not-a-date' is not a valid format for createdUntil"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-009",
+      "title": "GET /transactions - Boundary: query limit max_int32(2147483647)",
+      "category": "boundary",
+      "requirement_ref": "GET /transactions",
+      "method": "GET",
+      "path": "/transactions",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request with query limit=2147483647",
+          "input_data": {
+            "path_params": {},
+            "query_params": {
+              "balancePlatform": "YOUR_BALANCE_PLATFORM",
+              "paymentInstrumentId": "standard-text",
+              "accountHolderId": "AHA1B2C3D4E5F6G7H8I9J0",
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "cursor": "standard-text",
+              "createdSince": "2026-01-15T10:30:00Z",
+              "createdUntil": "2026-01-15T10:30:00Z",
+              "limit": 2147483647
+            },
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Boundary valid: limit max_int32(2147483647) should be accepted"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-id-001",
+      "title": "GET /transactions/{id} - Happy path: minimal valid request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "GET /transactions/{id}",
+      "method": "GET",
+      "path": "/transactions/{id}",
+      "priority": "high",
+      "preconditions": [
+        "Resource exists for id=standard-text"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions/standard-text",
+          "input_data": {
+            "path_params": {
+              "id": "standard-text"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: accountHolderId, amount, balanceAccountId, balancePlatform, bookingDate, category"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-id-002",
+      "title": "GET /transactions/{id} - Happy path: example-based request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "GET /transactions/{id}",
+      "method": "GET",
+      "path": "/transactions/{id}",
+      "priority": "medium",
+      "preconditions": [
+        "Resource exists for id=IZK7C25U7DYVX03Y"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions/IZK7C25U7DYVX03Y",
+          "input_data": {
+            "path_params": {
+              "id": "IZK7C25U7DYVX03Y"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: accountHolderId, amount, balanceAccountId, balancePlatform, bookingDate, category"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-id-003",
+      "title": "GET /transactions/{id} - Negative type: id=12345",
+      "category": "negative_type",
+      "requirement_ref": "GET /transactions/{id}",
+      "method": "GET",
+      "path": "/transactions/{id}",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions/12345 with id as wrong type",
+          "input_data": {
+            "path_params": {
+              "id": 12345
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: id has wrong type"
+      }
+    },
+    {
+      "test_id": "TC-GET-transactions-id-004",
+      "title": "GET /transactions/{id} - Negative: request non-existent resource",
+      "category": "negative_invalid",
+      "requirement_ref": "GET /transactions/{id}",
+      "method": "GET",
+      "path": "/transactions/{id}",
+      "priority": "medium",
+      "preconditions": [
+        "The requested resource does not exist"
+      ],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send GET request to /transactions/IZK7C25U7DYVX03Y for a non-existent resource",
+          "input_data": {
+            "path_params": {
+              "id": "IZK7C25U7DYVX03Y"
+            },
+            "query_params": {},
+            "headers": {},
+            "body": null
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 404,
+        "description": "Resource not found"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-001",
+      "title": "POST /transfers - Happy path: minimal valid request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "high",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request to /transfers with valid request body",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "USD",
+                "value": 1
+              },
+              "balanceAccountId": "standard-text",
+              "category": "bank",
+              "counterparty": {
+                "balanceAccountId": "standard-text",
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "Dublin",
+                      "country": "Ireland",
+                      "line1": "standard-text",
+                      "line2": "standard-text",
+                      "postalCode": "D02X285",
+                      "stateOrProvince": "standard-text"
+                    },
+                    "dateOfBirth": "2026-01-15",
+                    "firstName": "Jane",
+                    "fullName": "Jane Doe",
+                    "lastName": "Doe",
+                    "reference": "standard-text",
+                    "type": "individual"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "standard-",
+                    "bsbCode": "standa",
+                    "type": "auLocal"
+                  }
+                },
+                "transferInstrumentId": "standard-text"
+              },
+              "description": "Primary account profile",
+              "id": "standard-text",
+              "paymentInstrumentId": "standard-text",
+              "priority": "crossBorder",
+              "reference": "standard-text",
+              "referenceForBeneficiary": "standard-text",
+              "ultimateParty": {
+                "address": {
+                  "city": "Dublin",
+                  "country": "Ireland",
+                  "line1": "standard-text",
+                  "line2": "standard-text",
+                  "postalCode": "D02X285",
+                  "stateOrProvince": "standard-text"
+                },
+                "dateOfBirth": "2026-01-15",
+                "firstName": "Jane",
+                "fullName": "Jane Doe",
+                "lastName": "Doe",
+                "reference": "standard-text",
+                "type": "individual"
+              }
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: accountHolder, amount, balanceAccount, balanceAccountId, category, counterparty"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-002",
+      "title": "POST /transfers - Happy path: example-based request returns 200",
+      "category": "happy_path",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request to /transfers with example request body",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Returns object with fields: accountHolder, amount, balanceAccount, balanceAccountId, category, counterparty"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-003",
+      "title": "POST /transfers - Negative missing: required body field 'category' omitted",
+      "category": "negative_missing",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body missing required field 'category'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: required body field 'category' is missing"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-004",
+      "title": "POST /transfers - Negative missing: required body field 'amount' omitted",
+      "category": "negative_missing",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body missing required field 'amount'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: required body field 'amount' is missing"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-005",
+      "title": "POST /transfers - Negative missing: required body field 'counterparty' omitted",
+      "category": "negative_missing",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body missing required field 'counterparty'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: required body field 'counterparty' is missing"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-006",
+      "title": "POST /transfers - Negative invalid: body field 'category'='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body field 'category'='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "invalid_enum_value_xyz",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'category'"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-007",
+      "title": "POST /transfers - Negative invalid: body field 'priority'='invalid_enum_value_xyz'",
+      "category": "negative_invalid",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "medium",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body field 'priority'='invalid_enum_value_xyz' (not in enum)",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "invalid_enum_value_xyz",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Rejected: 'invalid_enum_value_xyz' is not a valid enum value for 'priority'"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-008",
+      "title": "POST /transfers - Boundary: body reference above_maxLength(81)",
+      "category": "boundary",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body 'reference'='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Boundary violation: reference above_maxLength(81) should be rejected"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-009",
+      "title": "POST /transfers - Boundary: body reference at_maxLength(80)",
+      "category": "boundary",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body 'reference'='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "referenceForBeneficiary": "Your-reference-sent-to-the-beneficiary"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Boundary valid: reference at_maxLength(80) should be accepted"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-010",
+      "title": "POST /transfers - Boundary: body referenceForBeneficiary above_maxLength(81)",
+      "category": "boundary",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body 'referenceForBeneficiary'='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 422,
+        "description": "Boundary violation: referenceForBeneficiary above_maxLength(81) should be rejected"
+      }
+    },
+    {
+      "test_id": "TC-POST-transfers-011",
+      "title": "POST /transfers - Boundary: body referenceForBeneficiary at_maxLength(80)",
+      "category": "boundary",
+      "requirement_ref": "POST /transfers",
+      "method": "POST",
+      "path": "/transfers",
+      "priority": "low",
+      "preconditions": [],
+      "steps": [
+        {
+          "step_number": 1,
+          "action": "Send POST request with body 'referenceForBeneficiary'='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+          "input_data": {
+            "path_params": {},
+            "query_params": {},
+            "headers": {},
+            "body": {
+              "amount": {
+                "currency": "EUR",
+                "value": 110000
+              },
+              "balanceAccountId": "BAB8B2C3D4E5F6G7H8D9J6GD4",
+              "category": "bank",
+              "counterparty": {
+                "bankAccount": {
+                  "accountHolder": {
+                    "address": {
+                      "city": "San Francisco",
+                      "country": "US",
+                      "postalCode": "94678",
+                      "stateOrProvince": "CA",
+                      "street": "Brannan Street",
+                      "street2": "274"
+                    },
+                    "fullName": "A. Klaassen"
+                  },
+                  "accountIdentification": {
+                    "accountNumber": "123456789",
+                    "bic": "BOFAUS3NXXX",
+                    "type": "numberAndBic"
+                  }
+                }
+              },
+              "description": "Your description for the transfer",
+              "priority": "crossBorder",
+              "reference": "Your internal reference for the transfer",
+              "referenceForBeneficiary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        }
+      ],
+      "expected_result": {
+        "status_code": 200,
+        "description": "Boundary valid: referenceForBeneficiary at_maxLength(80) should be accepted"
+      }
+    }
+  ]
+}

@@ -1,30 +1,28 @@
-# CA400 template repo
+# ContractGuard
 
-This is a template for CA400 projects.
+ContractGuard is a project for checking whether an API behaves the way its contract says it should. It focuses on reading API specifications, generating tests, running those tests, and presenting the results in a simple way.
 
-## 1. Create your repo
+## Features
 
-One person from your project team should fork this repo, then add other teammates as project members on GitLab.
+- Parses API specifications such as OpenAPI files.
+- Generates and runs contract-based API tests.
+- Reports failures and test results through a web interface.
+- Uses LLM support to help explain complex failures.
+- GitHub Actions integration.
 
-## 2. Name your repo appropriately
+## Technologies
 
-The name of your project must be of the form `2024-ca400-XXXXXXX`, where "`XXXXXXX`"
-should be replaced with your usernames (e.g. `2024-ca400-sblott-pclarke`).
-**Note** that the year should be set as appropriate to your year of study. For example, in the
-2022/2023 academic year this would change to '2023-ca400-sblott-pclarke'), 
-in the 2023/2024 academic year this would change to '2024-ca400-sblott-pclarke'), etc. 
+- Python and FastAPI for the backend.
+- React and Vite for the frontend.
+- Docker and Docker Compose for local setup.
+- PostgreSQL for data storage.
+- OpenAPI, JSON, and YAML for API specification handling.
 
-It is the *name of your repo* which matters (not the name of your project).
+## Purpose
 
-You can change the name of your repo on GitLab under:
+The goal of ContractGuard is to make API contract verification easier, faster, and more practical for developers and students. It reduces manual checking and helps teams spot broken or inconsistent API behaviour earlier.
 
-- Settings / General / Advanced / Change path
+## Contributors
 
-It looks like this:
-
-![change-repo-path](./res/repo-change-path.png "Change repo path.")
-
-You should replace all of this file with a README describing your own project.
-
-## Additional resources
-
+- Chunyang Wang     21115214
+- Justin Siak       22449184

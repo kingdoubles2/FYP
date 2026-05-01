@@ -1,0 +1,1293 @@
+{
+  "title": "Orders",
+  "version": "2.25",
+  "base_url": "https://api-m.sandbox.paypal.com",
+  "security_schemes": {
+    "Oauth2": {
+      "type": "oauth2",
+      "description": "OAuth 2.0 authentication",
+      "flows": {
+        "clientCredentials": {
+          "tokenUrl": "https://api-m.sandbox.paypal.com/v1/oauth2/token",
+          "scopes": {
+            "https://uri.paypal.com/services/payments/payment": "Manage payments and checkout workflow.",
+            "https://uri.paypal.com/services/payments/orders/deprecating-jssdk-migration-for-limited-merchants": "Access Orders create/get/capture endpoints."
+          }
+        }
+      }
+    }
+  },
+  "endpoints": [
+    {
+      "endpoint_id": "POST /v2/checkout/orders",
+      "method": "POST",
+      "path": "/v2/checkout/orders",
+      "operation_id": "orders.create",
+      "path_params": [],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": {
+        "type": "object",
+        "required": [
+          "intent",
+          "purchase_units"
+        ],
+        "properties": {
+          "intent": {
+            "type": "string",
+            "enum": [
+              "CAPTURE",
+              "AUTHORIZE"
+            ]
+          },
+          "purchase_units": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "required": [
+                "amount"
+              ],
+              "properties": {
+                "amount": {
+                  "type": "object",
+                  "required": [
+                    "currency_code",
+                    "value"
+                  ],
+                  "properties": {
+                    "currency_code": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 3
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "example": {
+          "intent": "CAPTURE",
+          "purchase_units": [
+            {
+              "reference_id": "d9f80740-38f0-11e8-b467-0ed5f89f718b",
+              "amount": {
+                "currency_code": "USD",
+                "value": "10.00"
+              }
+            }
+          ],
+          "payment_source": {
+            "paypal": {
+              "experience_context": {
+                "payment_method_preference": "IMMEDIATE_PAYMENT_REQUIRED",
+                "payment_method_selected": "PAYPAL",
+                "brand_name": "EXAMPLE INC",
+                "locale": "en-US",
+                "landing_page": "LOGIN",
+                "user_action": "PAY_NOW",
+                "return_url": "https://example.com/returnUrl",
+                "cancel_url": "https://example.com/cancelUrl"
+              }
+            }
+          }
+        }
+      },
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "purchase_units": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "object",
+                    "required": [
+                      "currency_code",
+                      "value"
+                    ],
+                    "properties": {
+                      "currency_code": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 3
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "href",
+                  "rel"
+                ],
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "201": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "purchase_units": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "object",
+                    "required": [
+                      "currency_code",
+                      "value"
+                    ],
+                    "properties": {
+                      "currency_code": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 3
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "href",
+                  "rel"
+                ],
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "401": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "422": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "default": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "summary": "Create order",
+      "description": "Creates an order. Merchants and partners can add Level 2 and 3 data to payments to reduce risk and payment processing costs. For more information about processing payments, see checkout or multiparty checkout.",
+      "request_body_required": true,
+      "request_examples": [
+        {
+          "intent": "CAPTURE",
+          "purchase_units": [
+            {
+              "reference_id": "d9f80740-38f0-11e8-b467-0ed5f89f718b",
+              "amount": {
+                "currency_code": "USD",
+                "value": "10.00"
+              }
+            }
+          ],
+          "payment_source": {
+            "paypal": {
+              "experience_context": {
+                "payment_method_preference": "IMMEDIATE_PAYMENT_REQUIRED",
+                "payment_method_selected": "PAYPAL",
+                "brand_name": "EXAMPLE INC",
+                "locale": "en-US",
+                "landing_page": "LOGIN",
+                "user_action": "PAY_NOW",
+                "return_url": "https://example.com/returnUrl",
+                "cancel_url": "https://example.com/cancelUrl"
+              }
+            }
+          }
+        }
+      ],
+      "security": [
+        {
+          "Oauth2": [
+            "https://uri.paypal.com/services/payments/payment",
+            "https://uri.paypal.com/services/payments/orders/deprecating-jssdk-migration-for-limited-merchants"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "A successful response to an idempotent request returns HTTP 200 with order details.",
+        "201": "A successful request returns HTTP 201 Created with order details. If you need full representation, send Prefer: return=representation.",
+        "400": "Invalid request.",
+        "401": "Authentication failure.",
+        "422": "Business validation failure.",
+        "default": "Default error response."
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "GET /v2/checkout/orders/{id}",
+      "method": "GET",
+      "path": "/v2/checkout/orders/{id}",
+      "operation_id": "orders.get",
+      "path_params": [
+        {
+          "name": "id",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 36,
+            "pattern": "^[A-Z0-9]+$"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": null,
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "purchase_units": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "object",
+                    "required": [
+                      "currency_code",
+                      "value"
+                    ],
+                    "properties": {
+                      "currency_code": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 3
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "href",
+                  "rel"
+                ],
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "401": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "404": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "default": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "summary": "Show order details",
+      "description": "Shows details for an order by ID.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "Oauth2": [
+            "https://uri.paypal.com/services/payments/payment",
+            "https://uri.paypal.com/services/payments/orders/deprecating-jssdk-migration-for-limited-merchants"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "Order found.",
+        "401": "Authentication failure.",
+        "404": "Order not found.",
+        "default": "Default error response."
+      },
+      "response_examples": {}
+    },
+    {
+      "endpoint_id": "POST /v2/checkout/orders/{id}/capture",
+      "method": "POST",
+      "path": "/v2/checkout/orders/{id}/capture",
+      "operation_id": "orders.capture",
+      "path_params": [
+        {
+          "name": "id",
+          "location": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 36,
+            "pattern": "^[A-Z0-9]+$"
+          }
+        }
+      ],
+      "query_params": [],
+      "header_params": [],
+      "request_schema": {
+        "type": "object",
+        "properties": {
+          "payment_source": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "response_schemas": {
+        "200": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "purchase_units": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "object",
+                    "required": [
+                      "currency_code",
+                      "value"
+                    ],
+                    "properties": {
+                      "currency_code": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 3
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "href",
+                  "rel"
+                ],
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "201": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "purchase_units": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "object",
+                    "required": [
+                      "currency_code",
+                      "value"
+                    ],
+                    "properties": {
+                      "currency_code": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 3
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "href",
+                  "rel"
+                ],
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "401": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "403": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "404": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "422": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "default": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "debug_id": {
+              "type": "string"
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "issue": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "rel": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "encType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "summary": "Capture payment for order",
+      "description": "Captures payment for an order. To successfully capture, the buyer must first approve the order or a valid payment_source must be provided in the request.",
+      "request_body_required": false,
+      "request_examples": [],
+      "security": [
+        {
+          "Oauth2": [
+            "https://uri.paypal.com/services/payments/payment",
+            "https://uri.paypal.com/services/payments/orders/deprecating-jssdk-migration-for-limited-merchants"
+          ]
+        }
+      ],
+      "response_descriptions": {
+        "200": "A successful response to an idempotent request returns HTTP 200 with captured payment details.",
+        "201": "A successful response to a non-idempotent request returns HTTP 201 Created with captured payment details.",
+        "400": "Invalid request.",
+        "401": "Authentication failure.",
+        "403": "Authorization failure.",
+        "404": "Order not found.",
+        "422": "Business validation failure.",
+        "default": "Default error response."
+      },
+      "response_examples": {}
+    }
+  ]
+}

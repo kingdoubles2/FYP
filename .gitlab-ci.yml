@@ -1,7 +1,58 @@
+image: python:3.12-slim
+
 stages:
+  #- lint
   - test
 
-ci-smoke-test:
+before_script:
+  - python --version
+  - pip install --upgrade pip
+  - pip install pyyaml flake8 requests
+
+#lint:
+  #stage: lint
+  #script:
+  #  - flake8 src/ --max-line-length 120 --count --show-source --statistics --exclude __pycache__
+
+parser-test:
   stage: test
   script:
-    - echo "CI working"
+    - cd src
+    - python test_parser.py
+
+extract-ir:
+  stage: test
+  script:
+    - cd src
+    - python extract_ir.py test_uploads/ --pretty -o test_output/
+    - ls -lR test_output/
+  artifacts:
+    paths:
+      - src/test_output/
+    expire_in: 1 week
+
+generate-tests:
+  stage: test
+  script:
+    - cd src
+    - python generate_tests.py test_output/ --pretty -o test_cases/
+    - ls -lR test_cases/
+  needs:
+    - extract-ir
+  artifacts:
+    paths:
+      - src/test_cases/
+    expire_in: 1 week
+
+run-tests:
+  stage: test
+  script:
+    - cd src
+    - python test_runner/run_test.py test_cases/ --json-output test_runner_results.json || test -f test_runner_results.json
+    - cat test_runner_results.json
+  needs:
+    - generate-tests
+  artifacts:
+    paths:
+      - src/test_runner_results.json
+    expire_in: 1 week
