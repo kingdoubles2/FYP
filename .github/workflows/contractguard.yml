@@ -30,7 +30,7 @@ jobs:
       allow_suite_failure: false
       comment_on_pr: true
       engine_repository: kingdoubles2/FYP
-      engine_ref: main
+      engine_ref: Github_action_integration
     secrets:
       CONTRACTGUARD_BEARER_TOKEN: ${{ secrets.CONTRACTGUARD_BEARER_TOKEN }}
       CONTRACTGUARD_API_KEY: ${{ secrets.CONTRACTGUARD_API_KEY }}
