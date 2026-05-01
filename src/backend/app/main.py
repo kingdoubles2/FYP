@@ -21,6 +21,7 @@ from llm_eval.failure_assistant import (
     load_backend_model_catalog,
     load_backend_llm_settings,
     load_default_failure_system_prompt,
+    load_default_failure_user_prompt_template,
     normalize_suggestion_explanation_context,
     parse_spec_document,
     safe_json_dumps,
@@ -1306,6 +1307,23 @@ def get_llm_settings(current_user: User = Depends(get_current_user)) -> dict[str
         db.close()
 
 
+@app.get("/api/llm/prompt-templates")
+def get_llm_prompt_templates(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    _ = current_user
+    try:
+        system_prompt = load_default_failure_system_prompt()
+    except Exception:
+        system_prompt = ""
+    try:
+        user_prompt_template = load_default_failure_user_prompt_template()
+    except Exception:
+        user_prompt_template = ""
+    return {
+        "system_prompt": system_prompt,
+        "user_prompt_template": user_prompt_template,
+    }
+
+
 @app.post("/api/llm/settings/providers/{provider}/models")
 def discover_provider_models(
     provider: str,
@@ -2100,13 +2118,14 @@ def analyze_failure_with_suggestion(
             original_test_case=bundle["test_case"],
             case_result=case_result,
             existing_test_ids=existing_ids,
-            retry_invalid_output=int(settings.get("retry_invalid_output", 0) or 0),
+            retry_invalid_output=int(settings.get("suggestion_retry_invalid_output", settings.get("retry_invalid_output", 0)) or 0),
             explanation_context={
                 "signal": explanation_payload.get("signal"),
                 "contract": explanation_payload.get("contract"),
                 "explanation": explanation_payload.get("explanation"),
             },
-            max_generation_seconds=SUGGESTION_TIMEOUT_SECONDS_MAX,
+            custom_instruction="",
+            max_generation_seconds=int(settings.get("suggestion_timeout_seconds", SUGGESTION_TIMEOUT_SECONDS_MAX) or SUGGESTION_TIMEOUT_SECONDS_MAX),
             ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
         )
         response_payload = {
@@ -2161,24 +2180,25 @@ def suggest_test_for_failure(
         )
         classified_signal = classify_failure_signal(bundle["evidence"])
         raw_explanation_context = req.explanation if req and isinstance(req.explanation, dict) else {}
+        runtime = _build_runtime_from_active_model(resolved_settings)
         normalized_explanation_context = normalize_suggestion_explanation_context(
             raw_explanation_context,
             fallback_signal=classified_signal,
         )
 
-        runtime = _build_runtime_from_active_model(resolved_settings)
         existing_ids = [str(case.get("test_id") or "") for case in (bundle["suite_data"].get("test_cases") or [])]
         payload = generate_suggested_test(
             client=runtime["client"],
-            model=str(runtime["model"]),
+            model=str(runtime.get("model") or settings.get("model") or "qwen3-coder:latest"),
             evidence=bundle["evidence"],
             prompt_bundle=bundle["prompt_bundle"],
             original_test_case=bundle["test_case"],
             case_result=case_result,
             existing_test_ids=existing_ids,
-            retry_invalid_output=0,
+            retry_invalid_output=int(settings.get("suggestion_retry_invalid_output", settings.get("retry_invalid_output", 0)) or 0),
             explanation_context=normalized_explanation_context,
-            max_generation_seconds=SUGGESTION_TIMEOUT_SECONDS_MAX,
+            custom_instruction="",
+            max_generation_seconds=int(settings.get("suggestion_timeout_seconds", SUGGESTION_TIMEOUT_SECONDS_MAX) or SUGGESTION_TIMEOUT_SECONDS_MAX),
             ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
         )
         suggestion_failure_kind = str(payload.get("failure_kind") or "").strip().lower()

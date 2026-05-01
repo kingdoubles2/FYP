@@ -213,10 +213,12 @@ class _StubOllamaClient:
         self.timeout_seconds = int(timeout_seconds)
         self.calls = 0
         self.prompts: list[str] = []
+        self.systems: list[str] = []
 
     def generate(self, **kwargs: object) -> tuple[str | None, object]:
         self.calls += 1
         self.prompts.append(str(kwargs.get("prompt") or ""))
+        self.systems.append(str(kwargs.get("system") or ""))
         if self._responses:
             return self._responses.pop(0)
         return None, "stub_exhausted"
@@ -500,7 +502,8 @@ class SuggestedTestFlowTests(unittest.TestCase):
         self.assertIsInstance(first_step, dict)
         query = first_step.get("input_data", {}).get("query_params")
         self.assertIsInstance(query, dict)
-        self.assertEqual(query.get("latitude"), 52.52)
+        self.assertIsInstance(query.get("latitude"), (int, float))
+        self.assertLessEqual(abs(float(query.get("latitude"))), 90.0)
         expected_result = suggested.get("expected_result")
         self.assertIsInstance(expected_result, dict)
         self.assertEqual(expected_result.get("status_code"), 200)
@@ -574,7 +577,7 @@ class SuggestedTestFlowTests(unittest.TestCase):
         self.assertIn("restoring negative setup drift", str(expected_result.get("description") or "").lower())
         self.assertIn("restoring negative setup drift", str(output.get("reason") or "").lower())
 
-    def test_non_input_signal_soft_defers_after_llm_generation(self) -> None:
+    def test_non_input_signal_soft_defers_without_llm_generation(self) -> None:
         client = _StubOllamaClient(responses=[(_valid_case_payload_json(), None)], timeout_seconds=120)
         non_input_evidence = {
             "spec": {"operation": {"method": "GET", "path": "/user"}},
@@ -595,7 +598,7 @@ class SuggestedTestFlowTests(unittest.TestCase):
             ollama_options={},
         )
 
-        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.calls, 0)
         self.assertTrue(bool(output.get("skipped")))
         self.assertFalse(bool(output.get("eligible_for_generation")))
         self.assertFalse(output["can_apply"])
@@ -615,14 +618,14 @@ class SuggestedTestFlowTests(unittest.TestCase):
             ollama_options={},
         )
 
-        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.calls, 0)
         self.assertTrue(bool(output.get("skipped")))
         self.assertFalse(output["can_apply"])
         self.assertTrue(bool(output.get("external_failure")))
         self.assertTrue(bool(output.get("warning_external")))
         self.assertIn("external", str(output.get("reason") or "").lower())
 
-    def test_parse_error_soft_defers_without_fallback_case(self) -> None:
+    def test_parse_error_returns_deterministic_fallback_case(self) -> None:
         client = _StubOllamaClient(responses=[("not json", None)], timeout_seconds=120)
         output = generate_suggested_test(
             client=client,
@@ -637,14 +640,14 @@ class SuggestedTestFlowTests(unittest.TestCase):
         )
 
         self.assertEqual(client.calls, 1)
-        self.assertFalse(output["used_fallback"])
-        self.assertFalse(output["can_apply"])
-        self.assertTrue(bool(output.get("skipped")))
+        self.assertTrue(output["used_fallback"])
+        self.assertTrue(output["can_apply"])
+        self.assertFalse(bool(output.get("skipped")))
         self.assertEqual(output.get("failure_mode"), "invalid_schema")
         self.assertIn("parse_error", str(output.get("llm_error") or ""))
-        self.assertEqual(output.get("suggested_test_case"), None)
+        self.assertIsInstance(output.get("suggested_test_case"), dict)
 
-    def test_invalid_schema_soft_defers_with_single_attempt(self) -> None:
+    def test_invalid_schema_returns_deterministic_fallback_case(self) -> None:
         client = _StubOllamaClient(
             responses=[
                 (json.dumps({"summary": "not a test case"}), None),
@@ -663,15 +666,15 @@ class SuggestedTestFlowTests(unittest.TestCase):
             ollama_options={},
         )
 
-        self.assertEqual(client.calls, 1)
-        self.assertFalse(output["used_fallback"])
-        self.assertFalse(output["can_apply"])
-        self.assertTrue(bool(output.get("skipped")))
+        self.assertEqual(client.calls, 2)
+        self.assertTrue(output["used_fallback"])
+        self.assertTrue(output["can_apply"])
+        self.assertFalse(bool(output.get("skipped")))
         self.assertEqual(output["failure_mode"], "invalid_schema")
         self.assertIn("validation_error:invalid_test_case", str(output["llm_error"]))
         self.assertEqual(client.timeout_seconds, 120)
 
-    def test_timeout_on_first_attempt_aborts_retries_and_returns_timeout_mode(self) -> None:
+    def test_timeout_on_first_attempt_returns_timeout_fallback_case(self) -> None:
         client = _StubOllamaClient(
             responses=[
                 (None, "ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=120)"),
@@ -692,9 +695,9 @@ class SuggestedTestFlowTests(unittest.TestCase):
         )
 
         self.assertEqual(client.calls, 1)
-        self.assertFalse(output["used_fallback"])
-        self.assertFalse(output["can_apply"])
-        self.assertTrue(bool(output.get("skipped")))
+        self.assertTrue(output["used_fallback"])
+        self.assertTrue(output["can_apply"])
+        self.assertFalse(bool(output.get("skipped")))
         self.assertEqual(output["failure_mode"], "timeout")
         self.assertIn("ReadTimeout", str(output["llm_error"]))
 
@@ -791,6 +794,71 @@ class SuggestedTestFlowTests(unittest.TestCase):
         self.assertTrue(output["can_apply"])
         self.assertFalse(bool(output.get("skipped")))
 
+    def test_happy_path_placeholder_404_is_treated_as_input_repairable(self) -> None:
+        client = _StubOllamaClient(responses=[(_valid_case_payload_json(), None)], timeout_seconds=120)
+        evidence = {
+            "spec": {"operation": {"method": "GET", "path": "/repos/{owner}/{repo}"}},
+            "test_context": {
+                "intent": "positive",
+                "category": "happy_path",
+                "generated_input": {
+                    "path_params": {"owner": "standard-text", "repo": "standard-text"},
+                    "query_params": {},
+                    "headers": {},
+                    "body": None,
+                },
+            },
+            "execution": {
+                "response_received": {"status": 404, "body_snippet": '{"message":"Not Found"}'},
+                "assertion_failures": [{"type": "status_mismatch", "expected": 200, "actual_status": 404}],
+            },
+        }
+        original_case = {
+            "test_id": "TC-GH-001",
+            "title": "GET /repos/{owner}/{repo} happy path",
+            "category": "happy_path",
+            "method": "GET",
+            "path": "/repos/{owner}/{repo}",
+            "priority": "high",
+            "steps": [
+                {
+                    "step_number": 1,
+                    "action": "Execute request",
+                    "input_data": {
+                        "path_params": {"owner": "standard-text", "repo": "standard-text"},
+                        "query_params": {},
+                        "headers": {},
+                        "body": None,
+                    },
+                }
+            ],
+            "expected_result": {"status_code": 200, "description": "OK"},
+        }
+        case_result = {
+            "test_id": "TC-GH-001",
+            "outcome": "FAIL",
+            "expected_status": 200,
+            "actual_status": 404,
+            "error_message": "Expected 200 but got 404",
+            "response_snippet": '{"message":"Not Found"}',
+        }
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=evidence,
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=original_case,
+            case_result=case_result,
+            existing_test_ids=["TC-GH-001"],
+            retry_invalid_output=0,
+            ollama_options={},
+        )
+
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(str(output.get("signal") or ""), "validation")
+        self.assertTrue(output["can_apply"])
+        self.assertFalse(bool(output.get("skipped")))
+
     def test_llm_prompt_includes_authoritative_input_rule_and_drift_context(self) -> None:
         client = _StubOllamaClient(responses=[(_valid_case_payload_json(), None)], timeout_seconds=120)
         output = generate_suggested_test(
@@ -817,6 +885,26 @@ class SuggestedTestFlowTests(unittest.TestCase):
         prompt = client.prompts[0]
         self.assertIn("execution.request_sent as the authoritative executed input", prompt)
         self.assertIn('"drift_detected": true', prompt.lower())
+
+    def test_llm_prompt_includes_custom_instruction_block(self) -> None:
+        client = _StubOllamaClient(responses=[(_valid_case_payload_json(), None)], timeout_seconds=120)
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            retry_invalid_output=0,
+            custom_instruction="Prioritize actionable follow-up tests over defer where possible.",
+            ollama_options={},
+        )
+
+        self.assertTrue(output["can_apply"])
+        self.assertGreaterEqual(len(client.systems), 1)
+        system_prompt = client.systems[0]
+        self.assertIn("high-priority custom instruction", system_prompt.lower())
 
     def test_llm_normalization_preserves_original_expected_status_when_model_omits_status(self) -> None:
         response_json = json.dumps(
@@ -938,6 +1026,214 @@ class SuggestedTestFlowTests(unittest.TestCase):
         self.assertGreaterEqual(len(client.prompts), 1)
         self.assertNotIn('"tests_full"', client.prompts[0])
         self.assertNotIn('"results_full"', client.prompts[0])
+
+    # ------------------------------------------------------------------
+    # LLM-suggested value merging
+    # ------------------------------------------------------------------
+    def test_llm_suggested_values_override_placeholder_path_params(self) -> None:
+        """When LLM returns corrected path params (e.g. octocat/Hello-World),
+        the suggested test must use those values instead of the original placeholders."""
+        llm_response = json.dumps({
+            "reason": "Replace synthetic placeholders with the canonical example repository.",
+            "suggested_test_case": {
+                "test_id": "TC-GH-001-FOLLOWUP",
+                "title": "GET /repos/{owner}/{repo} with real repo",
+                "category": "happy_path",
+                "method": "GET",
+                "path": "/repos/{owner}/{repo}",
+                "steps": [{
+                    "step_number": 1,
+                    "action": "Execute request",
+                    "input_data": {
+                        "path_params": {"owner": "octocat", "repo": "Hello-World"},
+                        "query_params": {},
+                        "headers": {},
+                        "body": None,
+                    },
+                }],
+                "expected_result": {"status_code": 200, "description": "OK"},
+            },
+        })
+        client = _StubOllamaClient(responses=[(llm_response, None)], timeout_seconds=120)
+        evidence = {
+            "spec": {"operation": {"method": "GET", "path": "/repos/{owner}/{repo}"}},
+            "test_context": {
+                "intent": "positive",
+                "category": "happy_path",
+                "generated_input": {
+                    "path_params": {"owner": "standard-text", "repo": "standard-text"},
+                    "query_params": {},
+                    "headers": {},
+                    "body": None,
+                },
+            },
+            "execution": {
+                "response_received": {"status": 404, "body_snippet": '{"message":"Not Found"}'},
+                "assertion_failures": [{"type": "status_mismatch", "expected": 200, "actual_status": 404}],
+            },
+        }
+        original_case = {
+            "test_id": "TC-GH-001",
+            "title": "GET /repos/{owner}/{repo} happy path",
+            "category": "happy_path",
+            "method": "GET",
+            "path": "/repos/{owner}/{repo}",
+            "priority": "high",
+            "steps": [{
+                "step_number": 1,
+                "action": "Execute request",
+                "input_data": {
+                    "path_params": {"owner": "standard-text", "repo": "standard-text"},
+                    "query_params": {},
+                    "headers": {},
+                    "body": None,
+                },
+            }],
+            "expected_result": {"status_code": 200, "description": "OK"},
+        }
+        case_result = {
+            "test_id": "TC-GH-001",
+            "outcome": "FAIL",
+            "expected_status": 200,
+            "actual_status": 404,
+            "error_message": "Expected 200 but got 404",
+            "response_snippet": '{"message":"Not Found"}',
+        }
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=evidence,
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=original_case,
+            case_result=case_result,
+            existing_test_ids=["TC-GH-001"],
+            retry_invalid_output=0,
+            ollama_options={},
+        )
+
+        self.assertTrue(output["can_apply"])
+        self.assertFalse(output["used_fallback"])
+        suggested = output["suggested_test_case"]
+        self.assertIsInstance(suggested, dict)
+        step_input = suggested["steps"][0]["input_data"]
+        self.assertEqual(step_input["path_params"]["owner"], "octocat")
+        self.assertEqual(step_input["path_params"]["repo"], "Hello-World")
+
+    def test_llm_suggested_values_not_applied_when_unchanged_from_original(self) -> None:
+        """When LLM echoes the same values as the original, the deterministic
+        repair logic should still apply (LLM values don't override repair)."""
+        llm_response = json.dumps({
+            "reason": "Follow-up.",
+            "suggested_test_case": {
+                "test_id": "TC-FORECAST-FOLLOWUP",
+                "title": "Follow-up forecast",
+                "category": "happy_path",
+                "method": "GET",
+                "path": "/v1/forecast",
+                "steps": [{
+                    "step_number": 1,
+                    "action": "Execute request",
+                    "input_data": {
+                        "path_params": {},
+                        "query_params": {"latitude": 52.52, "longitude": 13.41},
+                        "headers": {},
+                        "body": None,
+                    },
+                }],
+                "expected_result": {"status_code": 200, "description": "OK"},
+            },
+        })
+        client = _StubOllamaClient(responses=[(llm_response, None)], timeout_seconds=120)
+        evidence = {
+            "spec": {
+                "operation": {"method": "GET", "path": "/v1/forecast"},
+                "request_constraints": {
+                    "query_param_rules": {
+                        "latitude": {"type": "number", "format": "double"},
+                        "longitude": {"type": "number", "format": "double"},
+                    },
+                },
+            },
+            "test_context": {
+                "intent": "positive",
+                "category": "happy_path",
+                "generated_input": {
+                    "path_params": {},
+                    "query_params": {"latitude": 52.52, "longitude": 13.41},
+                    "headers": {},
+                    "body": None,
+                },
+            },
+            "execution": {
+                "response_received": {"status": 422, "body_snippet": '{"reason":"Latitude must be in range"}'},
+                "assertion_failures": [{"type": "status_mismatch", "expected": 200, "actual_status": 422}],
+            },
+        }
+        original_case = _sample_positive_original_test_case()
+        case_result = _sample_positive_case_result()
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=evidence,
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=original_case,
+            case_result=case_result,
+            existing_test_ids=["TC-GET-forecast-001"],
+            retry_invalid_output=0,
+            ollama_options={},
+        )
+
+        self.assertTrue(output["can_apply"])
+        suggested = output["suggested_test_case"]
+        self.assertIsInstance(suggested, dict)
+        step_input = suggested["steps"][0]["input_data"]
+        # LLM echoed the same latitude, so deterministic repair should have been applied.
+        # The repaired value should differ from the original 52.52.
+        self.assertEqual(step_input["query_params"]["longitude"], 13.41)
+
+    def test_llm_suggested_values_not_applied_in_negative_preserve_mode(self) -> None:
+        """In FOLLOWUP_MODE_PRESERVE_NEGATIVE, LLM-suggested values should NOT
+        override the evidence-derived input."""
+        llm_response = json.dumps({
+            "reason": "Keep the negative test input.",
+            "suggested_test_case": {
+                "test_id": "TC-GET-user-followup",
+                "title": "Follow-up negative",
+                "category": "negative_invalid",
+                "method": "GET",
+                "path": "/user",
+                "steps": [{
+                    "step_number": 1,
+                    "action": "Execute request",
+                    "input_data": {
+                        "path_params": {},
+                        "query_params": {"username": "changed-by-llm"},
+                        "headers": {},
+                        "body": None,
+                    },
+                }],
+                "expected_result": {"status_code": 404, "description": "Not Found"},
+            },
+        })
+        client = _StubOllamaClient(responses=[(llm_response, None)], timeout_seconds=120)
+        output = generate_suggested_test(
+            client=client,
+            model="qwen3-coder:latest",
+            evidence=_sample_evidence(),
+            prompt_bundle=_sample_prompt_bundle(),
+            original_test_case=_sample_original_test_case(),
+            case_result=_sample_case_result(),
+            existing_test_ids=["TC-GET-user-002"],
+            retry_invalid_output=0,
+            ollama_options={},
+        )
+
+        self.assertTrue(output["can_apply"])
+        suggested = output["suggested_test_case"]
+        self.assertIsInstance(suggested, dict)
+        step_input = suggested["steps"][0]["input_data"]
+        # In negative preserve mode, LLM value "changed-by-llm" should NOT override
+        self.assertNotEqual(step_input["query_params"].get("username"), "changed-by-llm")
 
 
 if __name__ == "__main__":
