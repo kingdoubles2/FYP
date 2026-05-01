@@ -12,18 +12,16 @@ from sqlalchemy import func, or_, text
 
 from llm_eval.failure_assistant import (
     SUGGESTION_TIMEOUT_SECONDS_MAX,
-    build_deterministic_suggested_test_payload,
-    build_suggestion_skip_payload,
     build_assistant_prompt_bundle,
     build_case_evidence,
     build_pipeline_context,
     classify_failure_signal,
     generate_failure_explanation,
     generate_suggested_test,
-    is_input_related_signal,
     load_backend_model_catalog,
     load_backend_llm_settings,
     load_default_failure_system_prompt,
+    load_default_failure_user_prompt_template,
     normalize_suggestion_explanation_context,
     parse_spec_document,
     safe_json_dumps,
@@ -1309,6 +1307,23 @@ def get_llm_settings(current_user: User = Depends(get_current_user)) -> dict[str
         db.close()
 
 
+@app.get("/api/llm/prompt-templates")
+def get_llm_prompt_templates(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    _ = current_user
+    try:
+        system_prompt = load_default_failure_system_prompt()
+    except Exception:
+        system_prompt = ""
+    try:
+        user_prompt_template = load_default_failure_user_prompt_template()
+    except Exception:
+        user_prompt_template = ""
+    return {
+        "system_prompt": system_prompt,
+        "user_prompt_template": user_prompt_template,
+    }
+
+
 @app.post("/api/llm/settings/providers/{provider}/models")
 def discover_provider_models(
     provider: str,
@@ -1969,6 +1984,7 @@ def get_latest_run_for_spec(spec_id: int, current_user: User = Depends(get_curre
             "generated_suite": _json_load_or_default(artifact_row.generated_suite_json if artifact_row else None, None),
         }
         run_payload = None
+        llm_outputs: list[dict[str, Any]] = []
         if run_row:
             run_payload = {
                 "id": run_row.id,
@@ -1980,12 +1996,36 @@ def get_latest_run_for_spec(spec_id: int, current_user: User = Depends(get_curre
                 "results": _json_load_or_default(run_row.results_json, []),
                 "suite_snapshot": _json_load_or_default(run_row.suite_snapshot_json, {}),
             }
+            llm_rows = (
+                db.query(LLMRunInsight)
+                .filter(
+                    LLMRunInsight.user_id == current_user.id,
+                    LLMRunInsight.run_id == int(run_row.id),
+                )
+                .order_by(LLMRunInsight.id.desc())
+                .all()
+            )
+            for row in llm_rows:
+                payload = _json_load_or_default(row.payload_json, {})
+                if payload is None:
+                    payload = {}
+                llm_outputs.append(
+                    {
+                        "id": int(row.id),
+                        "test_id": str(row.test_id),
+                        "mode": str(row.mode),
+                        "model": str(row.model or ""),
+                        "payload": payload,
+                        "created_at": row.created_at.isoformat() if row.created_at else None,
+                        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                    }
+                )
 
         return {
             "spec_id": spec_row.id,
             "artifact": artifact_payload,
             "latest_run": run_payload,
-            "llm_outputs": [],
+            "llm_outputs": llm_outputs,
         }
     finally:
         db.close()
@@ -2070,17 +2110,23 @@ def analyze_failure_with_suggestion(
         runtime = explanation_output["runtime"]
         explanation_payload = explanation_output["payload"]
         existing_ids = [str(case.get("test_id") or "") for case in (bundle["suite_data"].get("test_cases") or [])]
-        suggestion_payload = build_deterministic_suggested_test_payload(
+        suggestion_payload = generate_suggested_test(
+            client=runtime["client"],
             model=str(runtime.get("model") or settings.get("model") or "qwen3-coder:latest"),
             evidence=bundle["evidence"],
+            prompt_bundle=bundle["prompt_bundle"],
             original_test_case=bundle["test_case"],
             case_result=case_result,
             existing_test_ids=existing_ids,
+            retry_invalid_output=int(settings.get("suggestion_retry_invalid_output", settings.get("retry_invalid_output", 0)) or 0),
             explanation_context={
                 "signal": explanation_payload.get("signal"),
                 "contract": explanation_payload.get("contract"),
                 "explanation": explanation_payload.get("explanation"),
             },
+            custom_instruction="",
+            max_generation_seconds=int(settings.get("suggestion_timeout_seconds", SUGGESTION_TIMEOUT_SECONDS_MAX) or SUGGESTION_TIMEOUT_SECONDS_MAX),
+            ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
         )
         response_payload = {
             "run_id": run_id,
@@ -2132,55 +2178,27 @@ def suggest_test_for_failure(
             current_user.id,
             base_settings=settings,
         )
-        active_model = resolved_settings.get("active_model") if isinstance(resolved_settings.get("active_model"), dict) else {}
-        resolved_model_name = str(active_model.get("model") or settings.get("model") or "").strip() or "qwen3-coder:latest"
         classified_signal = classify_failure_signal(bundle["evidence"])
         raw_explanation_context = req.explanation if req and isinstance(req.explanation, dict) else {}
+        runtime = _build_runtime_from_active_model(resolved_settings)
         normalized_explanation_context = normalize_suggestion_explanation_context(
             raw_explanation_context,
             fallback_signal=classified_signal,
         )
-        signal = str(normalized_explanation_context.get("signal") or classified_signal or "status_mismatch").strip().lower()
-        if not is_input_related_signal(signal):
-            skip_payload = build_suggestion_skip_payload(
-                model=resolved_model_name,
-                signal=signal,
-                reason=(
-                    "No suggested test was generated because this failure is not input-related. "
-                    "Suggested tests are only generated for schema/validation input failures."
-                ),
-            )
-            response_payload = {
-                "run_id": run_id,
-                "test_id": test_id,
-                "mode": "suggest_test",
-                "payload": skip_payload,
-            }
-            _upsert_llm_run_insight(
-                db=db,
-                user_id=current_user.id,
-                run_row=bundle.get("run_row"),
-                test_id=test_id,
-                mode="suggest_test",
-                payload=skip_payload,
-            )
-            if hasattr(db, "commit"):
-                db.commit()
-            return response_payload
 
-        runtime = _build_runtime_from_active_model(resolved_settings)
         existing_ids = [str(case.get("test_id") or "") for case in (bundle["suite_data"].get("test_cases") or [])]
         payload = generate_suggested_test(
             client=runtime["client"],
-            model=str(runtime["model"]),
+            model=str(runtime.get("model") or settings.get("model") or "qwen3-coder:latest"),
             evidence=bundle["evidence"],
             prompt_bundle=bundle["prompt_bundle"],
             original_test_case=bundle["test_case"],
             case_result=case_result,
             existing_test_ids=existing_ids,
-            retry_invalid_output=0,
+            retry_invalid_output=int(settings.get("suggestion_retry_invalid_output", settings.get("retry_invalid_output", 0)) or 0),
             explanation_context=normalized_explanation_context,
-            max_generation_seconds=SUGGESTION_TIMEOUT_SECONDS_MAX,
+            custom_instruction="",
+            max_generation_seconds=int(settings.get("suggestion_timeout_seconds", SUGGESTION_TIMEOUT_SECONDS_MAX) or SUGGESTION_TIMEOUT_SECONDS_MAX),
             ollama_options=runtime.get("options") if isinstance(runtime.get("options"), dict) else {},
         )
         suggestion_failure_kind = str(payload.get("failure_kind") or "").strip().lower()

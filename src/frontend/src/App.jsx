@@ -8,13 +8,15 @@ import {
   deleteLlmModel,
   fetchLogisticsRunDetail,
   fetchLatestRunForSpec,
+  fetchLlmPromptTemplates,
   fetchLlmProviderModels,
   fetchLlmSettings,
   healthCheck,
   listLogisticsRuns,
   listSpecs,
   loginUser,
-  requestLlmFailureAnalysis,
+  requestLlmFailureExplanation,
+  requestLlmSuggestedTest,
   requestSpecGroundedChat,
   registerUser,
   runGeneratedTests,
@@ -38,6 +40,18 @@ const SETTINGS_MODEL_PROVIDERS = Object.freeze([
 const SPEC_FILE_EXTENSIONS = [".json", ".yaml", ".yml"];
 const JSON_EDITOR_INDENT = "  ";
 const FAILURE_REASON_KEYS = ["message", "detail", "error", "reason", "title", "description"];
+const REDACTED_SENTINEL = "<redacted>";
+const REDACTED_AUTH_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "x-api-key",
+  "api-key",
+  "apikey",
+  "token",
+  "x_auth_token",
+  "x-auth-token",
+  "bearer",
+]);
 const CHAT_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
 const DEFAULT_CHAT_RUNTIME_CONFIG = Object.freeze({
   modelId: "qwen3-coder:latest",
@@ -627,6 +641,34 @@ function buildUniqueTestId(existingTests, preferredId) {
   }
 }
 
+function isAuthHeaderName(headerName) {
+  return REDACTED_AUTH_HEADER_NAMES.has(String(headerName || "").trim().toLowerCase());
+}
+
+function isRedactedAuthHeader(headerName, headerValue) {
+  return isAuthHeaderName(headerName) && String(headerValue || "").trim().toLowerCase() === REDACTED_SENTINEL;
+}
+
+function sanitizeSuggestedInputData(inputData) {
+  const source = inputData && typeof inputData === "object" && !Array.isArray(inputData)
+    ? inputData
+    : {};
+  const headers = source.headers && typeof source.headers === "object" && !Array.isArray(source.headers)
+    ? source.headers
+    : {};
+  const sanitizedHeaders = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (isRedactedAuthHeader(key, value)) {
+      continue;
+    }
+    sanitizedHeaders[key] = value;
+  }
+  return {
+    ...source,
+    headers: sanitizedHeaders,
+  };
+}
+
 function normalizeSuggestedTestCaseForSuite(suggestedTestCase, existingTests, originCategory = "") {
   if (!suggestedTestCase || typeof suggestedTestCase !== "object" || Array.isArray(suggestedTestCase)) {
     return null;
@@ -635,8 +677,11 @@ function normalizeSuggestedTestCaseForSuite(suggestedTestCase, existingTests, or
   const method = String(copy.method || "GET").toUpperCase();
   const path = String(copy.path || "/");
   const steps = Array.isArray(copy.steps) && copy.steps.length > 0 ? copy.steps : [{ step_number: 1, action: "Execute request", input_data: {} }];
+  const rawInputData = steps[0]?.input_data && typeof steps[0].input_data === "object"
+    ? (cloneJsonValue(steps[0].input_data) || steps[0].input_data)
+    : {};
   const firstStep = steps[0] && typeof steps[0] === "object"
-    ? { ...steps[0], input_data: (steps[0].input_data && typeof steps[0].input_data === "object") ? steps[0].input_data : {} }
+    ? { ...steps[0], input_data: sanitizeSuggestedInputData(rawInputData) }
     : { step_number: 1, action: "Execute request", input_data: {} };
   const expectedResult = copy.expected_result && typeof copy.expected_result === "object"
     ? copy.expected_result
@@ -783,6 +828,31 @@ function formatExplanationForDisplay(explanationText) {
   return withoutLeadingLabel;
 }
 
+function buildSuggestionExplanationContext(explanationPayload) {
+  if (!explanationPayload || typeof explanationPayload !== "object") {
+    return null;
+  }
+  const signal = String(explanationPayload.signal || "").trim();
+  const explanationText = String(explanationPayload.explanation || "").trim();
+  const contract = explanationPayload.contract && typeof explanationPayload.contract === "object"
+    ? cloneJsonValue(explanationPayload.contract) || explanationPayload.contract
+    : null;
+  if (!signal && !explanationText && !contract) {
+    return null;
+  }
+  const context = {};
+  if (signal) {
+    context.signal = signal;
+  }
+  if (explanationText) {
+    context.explanation = explanationText;
+  }
+  if (contract) {
+    context.contract = contract;
+  }
+  return context;
+}
+
 function formatAiInsightModeLabel(mode) {
   const normalized = String(mode || "").trim().toLowerCase();
   if (normalized === "analysis") {
@@ -894,6 +964,73 @@ function groupAiInsightsByMode(records) {
     modeLabel: formatAiInsightModeLabel(mode),
     records: groupsByMode[mode],
   }));
+}
+
+function getLlmOutputSortRank(row) {
+  const updatedAt = Date.parse(String(row?.updated_at || ""));
+  const createdAt = Date.parse(String(row?.created_at || ""));
+  const updatedRank = Number.isNaN(updatedAt) ? 0 : updatedAt;
+  const createdRank = Number.isNaN(createdAt) ? 0 : createdAt;
+  const idRank = Number(row?.id);
+  return {
+    updatedRank,
+    createdRank,
+    idRank: Number.isFinite(idRank) ? idRank : 0,
+  };
+}
+
+function hydrateLlmCaseStateFromOutputs(outputs) {
+  const source = Array.isArray(outputs) ? outputs : [];
+  const sorted = [...source].sort((left, right) => {
+    const leftRank = getLlmOutputSortRank(left);
+    const rightRank = getLlmOutputSortRank(right);
+    if (leftRank.updatedRank !== rightRank.updatedRank) {
+      return leftRank.updatedRank - rightRank.updatedRank;
+    }
+    if (leftRank.createdRank !== rightRank.createdRank) {
+      return leftRank.createdRank - rightRank.createdRank;
+    }
+    return leftRank.idRank - rightRank.idRank;
+  });
+
+  const byTestId = {};
+  for (const row of sorted) {
+    const testId = normalizeTestId(row?.test_id || row?.testId);
+    if (!testId) {
+      continue;
+    }
+    const payload = row?.payload && typeof row.payload === "object" ? row.payload : {};
+    const mode = String(row?.mode || "").trim().toLowerCase();
+    const current = byTestId[testId] && typeof byTestId[testId] === "object" ? byTestId[testId] : {};
+    const next = {
+      ...current,
+      action: "",
+      error: "",
+    };
+
+    if (mode === "analysis") {
+      if (payload.explanation && typeof payload.explanation === "object") {
+        next.explanation = cloneJsonValue(payload.explanation) || payload.explanation;
+      }
+      if (payload.suggestion && typeof payload.suggestion === "object") {
+        next.suggestion = cloneJsonValue(payload.suggestion) || payload.suggestion;
+      }
+    } else if (mode === "explanation") {
+      const explanationPayload = payload.explanation && typeof payload.explanation === "object"
+        ? payload.explanation
+        : payload;
+      if (explanationPayload && typeof explanationPayload === "object") {
+        next.explanation = cloneJsonValue(explanationPayload) || explanationPayload;
+      }
+    } else if (mode === "suggest_test") {
+      if (payload && typeof payload === "object") {
+        next.suggestion = cloneJsonValue(payload) || payload;
+      }
+    }
+
+    byTestId[testId] = next;
+  }
+  return byTestId;
 }
 
 function getEmptyRunState() {
@@ -1962,13 +2099,13 @@ function AiDetailsModal({
                               <summary>Prompt snapshot</summary>
                               {record.promptSystem ? (
                                 <>
-                                  <p className="logistics-ai-label">System prompt</p>
+                                  <p className="logistics-ai-label">Custom Instruction</p>
                                   <pre className="run-feedback-pre logistics-ai-pre">{record.promptSystem}</pre>
                                 </>
                               ) : null}
                               {record.promptUser ? (
                                 <>
-                                  <p className="logistics-ai-label">User prompt</p>
+                                  <p className="logistics-ai-label">Generated Case Context</p>
                                   <pre className="run-feedback-pre logistics-ai-pre">{record.promptUser}</pre>
                                 </>
                               ) : null}
@@ -2199,6 +2336,7 @@ function SettingsModal({
   providerModelsLoading,
   providerModelsError,
   customInstructionDraft,
+  token,
   onClose,
   onTabChange,
   onToggleAddModelForm,
@@ -2212,6 +2350,35 @@ function SettingsModal({
 }) {
   const [isModelListOpen, setIsModelListOpen] = useState(false);
   const modelListRef = useRef(null);
+  const [promptTemplates, setPromptTemplates] = useState(null);
+  const [promptTemplatesLoading, setPromptTemplatesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || tab !== SETTINGS_TAB_CUSTOM || promptTemplates) {
+      return;
+    }
+    let cancelled = false;
+    setPromptTemplatesLoading(true);
+    fetchLlmPromptTemplates(token)
+      .then((data) => {
+        if (!cancelled && data && typeof data === "object") {
+          setPromptTemplates(data);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setPromptTemplatesLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [open, tab, token, promptTemplates]);
+
+  useEffect(() => {
+    if (!open) {
+      setPromptTemplates(null);
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -2299,7 +2466,7 @@ function SettingsModal({
           <div>
             <p className="eyebrow">Assistant</p>
             <h2 id="settings-modal-title">LLM Settings</h2>
-            <p className="muted">Pick your model target and configure the explanation prompt.</p>
+            <p className="muted">Pick your model target and configure custom instruction behavior.</p>
           </div>
           <button
             type="button"
@@ -2517,21 +2684,65 @@ function SettingsModal({
         ) : (
           <div className="settings-modal-section">
             <div className="settings-custom-block">
+              <p style={{ fontSize: "0.85rem", color: "#888", margin: "0 0 12px" }}>
+                The prompts below are sent to the LLM when generating <strong>AI Summaries</strong> for failed test cases.
+                Your custom instruction replaces the default system prompt for AI summaries when set.
+                Suggested tests are not affected by custom instructions.
+              </p>
+              {promptTemplatesLoading ? (
+                <p style={{ fontSize: "0.85rem", color: "#aaa" }}>Loading prompt templates…</p>
+              ) : promptTemplates ? (
+                <>
+                  <label className="field">
+                    <span>Default System Prompt</span>
+                    <pre
+                      style={{
+                        background: "#1a1a2e",
+                        border: "1px solid #333",
+                        borderRadius: 6,
+                        padding: "10px 12px",
+                        fontSize: "0.82rem",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        color: "#ccc",
+                        maxHeight: 200,
+                        overflowY: "auto",
+                        margin: "4px 0 12px",
+                      }}
+                    >{promptTemplates.system_prompt || "(empty)"}</pre>
+                  </label>
+                  <label className="field">
+                    <span>User Prompt Template</span>
+                    <pre
+                      style={{
+                        background: "#1a1a2e",
+                        border: "1px solid #333",
+                        borderRadius: 6,
+                        padding: "10px 12px",
+                        fontSize: "0.82rem",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        color: "#ccc",
+                        maxHeight: 250,
+                        overflowY: "auto",
+                        margin: "4px 0 12px",
+                      }}
+                    >{promptTemplates.user_prompt_template || "(empty)"}</pre>
+                  </label>
+                </>
+              ) : null}
               <label className="field" htmlFor="settings-prompt">
-                <span>Prompt used for LLM failure explanations</span>
+                <span>Custom Instruction</span>
                 <textarea
                   id="settings-prompt"
                   className="settings-custom-textarea"
                   value={customInstructionDraft}
                   onChange={(event) => onCustomInstructionDraftChange?.(event.target.value)}
-                  placeholder="Define the explanation prompt..."
+                  placeholder="Define custom instruction behavior for AI outputs..."
                   rows={7}
                   disabled={busy}
                 />
               </label>
-              <p className="muted">
-                This prompt is sent as the system prompt when generating AI failure explanations.
-              </p>
               <div className="settings-custom-actions">
                 <button
                   type="button"
@@ -2565,7 +2776,8 @@ function SpecDetails({
   onUpdateTestCase,
   onResetTestCase,
   onRunTests,
-  onExplainFailure,
+  onRequestLlmSummary,
+  onRequestLlmSuggestion,
   onUpdateRunConfig,
   onResetRunConfig,
   onApplySuggestedTest,
@@ -3009,11 +3221,18 @@ function SpecDetails({
     });
   }
 
-  function handleExplainFailureCase(testId) {
-    if (!entry || !latestRunId || !onExplainFailure) {
+  function handleRequestLlmSummary(testId) {
+    if (!entry || !latestRunId || !onRequestLlmSummary) {
       return;
     }
-    onExplainFailure(entry.id, latestRunId, testId);
+    onRequestLlmSummary(entry.id, latestRunId, testId);
+  }
+
+  function handleRequestLlmSuggestion(testId) {
+    if (!entry || !latestRunId || !onRequestLlmSuggestion) {
+      return;
+    }
+    onRequestLlmSuggestion(entry.id, latestRunId, testId);
   }
 
   function handleRunConfigChange(patch) {
@@ -3298,16 +3517,24 @@ function SpecDetails({
                                     const llmAction = String(llmState?.action || "");
                                     const llmError = String(llmState?.error || "");
                                     const addedMessage = String(llmState?.addedMessage || "");
+                                    const hasLlmStateToDisplay = Boolean(
+                                      explanationDisplayText
+                                      || suggestionPayload
+                                      || llmError
+                                      || addedMessage
+                                      || llmAction,
+                                    );
+                                    const shouldShowFailureDetails = testOutcome === "FAIL";
+                                    const shouldShowLlmFeedback = shouldShowFailureDetails || hasLlmStateToDisplay;
                                     const canApplySuggestion = Boolean(
                                       suggestionPayload?.can_apply && suggestionPayload?.suggested_test_case,
                                     );
                                     const isLlmBusy = llmAction === "explaining" || llmAction === "suggesting";
+                                    const isExplaining = llmAction === "explaining";
+                                    const isSuggesting = llmAction === "suggesting";
                                     const loadingDots = ".".repeat(llmLoadingDotCount);
-                                    const explainButtonLabel = llmAction === "explaining"
-                                      ? "Generating Explanation"
-                                      : llmAction === "suggesting"
-                                        ? "Generating Test Cases"
-                                        : "Explain with AI";
+                                    const summaryButtonLabel = isExplaining ? "Generating Summary" : "AI Summary";
+                                    const suggestButtonLabel = isSuggesting ? "Generating Test Cases" : "Suggest Test Cases";
                                     const outcomeClass = testOutcome ? `testcase-outcome-${testOutcome.toLowerCase()}` : "";
                                     const expectedStatusLabel = formatExpectedStatusLabel(
                                       runResult?.expected_status,
@@ -3403,45 +3630,65 @@ function SpecDetails({
                                             {expectedResultError ? <p className="json-error">{expectedResultError}</p> : null}
                                           </div>
 
-                                          {testOutcome === "FAIL" ? (
+                                          {shouldShowLlmFeedback ? (
                                             <div className="run-feedback run-feedback-fail">
-                                              <p className="run-feedback-title">Failure Details</p>
-                                              <p className="run-feedback-line"><strong>Expected status:</strong> {expectedStatusLabel}</p>
-                                              <p className="run-feedback-line"><strong>Actual status:</strong> {actualStatusLabel}</p>
-                                              <p className="run-feedback-line"><strong>Reason:</strong> {failureReason}</p>
-                                              {snippetMeta.documentationUrl ? (
-                                                <p className="run-feedback-line">
-                                                  <strong>Docs:</strong>{" "}
-                                                  <a
-                                                    href={snippetMeta.documentationUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="run-feedback-link"
-                                                  >
-                                                    {snippetMeta.documentationUrl}
-                                                  </a>
-                                                </p>
-                                              ) : null}
-                                              {hasRawResponse ? (
-                                                <details className="run-feedback-details">
-                                                  <summary>Raw response</summary>
-                                                  <pre className="run-feedback-pre">{snippetMeta.raw}</pre>
-                                                </details>
-                                              ) : null}
+                                              {shouldShowFailureDetails ? (
+                                                <>
+                                                  <p className="run-feedback-title">Failure Details</p>
+                                                  <p className="run-feedback-line"><strong>Expected status:</strong> {expectedStatusLabel}</p>
+                                                  <p className="run-feedback-line"><strong>Actual status:</strong> {actualStatusLabel}</p>
+                                                  <p className="run-feedback-line"><strong>Reason:</strong> {failureReason}</p>
+                                                  {snippetMeta.documentationUrl ? (
+                                                    <p className="run-feedback-line">
+                                                      <strong>Docs:</strong>{" "}
+                                                      <a
+                                                        href={snippetMeta.documentationUrl}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="run-feedback-link"
+                                                      >
+                                                        {snippetMeta.documentationUrl}
+                                                      </a>
+                                                    </p>
+                                                  ) : null}
+                                                  {hasRawResponse ? (
+                                                    <details className="run-feedback-details">
+                                                      <summary>Raw response</summary>
+                                                      <pre className="run-feedback-pre">{snippetMeta.raw}</pre>
+                                                    </details>
+                                                  ) : null}
+                                                </>
+                                              ) : (
+                                                <p className="run-feedback-title">AI Analysis</p>
+                                              )}
                                               <div className="llm-actions-row">
                                                 <button
                                                   type="button"
                                                   className="secondary-button llm-action-button"
-                                                  onClick={() => handleExplainFailureCase(testCase?.test_id || "")}
+                                                  onClick={() => handleRequestLlmSummary(testCase?.test_id || "")}
                                                   disabled={!latestRunId || isLlmBusy}
                                                 >
-                                                  {isLlmBusy ? (
+                                                  {isExplaining ? (
                                                     <>
-                                                      {explainButtonLabel}
+                                                      {summaryButtonLabel}
                                                       {" "}
                                                       <span className="llm-loading-dots" aria-hidden="true">{loadingDots}</span>
                                                     </>
-                                                  ) : explainButtonLabel}
+                                                  ) : summaryButtonLabel}
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  className="secondary-button llm-action-button"
+                                                  onClick={() => handleRequestLlmSuggestion(testCase?.test_id || "")}
+                                                  disabled={!latestRunId || isLlmBusy}
+                                                >
+                                                  {isSuggesting ? (
+                                                    <>
+                                                      {suggestButtonLabel}
+                                                      {" "}
+                                                      <span className="llm-loading-dots" aria-hidden="true">{loadingDots}</span>
+                                                    </>
+                                                  ) : suggestButtonLabel}
                                                 </button>
                                               </div>
                                               {llmError ? <p className="json-error">{llmError}</p> : null}
@@ -3468,13 +3715,13 @@ function SpecDetails({
                                                       <summary>Prompt sent to model</summary>
                                                       {explanationPromptSystem.trim() ? (
                                                         <>
-                                                          <p className="run-feedback-line"><strong>System prompt</strong></p>
+                                                          <p className="run-feedback-line"><strong>Custom Instruction</strong></p>
                                                           <pre className="run-feedback-pre">{explanationPromptSystem}</pre>
                                                         </>
                                                       ) : null}
                                                       {explanationPromptUser.trim() ? (
                                                         <>
-                                                          <p className="run-feedback-line"><strong>User prompt</strong></p>
+                                                          <p className="run-feedback-line"><strong>Generated Case Context</strong></p>
                                                           <pre className="run-feedback-pre">{explanationPromptUser}</pre>
                                                         </>
                                                       ) : null}
@@ -4056,6 +4303,8 @@ export default function App() {
           ? artifact.generated_suite
           : null;
         const latestRun = payload?.latest_run && typeof payload.latest_run === "object" ? payload.latest_run : null;
+        const llmOutputs = Array.isArray(payload?.llm_outputs) ? payload.llm_outputs : [];
+        const hydratedLlmByTestId = hydrateLlmCaseStateFromOutputs(llmOutputs);
         const latestRunState = buildLatestRunState(latestRun);
 
         setSpecHistory((current) =>
@@ -4119,7 +4368,7 @@ export default function App() {
               runId: null,
               result: null,
               baselineTests: null,
-              llmByTestId: {},
+              llmByTestId: hydratedLlmByTestId,
             },
           }));
           return;
@@ -4141,7 +4390,7 @@ export default function App() {
               : null,
             baselineTests,
             runId: latestRun?.id ?? null,
-            llmByTestId: {},
+            llmByTestId: hydratedLlmByTestId,
           },
         }));
       } catch {
@@ -4542,7 +4791,9 @@ export default function App() {
               )
             : (cloneJsonValue(executedTests) || []),
           runId: payload?.run_id ?? null,
-          llmByTestId: {},
+          llmByTestId: runMode === "single"
+            ? { ...((current[specId] || getEmptyRunState()).llmByTestId || {}) }
+            : {},
         },
       }));
       setLogisticsHydrated(false);
@@ -4587,18 +4838,30 @@ export default function App() {
     });
   }
 
-  function syncLogisticsAiForRun(runId, analysisPayload) {
+  function syncLogisticsAiForRun(runId, mode, payload) {
     const normalizedRunId = Number(runId);
     if (!Number.isFinite(normalizedRunId)) {
       return;
     }
-    const explanationPayload = analysisPayload?.explanation && typeof analysisPayload.explanation === "object"
-      ? analysisPayload.explanation
-      : {};
-    const suggestionPayload = analysisPayload?.suggestion && typeof analysisPayload.suggestion === "object"
-      ? analysisPayload.suggestion
-      : {};
+    const normalizedMode = String(mode || "").trim().toLowerCase();
+    const payloadObject = payload && typeof payload === "object" ? payload : {};
+    const explanationPayload = normalizedMode === "analysis"
+      ? (payloadObject.explanation && typeof payloadObject.explanation === "object" ? payloadObject.explanation : {})
+      : (normalizedMode === "explanation"
+        ? (payloadObject.explanation && typeof payloadObject.explanation === "object" ? payloadObject.explanation : payloadObject)
+        : {});
+    const suggestionPayload = normalizedMode === "analysis"
+      ? (payloadObject.suggestion && typeof payloadObject.suggestion === "object" ? payloadObject.suggestion : {})
+      : (normalizedMode === "suggest_test"
+        ? payloadObject
+        : {});
+    const hasExplanation = Object.keys(explanationPayload).length > 0;
+    const hasSuggestion = Object.keys(suggestionPayload).length > 0;
+    if (!hasExplanation && !hasSuggestion) {
+      return;
+    }
     const nextModels = [
+      payloadObject?.model,
       explanationPayload?.model,
       suggestionPayload?.model,
     ]
@@ -4616,11 +4879,15 @@ export default function App() {
           ...row,
           ai: {
             ...(row.ai || {}),
-            hasAny: true,
-            hasExplanations: true,
-            hasSuggestions: true,
-            explanationCount: Math.max(1, toSafeCount(row?.ai?.explanationCount)),
-            suggestionCount: Math.max(1, toSafeCount(row?.ai?.suggestionCount)),
+            hasAny: Boolean(row?.ai?.hasAny || hasExplanation || hasSuggestion),
+            hasExplanations: Boolean(row?.ai?.hasExplanations || hasExplanation),
+            hasSuggestions: Boolean(row?.ai?.hasSuggestions || hasSuggestion),
+            explanationCount: hasExplanation
+              ? Math.max(1, toSafeCount(row?.ai?.explanationCount))
+              : toSafeCount(row?.ai?.explanationCount),
+            suggestionCount: hasSuggestion
+              ? Math.max(1, toSafeCount(row?.ai?.suggestionCount))
+              : toSafeCount(row?.ai?.suggestionCount),
             modelList: mergedModels,
           },
         };
@@ -4628,7 +4895,7 @@ export default function App() {
     );
   }
 
-  async function handleExplainFailure(specId, runId, testId) {
+  async function handleRequestLlmSummary(specId, runId, testId) {
     if (!session?.token || !runId || !testId) {
       return;
     }
@@ -4642,15 +4909,9 @@ export default function App() {
     }));
 
     try {
-      const analysisResponse = await requestLlmFailureAnalysis(session.token, runId, testId);
-      const analysisPayload = analysisResponse?.payload && typeof analysisResponse.payload === "object"
-        ? analysisResponse.payload
-        : null;
-      const explanationPayload = analysisPayload?.explanation && typeof analysisPayload.explanation === "object"
-        ? analysisPayload.explanation
-        : null;
-      const suggestionPayload = analysisPayload?.suggestion && typeof analysisPayload.suggestion === "object"
-        ? analysisPayload.suggestion
+      const explanationResponse = await requestLlmFailureExplanation(session.token, runId, testId);
+      const explanationPayload = explanationResponse?.payload && typeof explanationResponse.payload === "object"
+        ? explanationResponse.payload
         : null;
       if (!explanationPayload) {
         throw new Error("Explanation payload missing from backend response.");
@@ -4660,11 +4921,8 @@ export default function App() {
         action: "",
         error: "",
         explanation: explanationPayload,
-        suggestion: suggestionPayload,
-        addedMessage: "",
-        addedSuggestionFingerprint: "",
       }));
-      syncLogisticsAiForRun(runId, analysisPayload);
+      syncLogisticsAiForRun(runId, explanationResponse?.mode, explanationResponse?.payload);
       if (logisticsHydrated) {
         void fetchLogisticsRunsPage({
           append: false,
@@ -4676,7 +4934,59 @@ export default function App() {
       setLlmCaseState(specId, testId, (currentCase) => ({
         ...currentCase,
         action: "",
-        error: error.message || "Unable to generate AI explanation.",
+        error: error.message || "Unable to generate AI summary.",
+        addedMessage: "",
+        addedSuggestionFingerprint: "",
+      }));
+    }
+  }
+
+  async function handleRequestLlmSuggestion(specId, runId, testId) {
+    if (!session?.token || !runId || !testId) {
+      return;
+    }
+
+    const explanationPayload = testRunBySpecId?.[specId]?.llmByTestId?.[testId]?.explanation;
+    const explanationContext = buildSuggestionExplanationContext(explanationPayload);
+    const requestPayload = explanationContext ? { explanation: explanationContext } : {};
+
+    setLlmCaseState(specId, testId, (currentCase) => ({
+      ...currentCase,
+      action: "suggesting",
+      error: "",
+      addedMessage: "",
+      addedSuggestionFingerprint: "",
+    }));
+
+    try {
+      const suggestionResponse = await requestLlmSuggestedTest(session.token, runId, testId, requestPayload);
+      const suggestionPayload = suggestionResponse?.payload && typeof suggestionResponse.payload === "object"
+        ? suggestionResponse.payload
+        : null;
+      if (!suggestionPayload) {
+        throw new Error("Suggested-test payload missing from backend response.");
+      }
+      setLlmCaseState(specId, testId, (currentCase) => ({
+        ...currentCase,
+        action: "",
+        error: "",
+        suggestion: suggestionPayload,
+        addedMessage: "",
+        addedSuggestionFingerprint: "",
+      }));
+      syncLogisticsAiForRun(runId, suggestionResponse?.mode, suggestionResponse?.payload);
+      if (logisticsHydrated) {
+        void fetchLogisticsRunsPage({
+          append: false,
+          beforeRunId: null,
+          filtersOverride: logisticsFilters,
+        });
+      }
+    } catch (error) {
+      setLlmCaseState(specId, testId, (currentCase) => ({
+        ...currentCase,
+        action: "",
+        error: error.message || "Unable to generate suggested tests.",
         addedMessage: "",
         addedSuggestionFingerprint: "",
       }));
@@ -4790,6 +5100,8 @@ export default function App() {
     try {
       const payload = await fetchLatestRunForSpec(session.token, normalizedSpecId);
       const latestRun = payload?.latest_run && typeof payload.latest_run === "object" ? payload.latest_run : null;
+      const llmOutputs = Array.isArray(payload?.llm_outputs) ? payload.llm_outputs : [];
+      const hydratedLlmByTestId = hydrateLlmCaseStateFromOutputs(llmOutputs);
       const latestRunState = buildLatestRunState(latestRun);
       setSpecHistory((current) =>
         current.map((entry) => (
@@ -4812,7 +5124,7 @@ export default function App() {
               runId: null,
               result: null,
               baselineTests: null,
-              llmByTestId: {},
+              llmByTestId: hydratedLlmByTestId,
             },
           }));
           return;
@@ -4832,7 +5144,7 @@ export default function App() {
               : null,
             baselineTests,
             runId: latestRun?.id ?? null,
-            llmByTestId: {},
+            llmByTestId: hydratedLlmByTestId,
           },
         }));
       }
@@ -5737,7 +6049,8 @@ export default function App() {
                 onUpdateTestCase={handleUpdateTestCase}
                 onResetTestCase={handleResetTestCase}
                 onRunTests={handleRunTests}
-                onExplainFailure={handleExplainFailure}
+                onRequestLlmSummary={handleRequestLlmSummary}
+                onRequestLlmSuggestion={handleRequestLlmSuggestion}
                 onUpdateRunConfig={handleUpdateRunConfig}
                 onResetRunConfig={handleResetRunConfig}
                 onApplySuggestedTest={handleApplySuggestedTest}
@@ -5795,6 +6108,7 @@ export default function App() {
         providerModelsLoading={providerModelsLoading}
         providerModelsError={providerModelsError}
         customInstructionDraft={customInstructionDraft}
+        token={session?.token}
         onClose={() => {
           setIsSettingsOpen(false);
           setIsAddModelFormOpen(false);

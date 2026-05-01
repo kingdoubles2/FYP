@@ -188,6 +188,7 @@ def _nullable_cases(
     path = endpoint["path"]
     req_schema = endpoint.get("request_schema")
     cases: List[TestCase] = []
+    status_kw = _success_status_kw(endpoint.get("response_schemas", {}), method)
 
     if not req_schema or not isinstance(valid_body, dict):
         return cases
@@ -215,7 +216,7 @@ def _nullable_cases(
                     ),
                 )],
                 expected_result=ExpectedResult(
-                    status_code=200,
+                    **status_kw,
                     description=f"Nullable field '{field_name}' set to null should be accepted",
                 ),
             ))

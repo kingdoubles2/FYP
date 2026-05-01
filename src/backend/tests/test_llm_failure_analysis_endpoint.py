@@ -49,7 +49,7 @@ def _bundle() -> dict:
 
 
 class LlmFailureAnalysisEndpointTests(unittest.TestCase):
-    def test_analyze_failure_returns_explanation_and_deterministic_suggestion(self) -> None:
+    def test_analyze_failure_returns_explanation_and_llm_suggestion(self) -> None:
         explanation_payload = {
             "ok": True,
             "mode": "explanation",
@@ -75,12 +75,11 @@ class LlmFailureAnalysisEndpointTests(unittest.TestCase):
                 main,
                 "_generate_failure_explanation_or_raise",
                 return_value={
-                    "runtime": {"provider": "ollama", "model": "qwen3-coder:latest"},
+                    "runtime": {"provider": "ollama", "model": "qwen3-coder:latest", "client": object(), "options": {}},
                     "payload": explanation_payload,
                 },
             ),
-            patch.object(main, "build_deterministic_suggested_test_payload", return_value=suggestion_payload) as deterministic_builder,
-            patch.object(main, "generate_suggested_test") as llm_suggest,
+            patch.object(main, "generate_suggested_test", return_value=suggestion_payload) as llm_suggest,
         ):
             response = main.analyze_failure_with_suggestion(
                 run_id=10,
@@ -93,8 +92,7 @@ class LlmFailureAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(response["mode"], "analysis")
         self.assertEqual(response["payload"]["explanation"], explanation_payload)
         self.assertEqual(response["payload"]["suggestion"], suggestion_payload)
-        deterministic_builder.assert_called_once()
-        llm_suggest.assert_not_called()
+        llm_suggest.assert_called_once()
 
     def test_analyze_failure_propagates_explanation_failure_http_error(self) -> None:
         expected_error = HTTPException(
@@ -143,11 +141,11 @@ class LlmFailureAnalysisEndpointTests(unittest.TestCase):
                 main,
                 "_generate_failure_explanation_or_raise",
                 return_value={
-                    "runtime": {"provider": "ollama", "model": "qwen3-coder:latest"},
+                    "runtime": {"provider": "ollama", "model": "qwen3-coder:latest", "client": object(), "options": {}},
                     "payload": explanation_payload,
                 },
             ),
-            patch.object(main, "build_deterministic_suggested_test_payload", return_value=suggestion_payload),
+            patch.object(main, "generate_suggested_test", return_value=suggestion_payload),
         ):
             explanation_response = main.explain_failed_case(
                 run_id=10,

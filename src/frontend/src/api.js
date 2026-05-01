@@ -198,6 +198,26 @@ export async function requestLlmFailureAnalysis(token, runId, testId) {
   });
 }
 
+export async function requestLlmFailureExplanation(token, runId, testId) {
+  return request(`/api/tests/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testId)}/llm/explanation`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
+export async function requestLlmSuggestedTest(token, runId, testId, payload = {}) {
+  return request(`/api/tests/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testId)}/llm/suggest-test`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
 export async function requestSpecGroundedChat(token, payload) {
   return request("/api/chat/spec-assistant", {
     method: "POST",
@@ -253,6 +273,14 @@ export async function fetchLlmProviderModels(token, provider, payload) {
 export async function deleteLlmModel(token, modelId) {
   return request(`/api/llm/settings/models/${encodeURIComponent(modelId)}`, {
     method: "DELETE",
+    headers: {
+      ...authHeaders(token),
+    },
+  });
+}
+
+export async function fetchLlmPromptTemplates(token) {
+  return request("/api/llm/prompt-templates", {
     headers: {
       ...authHeaders(token),
     },

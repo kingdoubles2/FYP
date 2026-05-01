@@ -92,24 +92,23 @@ def resolve_base_url(
     """Resolve the base URL per suite.
 
     Priority:
-    1. Auto-extracted base_url from the test JSON (if it's a full URL)
-       - each suite knows its own server
-    2. --base-url CLI argument (fallback for suites without auto-extracted URL)
-    3. CONTRACTGUARD_BASE_URL environment variable
+    1. --base-url CLI argument
+    2. CONTRACTGUARD_BASE_URL environment variable
+    3. Auto-extracted base_url from the test JSON (if it's a full URL)
     4. None (caller should skip this suite)
     """
-    # Each suite's own URL takes priority
-    if json_url and _is_full_url(json_url):
-        return json_url.rstrip("/")
-
-    # CLI fallback for suites that don't have their own URL
+    # CLI has top priority so CI/runtime secrets can override spec servers.
     if cli_url and _is_full_url(cli_url):
         return cli_url.rstrip("/")
 
-    # Environment variable as last resort
+    # Environment variable fallback
     env_url = os.environ.get("CONTRACTGUARD_BASE_URL")
     if env_url and _is_full_url(env_url):
         return env_url.rstrip("/")
+
+    # Suite JSON fallback
+    if json_url and _is_full_url(json_url):
+        return json_url.rstrip("/")
 
     return None
 

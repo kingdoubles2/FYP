@@ -1,0 +1,30 @@
+name: Spec Minimal CI
+
+on:
+  pull_request:
+    paths:
+      - "src/specs/**"
+  push:
+    branches:
+      - "**"
+    paths:
+      - "src/specs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  run-contractguard-pipeline:
+    uses: ./.github/workflows/spec-pipeline-reusable.yml
+    with:
+      specs_path: src/specs
+      runtime_mapping_path: config/runtime_mapping.json
+      python_version: "3.11"
+      suite_timeout_seconds: 12
+      allow_suite_failure: ${{ vars.ALLOW_SUITE_FAILURE == 'true' }}
+      comment_on_pr: true
+      engine_repository: ${{ github.repository }}
+      engine_ref: ${{ github.sha }}
+    secrets: inherit

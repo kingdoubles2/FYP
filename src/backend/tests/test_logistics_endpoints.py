@@ -301,6 +301,85 @@ class LogisticsEndpointTests(unittest.TestCase):
                 main.get_logistics_run_detail(run_id=other_run, current_user=SimpleNamespace(id=owner_id))
             self.assertEqual(ctx.exception.status_code, 404)
 
+    def test_latest_run_endpoint_includes_persisted_llm_outputs_for_latest_owner_run(self) -> None:
+        owner_id = self._create_user("latest-owner@example.com")
+        other_id = self._create_user("latest-other@example.com")
+        owner_spec = self._create_spec(user_id=owner_id, filename="latest-owner.yaml", title="Latest Owner API")
+        other_spec = self._create_spec(user_id=other_id, filename="latest-other.yaml", title="Latest Other API")
+
+        older_run = self._create_run(
+            user_id=owner_id,
+            spec_id=owner_spec,
+            summary={"total": 1, "passed": 0, "failed": 1, "skipped": 0},
+        )
+        latest_run = self._create_run(
+            user_id=owner_id,
+            spec_id=owner_spec,
+            summary={"total": 2, "passed": 0, "failed": 2, "skipped": 0},
+        )
+        other_run = self._create_run(
+            user_id=other_id,
+            spec_id=other_spec,
+            summary={"total": 1, "passed": 0, "failed": 1, "skipped": 0},
+        )
+        _ = self._create_insight(
+            user_id=owner_id,
+            spec_id=owner_spec,
+            run_id=older_run,
+            test_id="TC-OLD",
+            mode="explanation",
+            model="gpt-4.1-mini",
+            payload={"mode": "explanation", "explanation": "Older run insight"},
+        )
+        _ = self._create_insight(
+            user_id=owner_id,
+            spec_id=owner_spec,
+            run_id=latest_run,
+            test_id="TC-LATEST-1",
+            mode="analysis",
+            model="gpt-4.1-mini",
+            payload={"mode": "analysis", "explanation": {"explanation": "Latest 1"}, "suggestion": {}},
+        )
+        _ = self._create_insight(
+            user_id=owner_id,
+            spec_id=owner_spec,
+            run_id=latest_run,
+            test_id="TC-LATEST-2",
+            mode="suggest_test",
+            model="qwen3-coder:latest",
+            payload={"mode": "suggest_test", "reason": "Latest 2"},
+        )
+        _ = self._create_insight(
+            user_id=other_id,
+            spec_id=other_spec,
+            run_id=other_run,
+            test_id="TC-OTHER",
+            mode="explanation",
+            model="gpt-4.1-mini",
+            payload={"mode": "explanation", "explanation": "Other user insight"},
+        )
+
+        with patch.object(main, "SessionLocal", self.TestSessionLocal):
+            payload = main.get_latest_run_for_spec(spec_id=owner_spec, current_user=SimpleNamespace(id=owner_id))
+
+        self.assertEqual(int(payload["spec_id"]), owner_spec)
+        self.assertEqual(int(payload["latest_run"]["id"]), latest_run)
+        outputs = payload.get("llm_outputs")
+        self.assertIsInstance(outputs, list)
+        self.assertEqual(len(outputs), 2)
+        test_ids = {str(item.get("test_id") or "") for item in outputs if isinstance(item, dict)}
+        self.assertEqual(test_ids, {"TC-LATEST-1", "TC-LATEST-2"})
+        self.assertNotIn("TC-OLD", test_ids)
+        self.assertNotIn("TC-OTHER", test_ids)
+        for item in outputs:
+            self.assertIn("id", item)
+            self.assertIn("test_id", item)
+            self.assertIn("mode", item)
+            self.assertIn("model", item)
+            self.assertIn("payload", item)
+            self.assertIn("created_at", item)
+            self.assertIn("updated_at", item)
+
     def test_delete_single_log_removes_run_and_linked_insights(self) -> None:
         user_id = self._create_user("delete-single@example.com")
         spec_id = self._create_spec(user_id=user_id, filename="delete.yaml", title="Delete API")
@@ -389,15 +468,15 @@ class LogisticsEndpointTests(unittest.TestCase):
         }
 
         first_explanation = {
-            "runtime": {"provider": "openai", "model": "gpt-4.1-mini"},
+            "runtime": {"provider": "openai", "model": "gpt-4.1-mini", "client": object(), "options": {}},
             "payload": {"mode": "explanation", "model": "gpt-4.1-mini", "explanation": "First"},
         }
         second_explanation = {
-            "runtime": {"provider": "openai", "model": "gpt-4.1-mini"},
+            "runtime": {"provider": "openai", "model": "gpt-4.1-mini", "client": object(), "options": {}},
             "payload": {"mode": "explanation", "model": "gpt-4.1-mini", "explanation": "Updated"},
         }
         analysis_explanation = {
-            "runtime": {"provider": "openai", "model": "gpt-4.1-mini"},
+            "runtime": {"provider": "openai", "model": "gpt-4.1-mini", "client": object(), "options": {}},
             "payload": {"mode": "explanation", "model": "gpt-4.1-mini", "explanation": "Analysis"},
         }
         suggestion_payload = {
@@ -415,13 +494,18 @@ class LogisticsEndpointTests(unittest.TestCase):
             patch.object(main, "_resolve_effective_llm_settings", return_value={"active_model_id": "builtin:ollama:qwen3-coder:latest"}),
             patch.object(
                 main,
+                "_build_runtime_from_active_model",
+                return_value={"provider": "openai", "client": object(), "model": "gpt-4.1-mini", "options": {}},
+            ),
+            patch.object(
+                main,
                 "_generate_failure_explanation_or_raise",
                 side_effect=[first_explanation, second_explanation, analysis_explanation],
             ),
             patch.object(
                 main,
-                "build_deterministic_suggested_test_payload",
-                return_value={"mode": "suggest_test", "model": "gpt-4.1-mini", "can_apply": True},
+                "generate_suggested_test",
+                return_value=suggestion_payload,
             ),
         ):
             main.explain_failed_case(run_id=run_id, test_id="TC-FAIL", current_user=SimpleNamespace(id=user_id))
