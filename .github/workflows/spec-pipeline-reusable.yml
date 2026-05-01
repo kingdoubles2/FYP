@@ -37,7 +37,7 @@ on:
         description: Repository that hosts ContractGuard engine code
         required: false
         type: string
-        default: 12134/2026-csc1097-wangc9-siakj2
+        default: kingdoubles2/FYP
       engine_ref:
         description: Git ref for engine repository
         required: false
