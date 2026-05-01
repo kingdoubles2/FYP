@@ -60,6 +60,28 @@ GENERIC_SOFT_DEFER_REASON = (
     "AI could not produce a reliable follow-up test suggestion for this case, "
     "so no extra test is suggested right now."
 )
+PLACEHOLDER_INPUT_MARKERS = frozenset(
+    {
+        "standard-text",
+        "placeholder",
+        "sample",
+        "dummy",
+        "example",
+        "unknown",
+        "not_a_number",
+        "invalid_value",
+        "valid_value",
+    }
+)
+STATUS_MISMATCH_INPUT_HINT_TOKENS = (
+    "not found",
+    "does not exist",
+    "missing",
+    "invalid",
+    "unknown",
+    "bad request",
+    "unprocessable",
+)
 
 
 def _safe_int(value: Any, default: int, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
@@ -207,6 +229,18 @@ def load_backend_llm_settings(config_path: Optional[str] = None) -> Dict[str, An
         minimum=0,
         maximum=5,
     )
+    suggestion_timeout_seconds = _safe_int(
+        os.getenv("CONTRACTGUARD_LLM_SUGGESTION_TIMEOUT_SECONDS", llm_cfg.get("suggestion_timeout_seconds", 45)),
+        45,
+        minimum=15,
+        maximum=SUGGESTION_TIMEOUT_SECONDS_MAX,
+    )
+    suggestion_retry_invalid_output = _safe_int(
+        os.getenv("CONTRACTGUARD_LLM_SUGGESTION_RETRY_INVALID", llm_cfg.get("suggestion_retry_invalid_output", 0)),
+        0,
+        minimum=0,
+        maximum=2,
+    )
     max_items_per_section = _safe_int(
         os.getenv("CONTRACTGUARD_LLM_MAX_ITEMS", evidence_cfg.get("max_items_per_section", 12)),
         12,
@@ -241,6 +275,8 @@ def load_backend_llm_settings(config_path: Optional[str] = None) -> Dict[str, An
         "word_min": min(word_min, word_max),
         "word_max": word_max,
         "retry_invalid_output": retry_invalid_output,
+        "suggestion_timeout_seconds": suggestion_timeout_seconds,
+        "suggestion_retry_invalid_output": suggestion_retry_invalid_output,
         "max_items_per_section": max_items_per_section,
         "snippet_chars": snippet_chars,
         "max_similar_failures": max_similar_failures,
@@ -254,6 +290,14 @@ def load_default_failure_system_prompt() -> str:
     prompt_text = str(system_prompt or "")
     if not prompt_text.strip():
         raise ValueError("Default failure system prompt is empty.")
+    return prompt_text
+
+
+def load_default_failure_user_prompt_template() -> str:
+    _, user_prompt = core.load_prompt_templates()
+    prompt_text = str(user_prompt or "")
+    if not prompt_text.strip():
+        raise ValueError("Default failure user prompt template is empty.")
     return prompt_text
 
 
@@ -420,6 +464,121 @@ def build_failure_response_policy(signal: Any) -> Dict[str, Any]:
         "warning": warning,
         "default_defer_reason": default_defer_reason,
     }
+
+
+def _collect_expected_status_codes_from_evidence(evidence: Dict[str, Any]) -> List[int]:
+    execution = evidence.get("execution") if isinstance(evidence.get("execution"), dict) else {}
+    assertion_failures = execution.get("assertion_failures") if isinstance(execution.get("assertion_failures"), list) else []
+    expected_codes: List[int] = []
+    if assertion_failures:
+        first = assertion_failures[0] if isinstance(assertion_failures[0], dict) else {}
+        expected_value = first.get("expected")
+        if isinstance(expected_value, list):
+            expected_codes.extend([int(item) for item in expected_value if str(item).isdigit()])
+        else:
+            expected_code = _coerce_status_code(expected_value)
+            if expected_code is not None:
+                expected_codes.append(int(expected_code))
+
+    if expected_codes:
+        return expected_codes
+
+    test_context = evidence.get("test_context") if isinstance(evidence.get("test_context"), dict) else {}
+    expected_outcome = test_context.get("expected_outcome") if isinstance(test_context.get("expected_outcome"), dict) else {}
+    return _collect_expected_status_codes(expected_outcome)
+
+
+def _extract_actual_status_code(evidence: Dict[str, Any]) -> Optional[int]:
+    execution = evidence.get("execution") if isinstance(evidence.get("execution"), dict) else {}
+    response = execution.get("response_received") if isinstance(execution.get("response_received"), dict) else {}
+    actual_status = _coerce_status_code(response.get("status"))
+    if actual_status is not None:
+        return int(actual_status)
+    assertion_failures = execution.get("assertion_failures") if isinstance(execution.get("assertion_failures"), list) else []
+    if assertion_failures:
+        first = assertion_failures[0] if isinstance(assertion_failures[0], dict) else {}
+        actual_status = _coerce_status_code(first.get("actual_status"))
+        if actual_status is not None:
+            return int(actual_status)
+    return None
+
+
+def _iter_scalar_input_values(payload: Any) -> List[str]:
+    if payload is None:
+        return []
+    if isinstance(payload, dict):
+        values: List[str] = []
+        for item in payload.values():
+            values.extend(_iter_scalar_input_values(item))
+        return values
+    if isinstance(payload, list):
+        values: List[str] = []
+        for item in payload:
+            values.extend(_iter_scalar_input_values(item))
+        return values
+    text = str(payload).strip()
+    if not text:
+        return []
+    return [text]
+
+
+def _has_placeholder_like_input_values(evidence: Dict[str, Any]) -> bool:
+    snapshot = _build_executed_input_snapshot(evidence)
+    values = [value.lower() for value in _iter_scalar_input_values(snapshot)]
+    for value in values:
+        if value == "<redacted>":
+            continue
+        if value in PLACEHOLDER_INPUT_MARKERS:
+            return True
+        if value.startswith("standard-"):
+            return True
+        if value.endswith("-text"):
+            return True
+    return False
+
+
+def _is_positive_or_happy_path_case(evidence: Dict[str, Any]) -> bool:
+    test_context = evidence.get("test_context") if isinstance(evidence.get("test_context"), dict) else {}
+    intent = str(test_context.get("intent") or "").strip().lower()
+    category = str(test_context.get("category") or "").strip().lower()
+    if intent in {"positive", "happy", "happy_path"}:
+        return True
+    return "happy" in category or category in {"positive", "smoke", "happy_path"}
+
+
+def _should_promote_status_mismatch_for_suggestion(evidence: Dict[str, Any]) -> bool:
+    expected_codes = _collect_expected_status_codes_from_evidence(evidence)
+    actual_status = _extract_actual_status_code(evidence)
+    if not expected_codes or actual_status is None:
+        return False
+    has_success_expectation = any(200 <= code <= 299 for code in expected_codes)
+    if not has_success_expectation:
+        return False
+    if not (400 <= int(actual_status) <= 499):
+        return False
+    reason = _extract_primary_response_reason(evidence).lower()
+    reason_hint = any(token in reason for token in STATUS_MISMATCH_INPUT_HINT_TOKENS)
+    return bool(
+        _is_positive_or_happy_path_case(evidence)
+        or _has_placeholder_like_input_values(evidence)
+        or reason_hint
+    )
+
+
+def resolve_suggestion_signal(evidence: Dict[str, Any], normalized_context: Dict[str, Any]) -> str:
+    classified_signal = classify_failure_signal(evidence)
+    context_signal = str(normalized_context.get("signal") or "").strip().lower()
+    candidate_signal = context_signal or classified_signal
+
+    if classified_signal in {"transport", "auth"}:
+        return classified_signal
+    if candidate_signal in {"transport", "auth"}:
+        return candidate_signal
+    if candidate_signal in INPUT_RELATED_SIGNALS:
+        return candidate_signal
+    if candidate_signal == "status_mismatch" and _should_promote_status_mismatch_for_suggestion(evidence):
+        return "validation"
+    return candidate_signal or "status_mismatch"
 
 
 def normalize_suggestion_explanation_context(
@@ -2205,6 +2364,38 @@ def _apply_focused_field_repair(
     return _apply_reason_field_override(input_data, target_field, replacement)
 
 
+def _merge_llm_suggested_values(
+    evidence_input: Dict[str, Any],
+    llm_input: Dict[str, Any],
+    original_input: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not llm_input:
+        return evidence_input
+    merged = deepcopy(evidence_input)
+    for section in ("path_params", "query_params", "headers"):
+        llm_section = llm_input.get(section)
+        if not isinstance(llm_section, dict):
+            continue
+        orig_section = original_input.get(section) if isinstance(original_input.get(section), dict) else {}
+        merged_section = merged.get(section) if isinstance(merged.get(section), dict) else {}
+        for key, llm_value in llm_section.items():
+            orig_value = orig_section.get(key)
+            if llm_value != orig_value:
+                merged_section[key] = deepcopy(llm_value)
+        merged[section] = merged_section
+    llm_body = llm_input.get("body")
+    orig_body = original_input.get("body")
+    if llm_body is not None and llm_body != orig_body:
+        if isinstance(llm_body, dict) and isinstance(merged.get("body"), dict):
+            orig_body_dict = orig_body if isinstance(orig_body, dict) else {}
+            for key, llm_value in llm_body.items():
+                if llm_value != orig_body_dict.get(key):
+                    merged["body"][key] = deepcopy(llm_value)
+        else:
+            merged["body"] = deepcopy(llm_body)
+    return merged
+
+
 def _apply_followup_policy_to_case(
     *,
     suggested_case: Dict[str, Any],
@@ -2218,11 +2409,18 @@ def _apply_followup_policy_to_case(
     normalized_case = deepcopy(suggested_case)
     drift = drift_analysis if isinstance(drift_analysis, dict) else {}
     drift_detected = bool(drift.get("drift_detected"))
+    llm_steps = suggested_case.get("steps") if isinstance(suggested_case.get("steps"), list) else []
+    llm_input = (
+        llm_steps[0].get("input_data")
+        if llm_steps and isinstance(llm_steps[0], dict) and isinstance(llm_steps[0].get("input_data"), dict)
+        else {}
+    )
     input_data = _build_input_data_from_evidence(
         evidence,
         original_test_case,
         prefer_request_sent=(followup_mode == FOLLOWUP_MODE_PRESERVE_NEGATIVE),
     )
+    original_evidence_input = deepcopy(input_data)
     applied_focus_field = ""
     applied_focus_value: Any = None
     drift_focus_restored = False
@@ -2233,6 +2431,9 @@ def _apply_followup_policy_to_case(
             original_test_case=original_test_case,
             explanation_context=explanation_context,
             input_data=input_data,
+        )
+        input_data = _merge_llm_suggested_values(
+            input_data, llm_input, original_evidence_input,
         )
     else:
         if drift_detected:
@@ -2322,8 +2523,9 @@ def build_deterministic_suggested_test_payload(
         explanation_context,
         fallback_signal=classified_signal,
     )
-    signal = str(normalized_context.get("signal") or classified_signal or "status_mismatch").strip().lower()
-    if not is_input_related_signal(signal):
+    signal = resolve_suggestion_signal(evidence, normalized_context)
+    response_policy = build_failure_response_policy(signal)
+    if not bool(response_policy.get("can_generate_followup")):
         return build_suggestion_skip_payload(
             model=model,
             signal=signal,
@@ -2421,18 +2623,26 @@ def generate_suggested_test(
     existing_test_ids: Sequence[str],
     retry_invalid_output: int,
     explanation_context: Optional[Dict[str, Any]] = None,
+    custom_instruction: str = "",
     max_generation_seconds: int = SUGGESTION_TIMEOUT_SECONDS_MAX,
     ollama_options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    _ = retry_invalid_output
     classified_signal = classify_failure_signal(evidence)
     normalized_context = normalize_suggestion_explanation_context(
         explanation_context,
         fallback_signal=classified_signal,
     )
-    signal = str(normalized_context.get("signal") or classified_signal or "status_mismatch").strip().lower()
+    signal = resolve_suggestion_signal(evidence, normalized_context)
     response_policy = build_failure_response_policy(signal)
     allow_followup_generation = bool(response_policy.get("can_generate_followup"))
+    if not allow_followup_generation:
+        return build_suggestion_skip_payload(
+            model=model,
+            signal=signal,
+            reason="",
+            eligible_for_generation=allow_followup_generation,
+            attempts=[],
+        )
 
     drift_analysis = analyze_negative_setup_drift(
         evidence,
@@ -2496,10 +2706,20 @@ def generate_suggested_test(
         if (isinstance(value, str) and value.strip()) or isinstance(value, dict)
     }
     compact_prompt_bundle = _build_compact_suggestion_prompt_bundle(prompt_bundle)
+    custom_instruction_text = str(custom_instruction or "").strip()
+    custom_instruction_block = (
+        "\n\nHigh-priority custom instruction:\n"
+        + custom_instruction_text
+        + "\n\n"
+        + "Apply the custom instruction unless it conflicts with strict JSON-output requirements."
+        if custom_instruction_text
+        else ""
+    )
     system_prompt = (
         "You are the ContractGuard test assistant. "
         "Return strict JSON only with keys: reason, suggested_test_case. "
         "suggested_test_case must be either null (soft defer) or exactly one ContractGuard-compatible test case object."
+        + custom_instruction_block
     )
     base_user_prompt = (
         "Generate exactly one follow-up test suggestion for this failed case.\n"
@@ -2520,7 +2740,7 @@ def generate_suggested_test(
         f"{json.dumps(compact_prompt_bundle, ensure_ascii=True, indent=2)}"
     )
 
-    retries = 0
+    retries = max(0, int(retry_invalid_output))
     attempts: List[str] = []
     user_prompt = base_user_prompt
     current_timeout = max(1, int(getattr(client, "timeout_seconds", 0) or 1))
@@ -2600,15 +2820,6 @@ def generate_suggested_test(
             existing_test_ids=existing_test_ids,
         )
         if suggested_case:
-            if not allow_followup_generation:
-                attempts.append("policy_defer:non_input_or_external_signal")
-                return build_suggestion_skip_payload(
-                    model=model,
-                    signal=signal,
-                    reason="",
-                    eligible_for_generation=allow_followup_generation,
-                    attempts=attempts,
-                )
             suggested_case, focus_field, focus_value = _apply_followup_policy_to_case(
                 suggested_case=suggested_case,
                 followup_mode=followup_mode,
@@ -2682,12 +2893,29 @@ def generate_suggested_test(
             + "\n\nPrevious output did not contain a valid ContractGuard test case object. Return corrected strict JSON."
         )
 
+    failure_mode = _classify_suggestion_failure_mode(attempts)
+    if allow_followup_generation and failure_mode in {"invalid_schema", "timeout", "mixed"}:
+        fallback_payload = build_deterministic_suggested_test_payload(
+            model=model,
+            evidence=evidence,
+            original_test_case=original_test_case,
+            case_result=case_result,
+            existing_test_ids=existing_test_ids,
+            explanation_context=normalized_context,
+        )
+        fallback_payload["used_fallback"] = True
+        fallback_payload["llm_error"] = "; ".join(attempts) if attempts else None
+        fallback_payload["failure_mode"] = failure_mode
+        fallback_payload["attempts"] = [str(item).strip() for item in attempts if str(item).strip()]
+        fallback_payload["eligible_for_generation"] = allow_followup_generation
+        return fallback_payload
+
     return build_suggestion_skip_payload(
         model=model,
         signal=signal,
         reason=str(response_policy.get("default_defer_reason") or ""),
         llm_error="; ".join(attempts) if attempts else None,
-        failure_mode=_classify_suggestion_failure_mode(attempts),
+        failure_mode=failure_mode,
         used_fallback=False,
         eligible_for_generation=allow_followup_generation,
         attempts=attempts,

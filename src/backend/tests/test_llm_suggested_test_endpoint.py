@@ -20,6 +20,8 @@ def _bundle() -> dict:
             "timeout_seconds": 120,
             "model": "qwen3-coder:latest",
             "retry_invalid_output": 1,
+            "suggestion_timeout_seconds": 45,
+            "suggestion_retry_invalid_output": 0,
             "ollama_options": {},
         },
         "evidence": {
@@ -74,6 +76,7 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
                 "_build_runtime_from_active_model",
                 return_value={"provider": "openai", "client": object(), "model": "gpt-4.1-mini", "options": {}},
             ),
+            patch.object(main, "_generate_failure_explanation_or_raise") as generate_explanation,
             patch.object(main, "generate_suggested_test", return_value=failed_payload),
         ):
             with self.assertRaises(HTTPException) as ctx:
@@ -84,6 +87,7 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
         self.assertEqual(ctx.exception.detail.get("failure_kind"), "rate_limit")
         self.assertEqual(ctx.exception.detail.get("provider"), "openai")
         self.assertEqual(ctx.exception.detail.get("model"), "gpt-4.1-mini")
+        generate_explanation.assert_not_called()
 
     def test_suggest_test_keeps_fallback_payload_for_non_rate_limit_failures(self) -> None:
         fallback_payload = {
@@ -109,6 +113,7 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
                 "_build_runtime_from_active_model",
                 return_value={"provider": "ollama", "client": object(), "model": "qwen3-coder:latest", "options": {}},
             ),
+            patch.object(main, "_generate_failure_explanation_or_raise") as generate_explanation,
             patch.object(main, "generate_suggested_test", return_value=fallback_payload),
         ):
             response = main.suggest_test_for_failure(run_id=10, test_id="TC-EX-001", current_user=SimpleNamespace(id=7))
@@ -116,6 +121,47 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
         self.assertEqual(response["run_id"], 10)
         self.assertEqual(response["test_id"], "TC-EX-001")
         self.assertEqual(response["payload"], fallback_payload)
+        generate_explanation.assert_not_called()
+
+    def test_suggest_test_does_not_prime_explanation_when_request_context_missing(self) -> None:
+        suggestion_payload = {
+            "mode": "suggest_test",
+            "reason": "fallback",
+            "signal": "validation",
+            "external_failure": False,
+            "warning_external": False,
+            "warning": "",
+            "can_apply": True,
+            "suggested_test_case": {"test_id": "TC-X"},
+            "model": "gpt-4.1-mini",
+            "used_fallback": False,
+            "llm_error": None,
+            "failure_mode": "none",
+        }
+        with (
+            patch.object(main, "SessionLocal", return_value=_DummySession()),
+            patch.object(main, "_load_run_case_bundle", return_value=_bundle()),
+            patch.object(main, "_resolve_effective_llm_settings", return_value={"active_model_id": "user:model:1"}),
+            patch.object(
+                main,
+                "_build_runtime_from_active_model",
+                return_value={"provider": "openai", "client": object(), "model": "gpt-4.1-mini", "options": {}},
+            ) as build_runtime,
+            patch.object(main, "_generate_failure_explanation_or_raise") as generate_explanation,
+            patch.object(main, "generate_suggested_test", return_value=suggestion_payload) as generate_suggested_test,
+        ):
+            response = main.suggest_test_for_failure(run_id=10, test_id="TC-EX-001", current_user=SimpleNamespace(id=7))
+
+        self.assertEqual(response["run_id"], 10)
+        self.assertEqual(response["test_id"], "TC-EX-001")
+        self.assertEqual(response["payload"], suggestion_payload)
+        generate_explanation.assert_not_called()
+        build_runtime.assert_called_once()
+        generate_suggested_test.assert_called_once()
+        called_context = generate_suggested_test.call_args.kwargs.get("explanation_context")
+        self.assertIsInstance(called_context, dict)
+        self.assertEqual(str(called_context.get("signal")), "schema_value")
+        self.assertFalse(bool(called_context.get("explanation")))
 
     def test_suggest_test_uses_llm_generation_path_for_non_input_signal(self) -> None:
         soft_defer_payload = {
@@ -148,6 +194,7 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
                 "_build_runtime_from_active_model",
                 return_value={"provider": "ollama", "client": object(), "model": "qwen3-coder:latest", "options": {}},
             ) as build_runtime,
+            patch.object(main, "_generate_failure_explanation_or_raise") as generate_explanation,
             patch.object(main, "generate_suggested_test", return_value=soft_defer_payload) as generate_suggested_test,
         ):
             response = main.suggest_test_for_failure(
@@ -165,6 +212,7 @@ class LlmSuggestedTestEndpointTests(unittest.TestCase):
         self.assertFalse(payload.get("can_apply"))
         self.assertIn("input-related", str(payload.get("reason") or ""))
         build_runtime.assert_called_once()
+        generate_explanation.assert_not_called()
         generate_suggested_test.assert_called_once()
 
 
