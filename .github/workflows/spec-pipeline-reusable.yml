@@ -37,7 +37,7 @@ on:
         description: Repository that hosts ContractGuard engine code
         required: false
         type: string
-        default: kingdoubles2/FYP/.github/workflows/spec-pipeline-reusable.yml@main
+        default: kingdoubles2/FYP
       engine_ref:
         description: Git ref for engine repository
         required: false
